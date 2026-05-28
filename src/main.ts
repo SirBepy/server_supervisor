@@ -1,4 +1,4 @@
-import "@phosphor-icons/web";
+import "@phosphor-icons/web/regular";
 import "./styles/base.css";
 import { mountDashboard } from "./views/dashboard/dashboard";
 
