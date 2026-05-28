@@ -29,6 +29,11 @@ pub fn run() {
             ipc::commands::quit_app,
             ipc::commands::get_settings,
             ipc::commands::save_settings,
+            ipc::commands::list_procs,
+            ipc::commands::start_proc,
+            ipc::commands::stop_proc,
+            ipc::commands::restart_proc,
+            ipc::commands::get_proc_logs,
         ])
         .setup(|app| {
             let handle = app.handle().clone();
@@ -36,6 +41,18 @@ pub fn run() {
                 "server_supervisor starting; version={}",
                 env!("CARGO_PKG_VERSION")
             );
+
+            // Single owner of all dev-server processes. Reconcile any orphans left
+            // by a prior crash, then auto-start the processes flagged autostart.
+            let data_dir = handle
+                .path()
+                .app_data_dir()
+                .unwrap_or_else(|_| std::path::PathBuf::from("."))
+                .join("supervisor");
+            let supervisor = supervisor::Supervisor::new(data_dir);
+            supervisor.reconcile_orphans();
+            supervisor.start_autostart();
+            handle.manage(supervisor);
 
             tray::setup(&handle)?;
 

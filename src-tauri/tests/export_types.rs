@@ -5,7 +5,7 @@
 //! npm `prebuild` / `gen-types` script.
 
 use server_supervisor_lib::settings::Settings;
-use server_supervisor_lib::types::{ProcInfo, ProcStatus};
+use server_supervisor_lib::types::{LogLine, ProcInfo, ProcKind, ProcSpec, ProcStatus};
 use std::fs;
 use std::path::PathBuf;
 use ts_rs::TS;
@@ -28,8 +28,11 @@ fn decl<T: TS + 'static + ?Sized>() -> String {
 #[test]
 fn emit_ipc_types() {
     let mut out = String::from(HEADER);
+    out.push_str(&decl::<ProcKind>());
     out.push_str(&decl::<ProcStatus>());
+    out.push_str(&decl::<ProcSpec>());
     out.push_str(&decl::<ProcInfo>());
+    out.push_str(&decl::<LogLine>());
     out.push_str(&decl::<Settings>());
 
     let path = output_path();

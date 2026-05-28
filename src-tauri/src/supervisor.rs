@@ -1,10 +1,16 @@
-use tauri::AppHandle;
+pub mod config;
+pub mod proc;
+pub mod reaper;
+pub mod registry;
 
-/// Single cleanup entry point: kill every child process the supervisor started.
-///
-/// Phase 2 wires the real process registry plus Windows job-object reaping so
-/// the "no orphans, ever" guarantee holds even on crash. For now this is the
-/// one place app-exit cleanup lives, called from the `ExitRequested` handler.
-pub fn shutdown_all(_app: &AppHandle) {
-    log::info!("supervisor: shutdown_all (no managed processes yet)");
+pub use registry::Supervisor;
+
+use tauri::{AppHandle, Manager};
+
+/// Single cleanup entry point, called from the `ExitRequested` handler. Kills
+/// every child the supervisor started so a real quit never leaves orphans.
+pub fn shutdown_all(app: &AppHandle) {
+    if let Some(sup) = app.try_state::<Supervisor>() {
+        sup.shutdown_all();
+    }
 }
