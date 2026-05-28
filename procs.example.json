@@ -1,0 +1,20 @@
+[
+  {
+    "id": "zng-api",
+    "project": "zng",
+    "name": "API dev server",
+    "cmd": "npm run dev:up",
+    "cwd": "C:/Users/tecno/Desktop/Projects/zng-api",
+    "kind": "generic",
+    "autostart": false
+  },
+  {
+    "id": "ssy-mobile-web",
+    "project": "ssy",
+    "name": "Flutter web",
+    "cmd": "fvm flutter run -d web-server --machine --web-port=8787",
+    "cwd": "C:/Users/tecno/Desktop/Projects/ssy-mobile",
+    "kind": "flutter",
+    "autostart": false
+  }
+]

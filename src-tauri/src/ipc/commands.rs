@@ -3,6 +3,7 @@ use crate::state::AppState;
 use crate::supervisor::Supervisor;
 use crate::types::{LogLine, ProcInfo};
 use std::sync::atomic::Ordering;
+use std::sync::Arc;
 use tauri::{AppHandle, Manager, State};
 
 #[tauri::command]
@@ -24,26 +25,31 @@ pub fn save_settings(app: AppHandle, settings: Settings) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub fn list_procs(sup: State<Supervisor>) -> Vec<ProcInfo> {
+pub fn list_procs(sup: State<Arc<Supervisor>>) -> Vec<ProcInfo> {
     sup.list()
 }
 
 #[tauri::command]
-pub fn start_proc(sup: State<Supervisor>, id: String) -> Result<(), String> {
+pub fn start_proc(sup: State<Arc<Supervisor>>, id: String) -> Result<(), String> {
     sup.start(&id)
 }
 
 #[tauri::command]
-pub fn stop_proc(sup: State<Supervisor>, id: String) -> Result<(), String> {
+pub fn stop_proc(sup: State<Arc<Supervisor>>, id: String) -> Result<(), String> {
     sup.stop(&id)
 }
 
 #[tauri::command]
-pub fn restart_proc(sup: State<Supervisor>, id: String) -> Result<(), String> {
+pub fn restart_proc(sup: State<Arc<Supervisor>>, id: String) -> Result<(), String> {
     sup.restart(&id)
 }
 
 #[tauri::command]
-pub fn get_proc_logs(sup: State<Supervisor>, id: String) -> Result<Vec<LogLine>, String> {
+pub fn reload_proc(sup: State<Arc<Supervisor>>, id: String, full: bool) -> Result<(), String> {
+    sup.reload(&id, full)
+}
+
+#[tauri::command]
+pub fn get_proc_logs(sup: State<Arc<Supervisor>>, id: String) -> Result<Vec<LogLine>, String> {
     sup.logs(&id)
 }

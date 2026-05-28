@@ -101,6 +101,15 @@ impl Supervisor {
         self.start(id)
     }
 
+    /// Flutter-only hot reload / restart via the daemon's stdin.
+    pub fn reload(&self, id: &str, full: bool) -> Result<(), String> {
+        let mut guard = self.procs.lock().unwrap();
+        let p = guard
+            .get_mut(id)
+            .ok_or_else(|| format!("unknown process id: {id}"))?;
+        p.reload(full)
+    }
+
     /// Kill every running child and clear the PID file. Called on app exit.
     pub fn shutdown_all(&self) {
         {

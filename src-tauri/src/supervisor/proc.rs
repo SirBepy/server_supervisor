@@ -1,7 +1,7 @@
-use crate::types::{LogLine, ProcInfo, ProcSpec, ProcStatus};
+use crate::types::{LogLine, ProcInfo, ProcKind, ProcSpec, ProcStatus};
 use std::collections::VecDeque;
-use std::io::{BufRead, BufReader, Read};
-use std::process::{Child, Command, Stdio};
+use std::io::{BufRead, BufReader, Read, Write};
+use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -22,7 +22,10 @@ pub struct ManagedProc {
     pub pid: Option<u32>,
     pub started_at: Option<u64>,
     child: Option<Child>,
+    stdin: Option<ChildStdin>,
     logs: Arc<Mutex<VecDeque<LogLine>>>,
+    /// Flutter daemon appId, captured from the `app.started` stdout event.
+    app_id: Arc<Mutex<Option<String>>>,
 }
 
 impl ManagedProc {
@@ -33,7 +36,9 @@ impl ManagedProc {
             pid: None,
             started_at: None,
             child: None,
+            stdin: None,
             logs: Arc::new(Mutex::new(VecDeque::with_capacity(LOG_CAP))),
+            app_id: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -63,6 +68,7 @@ impl ManagedProc {
                 };
                 self.pid = None;
                 self.child = None;
+                self.stdin = None;
             }
         }
     }
@@ -94,12 +100,15 @@ impl ManagedProc {
         let mut child = command.spawn()?;
         let pid = child.id();
 
+        // Reset appId for the new run; stdout reader re-captures it.
+        *self.app_id.lock().unwrap() = None;
         if let Some(out) = child.stdout.take() {
-            spawn_reader(out, "stdout", self.logs.clone());
+            spawn_reader(out, "stdout", self.logs.clone(), Some(self.app_id.clone()));
         }
         if let Some(err) = child.stderr.take() {
-            spawn_reader(err, "stderr", self.logs.clone());
+            spawn_reader(err, "stderr", self.logs.clone(), None);
         }
+        self.stdin = child.stdin.take();
 
         self.push_log("stdout", format!("[supervisor] started: {}", self.spec.cmd));
         self.child = Some(child);
@@ -117,43 +126,118 @@ impl ManagedProc {
         if let Some(mut child) = self.child.take() {
             let _ = child.wait();
         }
+        self.stdin = None;
         self.status = ProcStatus::Stopped;
         self.pid = None;
         self.started_at = None;
+        *self.app_id.lock().unwrap() = None;
         self.push_log("stdout", "[supervisor] stopped".to_string());
     }
 
-    fn push_log(&self, stream: &str, text: String) {
-        let mut buf = self.logs.lock().unwrap();
-        if buf.len() >= LOG_CAP {
-            buf.pop_front();
+    /// Hot reload / restart a Flutter process by writing an `app.restart` message
+    /// to the `flutter run --machine` daemon's stdin. Web uses `full=true` because
+    /// hot reload is upstream-broken there.
+    pub fn reload(&mut self, full: bool) -> Result<(), String> {
+        if self.spec.kind != ProcKind::Flutter {
+            return Err("reload is only supported for flutter processes".to_string());
         }
-        buf.push_back(LogLine {
-            ts: now_ms(),
-            stream: stream.to_string(),
-            text,
-        });
+        let app_id = self
+            .app_id
+            .lock()
+            .unwrap()
+            .clone()
+            .ok_or("flutter daemon not ready yet (no appId seen on stdout)")?;
+        let stdin = self
+            .stdin
+            .as_mut()
+            .ok_or("process has no stdin handle (not running?)")?;
+        let msg = format!(
+            "[{{\"id\":0,\"method\":\"app.restart\",\"params\":{{\"appId\":\"{}\",\"fullRestart\":{}}}}}]\n",
+            app_id, full
+        );
+        stdin.write_all(msg.as_bytes()).map_err(|e| e.to_string())?;
+        stdin.flush().map_err(|e| e.to_string())?;
+        self.push_log(
+            "stdout",
+            format!("[supervisor] sent app.restart fullRestart={full}"),
+        );
+        Ok(())
     }
+
+    fn push_log(&self, stream: &str, text: String) {
+        push_line(&self.logs, stream, text);
+    }
+}
+
+fn push_line(logs: &Arc<Mutex<VecDeque<LogLine>>>, stream: &str, text: String) {
+    let mut buf = logs.lock().unwrap();
+    if buf.len() >= LOG_CAP {
+        buf.pop_front();
+    }
+    buf.push_back(LogLine {
+        ts: now_ms(),
+        stream: stream.to_string(),
+        text,
+    });
+}
+
+/// Parse a `flutter run --machine` line for the `app.started` event and return its appId.
+fn parse_flutter_app_id(line: &str) -> Option<String> {
+    let trimmed = line.trim();
+    if !trimmed.starts_with('[') || !trimmed.contains("app.started") {
+        return None;
+    }
+    let arr: Vec<serde_json::Value> = serde_json::from_str(trimmed).ok()?;
+    for evt in arr {
+        if evt.get("event").and_then(|e| e.as_str()) == Some("app.started") {
+            if let Some(id) = evt
+                .get("params")
+                .and_then(|p| p.get("appId"))
+                .and_then(|a| a.as_str())
+            {
+                return Some(id.to_string());
+            }
+        }
+    }
+    None
 }
 
 fn spawn_reader<R: Read + Send + 'static>(
     reader: R,
     stream: &'static str,
     logs: Arc<Mutex<VecDeque<LogLine>>>,
+    app_id: Option<Arc<Mutex<Option<String>>>>,
 ) {
     std::thread::spawn(move || {
         let buffered = BufReader::new(reader);
         for line in buffered.lines() {
             let Ok(text) = line else { break };
-            let mut buf = logs.lock().unwrap();
-            if buf.len() >= LOG_CAP {
-                buf.pop_front();
+            if let Some(slot) = &app_id {
+                if slot.lock().unwrap().is_none() {
+                    if let Some(id) = parse_flutter_app_id(&text) {
+                        *slot.lock().unwrap() = Some(id);
+                    }
+                }
             }
-            buf.push_back(LogLine {
-                ts: now_ms(),
-                stream: stream.to_string(),
-                text,
-            });
+            push_line(&logs, stream, text);
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_flutter_app_id;
+
+    #[test]
+    fn parses_app_started_event() {
+        let line = r#"[{"event":"app.started","params":{"appId":"abc123","supportsRestart":true}}]"#;
+        assert_eq!(parse_flutter_app_id(line), Some("abc123".to_string()));
+    }
+
+    #[test]
+    fn ignores_non_started_lines() {
+        assert_eq!(parse_flutter_app_id("Performing hot restart..."), None);
+        assert_eq!(parse_flutter_app_id(r#"[{"event":"app.progress"}]"#), None);
+        assert_eq!(parse_flutter_app_id("[not json"), None);
+    }
 }

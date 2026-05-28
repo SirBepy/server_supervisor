@@ -1,3 +1,4 @@
+pub mod api;
 pub mod ipc;
 pub mod settings;
 pub mod state;
@@ -33,6 +34,7 @@ pub fn run() {
             ipc::commands::start_proc,
             ipc::commands::stop_proc,
             ipc::commands::restart_proc,
+            ipc::commands::reload_proc,
             ipc::commands::get_proc_logs,
         ])
         .setup(|app| {
@@ -49,9 +51,19 @@ pub fn run() {
                 .app_data_dir()
                 .unwrap_or_else(|_| std::path::PathBuf::from("."))
                 .join("supervisor");
-            let supervisor = supervisor::Supervisor::new(data_dir);
+            let _ = std::fs::create_dir_all(&data_dir);
+            let supervisor = std::sync::Arc::new(supervisor::Supervisor::new(data_dir.clone()));
             supervisor.reconcile_orphans();
             supervisor.start_autostart();
+
+            // Localhost API for programmatic (AI agent) control.
+            let port = settings::load(&handle).api_port;
+            let token = api::ensure_token(&data_dir);
+            let api_sup = supervisor.clone();
+            tauri::async_runtime::spawn(async move {
+                api::serve(api_sup, port, token).await;
+            });
+
             handle.manage(supervisor);
 
             tray::setup(&handle)?;
