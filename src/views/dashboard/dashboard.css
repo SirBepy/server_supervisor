@@ -1,0 +1,139 @@
+.topbar {
+  position: sticky;
+  top: 0;
+  background: var(--bg);
+  padding: 16px 20px 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.topbar h1 {
+  font-size: 16px;
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.group {
+  padding: 12px 20px 4px;
+}
+
+.group h2 {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+  margin: 8px 0;
+}
+
+.card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 12px;
+  margin-bottom: 8px;
+}
+
+.meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.name {
+  font-weight: 600;
+}
+
+.tag {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--accent);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 1px 5px;
+}
+
+.pid {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--muted);
+  flex: 0 0 auto;
+}
+.dot.running {
+  background: #46d369;
+}
+.dot.stopped {
+  background: #5a616e;
+}
+.dot.starting {
+  background: #e0b341;
+}
+.dot.crashed {
+  background: #e0564b;
+}
+
+.actions {
+  display: flex;
+  gap: 6px;
+}
+
+.actions button {
+  background: transparent;
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 9px;
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+}
+.actions button:hover {
+  border-color: var(--accent);
+}
+.actions button.primary {
+  color: #46d369;
+}
+.actions button.active {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.error {
+  margin: 10px 20px;
+  padding: 8px 10px;
+  border: 1px solid #e0564b;
+  border-radius: 6px;
+  color: #ffb4ad;
+  font-size: 13px;
+}
+
+.empty {
+  color: var(--muted);
+  padding: 16px 20px;
+  line-height: 1.5;
+}
+
+.logs {
+  margin: 8px 20px 20px;
+  padding: 12px;
+  background: #0a0c10;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  max-height: 260px;
+  overflow: auto;
+  font-family: "Cascadia Code", Consolas, monospace;
+  font-size: 12px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
