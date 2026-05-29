@@ -40,6 +40,13 @@ type Modal =
       query: string;
       highlight: number;
       check: CommandCheck | null;
+    }
+  | {
+      t: "confirmDeleteCommand";
+      projectId: string;
+      commandId: string;
+      cmdName: string;
+      lastOne: boolean;
     };
 
 let root: HTMLElement;
@@ -185,6 +192,11 @@ async function confirmAddProject() {
     draw();
     return;
   }
+  if (m.picked.length === 0) {
+    error = "add at least one command";
+    draw();
+    return;
+  }
   // Empty name falls back to the folder name (shown as the input's placeholder).
   const name = m.name.trim() || basename(m.root);
   try {
@@ -203,8 +215,9 @@ async function confirmAddProject() {
 async function confirmAddCommand() {
   if (modal?.t !== "addCommand") return;
   const m = modal;
+  const name = m.name.trim() || deriveName(m.cmd);
   try {
-    await ipc.addCommand(m.projectId, m.name, m.cmd, m.kind, false, m.useDynamicPort);
+    await ipc.addCommand(m.projectId, name, m.cmd, m.kind, false, m.useDynamicPort);
     error = null;
     modal = null;
   } catch (e) {
@@ -318,7 +331,19 @@ function commandRow(project: Project, cmd: Project["commands"][number]): Templat
         >
           <i class="ph ph-terminal-window"></i>
         </button>
-        <button title="Remove command" @click=${() => act(ipc.removeCommand(project.id, cmd.id))}>
+        <button
+          title="Remove command"
+          @click=${() => {
+            modal = {
+              t: "confirmDeleteCommand",
+              projectId: project.id,
+              commandId: cmd.id,
+              cmdName: cmd.name,
+              lastOne: project.commands.length === 1,
+            };
+            draw();
+          }}
+        >
           <i class="ph ph-trash"></i>
         </button>
       </div>
@@ -348,7 +373,7 @@ function projectSection(project: Project): TemplateResult {
                 name: "",
                 cmd: "",
                 kind: "generic",
-                useDynamicPort: false,
+                useDynamicPort: true,
                 query: "",
                 highlight: -1,
                 check: null,
@@ -358,9 +383,6 @@ function projectSection(project: Project): TemplateResult {
             }}
           >
             <i class="ph ph-plus"></i> command
-          </button>
-          <button title="Remove project" @click=${() => act(ipc.removeProject(project.id))}>
-            <i class="ph ph-trash"></i>
           </button>
         </div>
       </div>
@@ -626,13 +648,7 @@ function addCommandModal(m: Extract<Modal, { t: "addCommand" }>): TemplateResult
     <div class="overlay">
       <div class="dialog">
         <h3>Add command</h3>
-        <div class="field-row">
-          <label>Name</label>
-          <input .value=${m.name} @input=${(e: Event) => (m.name = (e.target as HTMLInputElement).value)} />
-        </div>
-        <div class="field-row">
-          <label>Command</label>
-          ${comboBox({
+        ${comboBox({
             query: m.query,
             highlight: m.highlight,
             suggestions,
@@ -674,14 +690,10 @@ function addCommandModal(m: Extract<Modal, { t: "addCommand" }>): TemplateResult
               draw();
             },
           })}
-        </div>
         ${m.check && !m.check.ok
-          ? html`<div class="field-row cmd-warn-row">
-              <label></label>
-              <span class="cmd-warn">
-                <i class="ph ph-warning"></i>
-                <span title=${m.check.reason}>${m.check.reason}</span>
-              </span>
+          ? html`<div class="cmd-warn">
+              <i class="ph ph-warning"></i>
+              <span title=${m.check.reason}>${m.check.reason}</span>
             </div>`
           : nothing}
         <div class="field-row">
@@ -711,9 +723,47 @@ function addCommandModal(m: Extract<Modal, { t: "addCommand" }>): TemplateResult
   `;
 }
 
+function confirmDeleteCommandModal(
+  m: Extract<Modal, { t: "confirmDeleteCommand" }>,
+): TemplateResult {
+  return html`
+    <div class="overlay">
+      <div class="dialog">
+        <h3>Delete command</h3>
+        <p class="muted note">
+          Delete <code>${m.cmdName}</code>?
+          ${m.lastOne
+            ? html`<br />It's the only command, so the project will be removed too.`
+            : nothing}
+        </p>
+        <div class="dialog-actions">
+          <button @click=${closeModal}>Cancel</button>
+          <button
+            class="danger"
+            @click=${async () => {
+              const { projectId, commandId } = m;
+              modal = null;
+              await act(ipc.removeCommand(projectId, commandId));
+            }}
+          >
+            Delete
+          </button>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
 function modalView(): TemplateResult | typeof nothing {
   if (!modal) return nothing;
-  return modal.t === "addProject" ? addProjectModal(modal) : addCommandModal(modal);
+  switch (modal.t) {
+    case "addProject":
+      return addProjectModal(modal);
+    case "addCommand":
+      return addCommandModal(modal);
+    case "confirmDeleteCommand":
+      return confirmDeleteCommandModal(modal);
+  }
 }
 
 function draw() {

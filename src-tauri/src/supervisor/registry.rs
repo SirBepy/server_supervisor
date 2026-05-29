@@ -300,6 +300,11 @@ impl Supervisor {
         if project.commands.len() == before {
             return Err(format!("unknown command: {command_id}"));
         }
+        // Auto-remove the project once its last command is gone (there is no
+        // manual project delete; an empty project cleans itself up).
+        if project.commands.is_empty() {
+            projects.retain(|p| p.id != project_id);
+        }
         config::save(&self.data_dir, &projects);
         drop(projects);
 

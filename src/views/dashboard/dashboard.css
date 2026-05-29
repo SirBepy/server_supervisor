@@ -334,6 +334,12 @@
   color: #0a0c10;
   font-weight: 600;
 }
+.dialog-actions button.danger {
+  background: #e0564b;
+  border-color: #e0564b;
+  color: #0a0c10;
+  font-weight: 600;
+}
 .muted {
   color: var(--muted);
   font-size: 12px;
@@ -454,6 +460,7 @@
   display: inline-flex;
   align-items: center;
   gap: 5px;
+  margin: 4px 0 0;
   color: #c9923a;
   font-size: 12px;
   opacity: 0.85;
@@ -465,5 +472,6 @@
   margin-top: -2px;
 }
 .chip .cmd-warn {
+  margin: 0;
   font-size: 13px;
 }

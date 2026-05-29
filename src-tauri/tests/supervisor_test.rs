@@ -134,12 +134,49 @@ fn crud_add_remove_project_and_command() {
     assert_eq!(projects.len(), 1);
     assert_eq!(projects[0].commands.len(), 1);
 
-    // Removing the command drops it from the runtime map and config.
+    // Removing the only command drops it from the runtime map and config, and
+    // auto-removes the now-empty project.
     sup.remove_command(&p.id, &c.id).unwrap();
     assert!(sup.list().is_empty());
+    assert!(sup.list_projects().is_empty(), "empty project should be auto-deleted");
+}
 
-    sup.remove_project(&p.id).unwrap();
-    assert!(sup.list_projects().is_empty());
+#[test]
+fn removing_last_command_deletes_project() {
+    let dir = tempfile::tempdir().unwrap();
+    let sup = new_sup(dir.path());
+
+    let p = sup.add_project("My App".into(), "C:/tmp".into()).unwrap();
+    let c = sup
+        .add_command(&p.id, "Dev".into(), "ping -n 2 127.0.0.1".into(), ProcKind::Generic, false, false)
+        .unwrap();
+
+    // Removing the only command removes the now-empty project too.
+    sup.remove_command(&p.id, &c.id).unwrap();
+    assert!(
+        !sup.list_projects().iter().any(|x| x.id == p.id),
+        "project should be auto-deleted once its last command is gone"
+    );
+}
+
+#[test]
+fn removing_one_of_several_keeps_project() {
+    let dir = tempfile::tempdir().unwrap();
+    let sup = new_sup(dir.path());
+
+    let p = sup.add_project("My App".into(), "C:/tmp".into()).unwrap();
+    let c1 = sup
+        .add_command(&p.id, "Dev".into(), "ping -n 2 127.0.0.1".into(), ProcKind::Generic, false, false)
+        .unwrap();
+    sup.add_command(&p.id, "Build".into(), "ping -n 3 127.0.0.1".into(), ProcKind::Generic, false, false)
+        .unwrap();
+
+    // Removing one of two commands leaves the project with the other command.
+    sup.remove_command(&p.id, &c1.id).unwrap();
+    let projects = sup.list_projects();
+    let proj = projects.iter().find(|x| x.id == p.id);
+    assert!(proj.is_some(), "project must remain while it still has a command");
+    assert_eq!(proj.unwrap().commands.len(), 1, "exactly the untouched command should remain");
 }
 
 #[test]
