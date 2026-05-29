@@ -80,24 +80,49 @@ impl Supervisor {
     }
 
     pub fn start(&self, id: &str) -> Result<(), String> {
-        {
+        // Acquire a probed, free port if this command opts in (before locking
+        // procs, since acquire does OS work; reserve-before-spawn prevents races).
+        let want_dynamic = {
+            let guard = self.procs.lock().unwrap();
+            guard
+                .get(id)
+                .map(|p| p.spec.use_dynamic_port)
+                .unwrap_or(false)
+        };
+        let port = if want_dynamic {
+            Some(self.acquire_free_port(id)?)
+        } else {
+            None
+        };
+        let res = {
             let mut guard = self.procs.lock().unwrap();
             let p = guard
                 .get_mut(id)
                 .ok_or_else(|| format!("unknown process id: {id}"))?;
-            p.start().map_err(|e| e.to_string())?;
+            p.start(port).map_err(|e| e.to_string())
+        };
+        if res.is_err() {
+            if let Some(p) = port {
+                self.ports.release(p);
+            }
         }
+        res?;
         self.persist_pids();
         Ok(())
     }
 
     pub fn stop(&self, id: &str) -> Result<(), String> {
+        let released;
         {
             let mut guard = self.procs.lock().unwrap();
             let p = guard
                 .get_mut(id)
                 .ok_or_else(|| format!("unknown process id: {id}"))?;
+            released = p.acquired_port();
             p.stop();
+        }
+        if let Some(port) = released {
+            self.ports.release(port);
         }
         self.persist_pids();
         Ok(())
@@ -230,6 +255,18 @@ impl Supervisor {
             proc.stop();
         }
         Ok(())
+    }
+
+    /// Acquire a free port from the registry, logging if the OS reports it as
+    /// held by another process despite the registry's bind-probe (rare race).
+    fn acquire_free_port(&self, id: &str) -> Result<u16, String> {
+        let port = self.ports.acquire()?;
+        if let Some(holder) = reaper::port_holder(port) {
+            log::warn!(
+                "supervisor: port {port} appears held by {holder} despite probe; using it for {id} anyway"
+            );
+        }
+        Ok(port)
     }
 
     fn persist_pids(&self) {

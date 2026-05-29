@@ -26,6 +26,9 @@ pub struct ManagedProc {
     logs: Arc<Mutex<VecDeque<LogLine>>>,
     /// Flutter daemon appId, captured from the `app.started` stdout event.
     app_id: Arc<Mutex<Option<String>>>,
+    /// Dynamic port handed out by the registry for the current run, if any.
+    /// The Supervisor reads this on stop to release it back to the registry.
+    acquired_port: Option<u16>,
 }
 
 impl ManagedProc {
@@ -39,7 +42,13 @@ impl ManagedProc {
             stdin: None,
             logs: Arc::new(Mutex::new(VecDeque::with_capacity(LOG_CAP))),
             app_id: Arc::new(Mutex::new(None)),
+            acquired_port: None,
         }
+    }
+
+    /// The dynamic port currently held for this run, if any.
+    pub fn acquired_port(&self) -> Option<u16> {
+        self.acquired_port
     }
 
     pub fn info(&self) -> ProcInfo {
@@ -50,7 +59,7 @@ impl ManagedProc {
             kind: self.spec.kind.clone(),
             status: self.status.clone(),
             pid: self.pid,
-            port: None,
+            port: self.acquired_port,
         }
     }
 
@@ -76,20 +85,31 @@ impl ManagedProc {
 
     /// Spawn the process via `cmd /C <cmd>` in its own process group so the whole
     /// tree can be killed later. Returns the spawned PID.
-    pub fn start(&mut self) -> std::io::Result<u32> {
+    pub fn start(&mut self, dynamic_port: Option<u16>) -> std::io::Result<u32> {
         self.refresh();
         if matches!(self.status, ProcStatus::Running | ProcStatus::Starting) {
             return Ok(self.pid.unwrap_or(0));
         }
 
+        // Apply the port override (no project files touched): substitute any
+        // `{PORT}` placeholder in the command, and set the PORT env var below.
+        let cmd_str = match dynamic_port {
+            Some(p) => self.spec.cmd.replace("{PORT}", &p.to_string()),
+            None => self.spec.cmd.clone(),
+        };
+
         let mut command = Command::new("cmd");
         command
             .arg("/C")
-            .arg(&self.spec.cmd)
+            .arg(&cmd_str)
             .current_dir(&self.spec.cwd)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
+
+        if let Some(p) = dynamic_port {
+            command.env("PORT", p.to_string()); // env channel for process.env.PORT tools
+        }
 
         #[cfg(windows)]
         {
@@ -110,8 +130,9 @@ impl ManagedProc {
             spawn_reader(err, "stderr", self.logs.clone(), None);
         }
         self.stdin = child.stdin.take();
+        self.acquired_port = dynamic_port;
 
-        self.push_log("stdout", format!("[supervisor] started: {}", self.spec.cmd));
+        self.push_log("stdout", format!("[supervisor] started: {cmd_str}"));
         self.child = Some(child);
         self.pid = Some(pid);
         self.started_at = Some(now_ms());

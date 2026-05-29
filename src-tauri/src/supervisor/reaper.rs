@@ -86,3 +86,36 @@ fn pid_is_our_wrapper(pid: u32) -> bool {
 fn pid_is_our_wrapper(_pid: u32) -> bool {
     false
 }
+
+/// Best-effort: name of the process holding `port`, via netstat -> pid -> tasklist.
+/// Used only for a diagnostic warning; returns None if nothing is found.
+#[cfg(windows)]
+pub fn port_holder(port: u16) -> Option<String> {
+    use std::os::windows::process::CommandExt;
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    let out = std::process::Command::new("cmd")
+        .args(["/C", &format!("netstat -ano | findstr :{port}")])
+        .creation_flags(CREATE_NO_WINDOW)
+        .output()
+        .ok()?;
+    let text = String::from_utf8_lossy(&out.stdout);
+    let pid: &str = text.split_whitespace().last()?;
+    if pid == "0" || pid.is_empty() {
+        return None;
+    }
+    let t = std::process::Command::new("tasklist")
+        .args(["/FI", &format!("PID eq {pid}"), "/NH"])
+        .creation_flags(CREATE_NO_WINDOW)
+        .output()
+        .ok()?;
+    let name = String::from_utf8_lossy(&t.stdout);
+    name.split_whitespace()
+        .next()
+        .map(|s| s.to_string())
+        .filter(|s| s != "INFO:")
+}
+
+#[cfg(not(windows))]
+pub fn port_holder(_port: u16) -> Option<String> {
+    None
+}
