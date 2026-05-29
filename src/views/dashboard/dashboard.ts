@@ -119,13 +119,21 @@ async function detectInto(path: string): Promise<DetectedCommand[]> {
   }
 }
 
+// Focus the name input once the modal has rendered, so picking a folder lands
+// the cursor there immediately (folder name shows as a placeholder hint).
+function focusNameField() {
+  window.setTimeout(() => {
+    root.querySelector<HTMLInputElement>(".dialog .field-row input")?.focus();
+  }, 0);
+}
+
 async function startAddProject() {
   const picked = await open({ directory: true, multiple: false, title: "Pick a project folder" });
   if (typeof picked !== "string") return;
   const detected = await detectInto(picked);
   modal = {
     t: "addProject",
-    name: basename(picked),
+    name: "",
     root: picked,
     detected,
     picked: [],
@@ -135,6 +143,7 @@ async function startAddProject() {
   };
   comboOpen = false;
   draw();
+  focusNameField();
 }
 
 async function repickFolder() {
@@ -144,7 +153,7 @@ async function repickFolder() {
   const detected = await detectInto(picked);
   modal = {
     t: "addProject",
-    name: modal.name.trim() || basename(picked),
+    name: modal.name.trim(),
     root: picked,
     detected,
     picked: [],
@@ -154,18 +163,21 @@ async function repickFolder() {
   };
   comboOpen = false;
   draw();
+  focusNameField();
 }
 
 async function confirmAddProject() {
   if (modal?.t !== "addProject") return;
   const m = modal;
-  if (!m.name.trim() || !m.root.trim()) {
-    error = "name and folder are required";
+  if (!m.root.trim()) {
+    error = "a folder is required";
     draw();
     return;
   }
+  // Empty name falls back to the folder name (shown as the input's placeholder).
+  const name = m.name.trim() || basename(m.root);
   try {
-    const project = await ipc.addProject(m.name, m.root);
+    const project = await ipc.addProject(name, m.root);
     for (const p of m.picked) {
       await ipc.addCommand(project.id, p.name, p.cmd, p.kind, false, false);
     }
@@ -366,7 +378,9 @@ function comboBox(c: ComboConfig): TemplateResult {
         class="combo-input"
         placeholder=${c.placeholder ?? ""}
         .value=${c.query}
-        @focus=${() => {
+        @pointerdown=${() => {
+          // Open on an explicit click, NOT on bare focus — otherwise returning
+          // to the window refocuses the input and the same click lands on a row.
           comboOpen = true;
           draw();
         }}
@@ -377,7 +391,10 @@ function comboBox(c: ComboConfig): TemplateResult {
             draw();
           }, 120);
         }}
-        @input=${(e: Event) => c.onQuery((e.target as HTMLInputElement).value)}
+        @input=${(e: Event) => {
+          comboOpen = true;
+          c.onQuery((e.target as HTMLInputElement).value);
+        }}
         @keydown=${onKeydown}
       />
       ${comboOpen && rows > 0
@@ -451,6 +468,7 @@ function addProjectModal(m: Extract<Modal, { t: "addProject" }>): TemplateResult
         <div class="field-row">
           <label>Name</label>
           <input
+            placeholder=${basename(m.root)}
             .value=${m.name}
             @input=${(e: Event) => (m.name = (e.target as HTMLInputElement).value)}
           />
@@ -458,7 +476,7 @@ function addProjectModal(m: Extract<Modal, { t: "addProject" }>): TemplateResult
         <div class="field-row">
           <label>Folder</label>
           <span class="folder" title=${m.root}>${m.root}</span>
-          <button class="ghost" @click=${() => void repickFolder()}>
+          <button class="ghost" tabindex="-1" @click=${() => void repickFolder()}>
             <i class="ph ph-folder-open"></i> Pick again
           </button>
         </div>
@@ -478,9 +496,10 @@ function addProjectModal(m: Extract<Modal, { t: "addProject" }>): TemplateResult
               ${m.picked.map(
                 (p) => html`
                   <span class="chip">
-                    ${p.name}
+                    <code>${p.cmd}</code>
                     <button
                       title="Remove"
+                      tabindex="-1"
                       @click=${() => {
                         m.picked = m.picked.filter((x) => x.cmd !== p.cmd);
                         draw();
@@ -502,7 +521,7 @@ function addProjectModal(m: Extract<Modal, { t: "addProject" }>): TemplateResult
           placeholder: "Search detected commands or type your own…",
           onQuery: (val) => {
             m.query = val;
-            m.highlight = -1;
+            m.highlight = 0; // pre-highlight the top row so Enter takes it
             draw();
           },
           onHighlight: (i) => {
@@ -550,7 +569,7 @@ function addCommandModal(m: Extract<Modal, { t: "addCommand" }>): TemplateResult
             onQuery: (val) => {
               m.query = val;
               m.cmd = val; // free-text: cmd tracks the typed text
-              m.highlight = -1;
+              m.highlight = 0; // pre-highlight the top row so Enter takes it
               draw();
             },
             onHighlight: (i) => {

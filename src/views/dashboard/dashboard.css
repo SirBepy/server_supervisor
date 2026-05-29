@@ -203,7 +203,9 @@
   padding: 18px;
   width: min(560px, 92vw);
   max-height: 86vh;
-  overflow: auto;
+  /* visible (not auto) so the combobox dropdown can spill past the dialog edge
+     instead of forcing an inner scrollbar. */
+  overflow: visible;
 }
 .dialog h3 {
   margin: 0 0 12px;
@@ -316,6 +318,11 @@
   justify-content: flex-end;
   gap: 8px;
   margin-top: 16px;
+  /* Layer above the absolute combobox dropdown (z 30) with a solid backdrop so
+     the dropdown floats behind the buttons rather than pushing them out. */
+  position: relative;
+  z-index: 40;
+  background: var(--surface);
 }
 .dialog-actions button {
   background: transparent;
@@ -358,6 +365,10 @@
   border-color: var(--accent);
 }
 .combo-pop {
+  /* Absolute so it floats without pushing the Cancel/Add buttons out of the
+     dialog; the dialog's overflow:visible lets it spill past the edge instead
+     of forcing a scrollbar. The actions bar layers on top (see .dialog-actions)
+     so the dropdown never blocks the buttons. */
   position: absolute;
   left: 0;
   right: 0;
