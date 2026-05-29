@@ -448,3 +448,22 @@
 .chip button:hover {
   color: var(--fg);
 }
+
+/* ----- advisory command-validity warning (non-blocking) ----- */
+.cmd-warn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: #c9923a;
+  font-size: 12px;
+  opacity: 0.85;
+}
+.cmd-warn i {
+  font-size: 13px;
+}
+.cmd-warn-row {
+  margin-top: -2px;
+}
+.chip .cmd-warn {
+  font-size: 13px;
+}

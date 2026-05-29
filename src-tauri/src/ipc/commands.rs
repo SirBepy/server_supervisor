@@ -1,7 +1,8 @@
 use crate::ports::{PortEntry, PortRegistry};
 use crate::settings::{self, Settings};
 use crate::state::AppState;
-use crate::supervisor::{detect, Supervisor};
+use crate::supervisor::validate::CommandCheck;
+use crate::supervisor::{detect, validate, Supervisor};
 use crate::types::{Command, DetectedCommand, LogLine, ProcInfo, ProcKind, Project};
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
@@ -99,6 +100,11 @@ pub fn remove_command(
 #[tauri::command]
 pub fn detect_commands(path: String) -> Vec<DetectedCommand> {
     detect::detect(std::path::Path::new(&path))
+}
+
+#[tauri::command]
+pub fn validate_command(root: String, cmd: String) -> CommandCheck {
+    validate::validate_command(&root, &cmd)
 }
 
 #[tauri::command]

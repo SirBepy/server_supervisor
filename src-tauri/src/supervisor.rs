@@ -3,6 +3,7 @@ pub mod detect;
 pub mod proc;
 pub mod reaper;
 pub mod registry;
+pub mod validate;
 
 pub use registry::Supervisor;
 

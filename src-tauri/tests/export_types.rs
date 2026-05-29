@@ -6,6 +6,7 @@
 
 use server_supervisor_lib::ports::PortEntry;
 use server_supervisor_lib::settings::Settings;
+use server_supervisor_lib::supervisor::validate::CommandCheck;
 use server_supervisor_lib::types::{
     Command, DetectedCommand, LogLine, ProcInfo, ProcKind, ProcSpec, ProcStatus, Project,
 };
@@ -41,6 +42,7 @@ fn emit_ipc_types() {
     out.push_str(&decl::<DetectedCommand>());
     out.push_str(&decl::<PortEntry>());
     out.push_str(&decl::<Settings>());
+    out.push_str(&decl::<CommandCheck>());
 
     let path = output_path();
     if let Some(parent) = path.parent() {

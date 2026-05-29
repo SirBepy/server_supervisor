@@ -7,6 +7,7 @@ import type {
   Command,
   DetectedCommand,
   ProcKind,
+  CommandCheck,
 } from "../types/ipc.generated";
 
 // Runtime control (composite "projectId:commandId" ids).
@@ -44,6 +45,10 @@ export const removeCommand = (projectId: string, commandId: string) =>
   invoke<void>("remove_command", { projectId, commandId });
 export const detectCommands = (path: string) =>
   invoke<DetectedCommand[]>("detect_commands", { path });
+// Advisory, non-blocking executable-resolution check (never runs the command).
+export function validateCommand(root: string, cmd: string): Promise<CommandCheck> {
+  return invoke("validate_command", { root, cmd });
+}
 
 export const getSettings = () => invoke<Settings>("get_settings");
 export const quitApp = () => invoke<void>("quit_app");

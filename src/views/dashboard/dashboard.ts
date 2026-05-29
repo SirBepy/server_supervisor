@@ -2,11 +2,19 @@ import { html, render, nothing, type TemplateResult } from "lit-html";
 import { open } from "@tauri-apps/plugin-dialog";
 import "./dashboard.css";
 import * as ipc from "../../shared/ipc";
-import type { ProcInfo, Project, DetectedCommand, ProcKind } from "../../types/ipc.generated";
+import type {
+  ProcInfo,
+  Project,
+  DetectedCommand,
+  ProcKind,
+  CommandCheck,
+} from "../../types/ipc.generated";
 
 const POLL_MS = 2500;
+// Debounce window for the advisory command-validity check.
+const VALIDATE_DEBOUNCE_MS = 350;
 
-type PickedCommand = { name: string; cmd: string; kind: ProcKind };
+type PickedCommand = { name: string; cmd: string; kind: ProcKind; ok?: boolean };
 
 type Modal =
   | null
@@ -31,6 +39,7 @@ type Modal =
       useDynamicPort: boolean;
       query: string;
       highlight: number;
+      check: CommandCheck | null;
     };
 
 let root: HTMLElement;
@@ -42,6 +51,8 @@ let error: string | null = null;
 let modal: Modal = null;
 // Whether the combobox dropdown is currently shown (driven by input focus).
 let comboOpen = false;
+// Debounce handle for the advisory command-validity check (add-command modal).
+let validateTimer: number | undefined;
 
 export function mountDashboard(el: HTMLElement) {
   root = el;
@@ -204,7 +215,59 @@ async function confirmAddCommand() {
 
 function closeModal() {
   modal = null;
+  if (validateTimer !== undefined) {
+    window.clearTimeout(validateTimer);
+    validateTimer = undefined;
+  }
   draw();
+}
+
+// Debounced advisory check for the add-command modal's `cmd`. Stale-guarded:
+// only applies if the same modal is still open and its cmd still matches what
+// was validated. Never blocks; failures are silently ignored.
+function scheduleValidate() {
+  if (validateTimer !== undefined) window.clearTimeout(validateTimer);
+  validateTimer = window.setTimeout(() => {
+    validateTimer = undefined;
+    if (modal?.t !== "addCommand") return;
+    const m = modal;
+    const cmd = m.cmd.trim();
+    if (!cmd) {
+      m.check = null;
+      draw();
+      return;
+    }
+    const root = m.root;
+    void ipc
+      .validateCommand(root, cmd)
+      .then((res) => {
+        // Guard against stale results from a fast typer / reopened modal.
+        if (modal?.t !== "addCommand") return;
+        if (modal !== m || modal.cmd.trim() !== cmd || modal.root !== root) return;
+        m.check = res;
+        draw();
+      })
+      .catch(() => {
+        /* advisory only: ignore resolver errors */
+      });
+  }, VALIDATE_DEBOUNCE_MS);
+}
+
+// Validate a free-text wizard command and stamp `ok` on the matching chip.
+// Stale-guarded by modal identity + cmd presence; non-blocking.
+function validatePickedFreeText(m: Extract<Modal, { t: "addProject" }>, cmd: string) {
+  void ipc
+    .validateCommand(m.root, cmd)
+    .then((res) => {
+      if (modal !== m) return;
+      const chip = m.picked.find((p) => p.cmd === cmd);
+      if (!chip) return; // removed before resolve
+      chip.ok = res.ok;
+      draw();
+    })
+    .catch(() => {
+      /* advisory only */
+    });
 }
 
 // ----- rendering -----
@@ -288,6 +351,7 @@ function projectSection(project: Project): TemplateResult {
                 useDynamicPort: false,
                 query: "",
                 highlight: -1,
+                check: null,
               };
               comboOpen = false;
               draw();
@@ -497,6 +561,12 @@ function addProjectModal(m: Extract<Modal, { t: "addProject" }>): TemplateResult
                 (p) => html`
                   <span class="chip">
                     <code>${p.cmd}</code>
+                    ${p.ok === false
+                      ? html`<i
+                          class="ph ph-warning cmd-warn"
+                          title="may not be a real command"
+                        ></i>`
+                      : nothing}
                     <button
                       title="Remove"
                       tabindex="-1"
@@ -528,10 +598,12 @@ function addProjectModal(m: Extract<Modal, { t: "addProject" }>): TemplateResult
             m.highlight = i;
             draw();
           },
-          onSelect: (d) => addPicked({ name: d.name, cmd: d.cmd, kind: d.kind }),
+          onSelect: (d) => addPicked({ name: d.name, cmd: d.cmd, kind: d.kind, ok: true }),
           onFreeText: () => {
             const cmd = m.query.trim();
-            if (cmd) addPicked({ name: deriveName(cmd), cmd, kind: "generic" });
+            if (!cmd) return;
+            addPicked({ name: deriveName(cmd), cmd, kind: "generic" });
+            validatePickedFreeText(m, cmd);
           },
         })}
 
@@ -570,6 +642,8 @@ function addCommandModal(m: Extract<Modal, { t: "addCommand" }>): TemplateResult
               m.query = val;
               m.cmd = val; // free-text: cmd tracks the typed text
               m.highlight = 0; // pre-highlight the top row so Enter takes it
+              m.check = null; // clear stale warning until the debounce resolves
+              scheduleValidate();
               draw();
             },
             onHighlight: (i) => {
@@ -582,6 +656,11 @@ function addCommandModal(m: Extract<Modal, { t: "addCommand" }>): TemplateResult
               m.kind = d.kind;
               m.query = d.cmd;
               m.highlight = -1;
+              m.check = null; // a detected command is inherently valid
+              if (validateTimer !== undefined) {
+                window.clearTimeout(validateTimer);
+                validateTimer = undefined;
+              }
               comboOpen = false;
               draw();
             },
@@ -591,10 +670,20 @@ function addCommandModal(m: Extract<Modal, { t: "addCommand" }>): TemplateResult
               if (!m.name.trim()) m.name = deriveName(cmd);
               m.highlight = -1;
               comboOpen = false;
+              scheduleValidate();
               draw();
             },
           })}
         </div>
+        ${m.check && !m.check.ok
+          ? html`<div class="field-row cmd-warn-row">
+              <label></label>
+              <span class="cmd-warn">
+                <i class="ph ph-warning"></i>
+                <span title=${m.check.reason}>${m.check.reason}</span>
+              </span>
+            </div>`
+          : nothing}
         <div class="field-row">
           <label>Kind</label>
           <select
