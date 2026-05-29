@@ -245,6 +245,7 @@ impl Supervisor {
         cmd: String,
         kind: ProcKind,
         autostart: bool,
+        use_dynamic_port: bool,
     ) -> Result<Command, String> {
         let name = name.trim().to_string();
         let cmd = cmd.trim().to_string();
@@ -263,7 +264,7 @@ impl Supervisor {
             cmd,
             kind,
             autostart,
-            use_dynamic_port: false,
+            use_dynamic_port,
         };
         project.commands.push(command.clone());
         let project_snapshot = project.clone();

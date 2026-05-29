@@ -15,7 +15,14 @@ type Modal =
       detected: DetectedCommand[];
       selected: Set<number>;
     }
-  | { t: "addCommand"; projectId: string; name: string; cmd: string; kind: ProcKind };
+  | {
+      t: "addCommand";
+      projectId: string;
+      name: string;
+      cmd: string;
+      kind: ProcKind;
+      useDynamicPort: boolean;
+    };
 
 let root: HTMLElement;
 let projects: Project[] = [];
@@ -139,7 +146,7 @@ async function confirmAddProject() {
     const project = await ipc.addProject(m.name, m.root);
     for (const i of m.selected) {
       const d = m.detected[i];
-      await ipc.addCommand(project.id, d.name, d.cmd, d.kind, false);
+      await ipc.addCommand(project.id, d.name, d.cmd, d.kind, false, false);
     }
     error = null;
     modal = null;
@@ -153,7 +160,7 @@ async function confirmAddCommand() {
   if (modal?.t !== "addCommand") return;
   const m = modal;
   try {
-    await ipc.addCommand(m.projectId, m.name, m.cmd, m.kind, false);
+    await ipc.addCommand(m.projectId, m.name, m.cmd, m.kind, false, m.useDynamicPort);
     error = null;
     modal = null;
   } catch (e) {
@@ -178,6 +185,7 @@ function commandRow(project: Project, cmd: Project["commands"][number]): Templat
   const id = `${project.id}:${cmd.id}`;
   const running = statusById[id]?.status === "running";
   const pid = statusById[id]?.pid;
+  const port = statusById[id]?.port;
   return html`
     <div class="card">
       <div class="meta">
@@ -185,6 +193,7 @@ function commandRow(project: Project, cmd: Project["commands"][number]): Templat
         <span class="name">${cmd.name}</span>
         ${cmd.kind === "flutter" ? html`<span class="tag">flutter</span>` : nothing}
         <span class="pid">${pid != null ? `pid ${pid}` : statusById[id]?.status ?? "stopped"}</span>
+        ${port != null ? html`<span class="port">port ${port}</span>` : nothing}
       </div>
       <div class="actions">
         ${running
@@ -234,7 +243,14 @@ function projectSection(project: Project): TemplateResult {
           <button
             title="Add command"
             @click=${() => {
-              modal = { t: "addCommand", projectId: project.id, name: "", cmd: "", kind: "generic" };
+              modal = {
+                t: "addCommand",
+                projectId: project.id,
+                name: "",
+                cmd: "",
+                kind: "generic",
+                useDynamicPort: false,
+              };
               draw();
             }}
           >
@@ -364,6 +380,14 @@ function addCommandModal(m: Extract<Modal, { t: "addCommand" }>): TemplateResult
             <option value="flutter" ?selected=${m.kind === "flutter"}>flutter</option>
           </select>
         </div>
+        <label class="detect-row">
+          <input
+            type="checkbox"
+            .checked=${m.useDynamicPort}
+            @change=${(e: Event) => (m.useDynamicPort = (e.target as HTMLInputElement).checked)}
+          />
+          <span>Assign a dynamic port</span>
+        </label>
         <div class="dialog-actions">
           <button @click=${closeModal}>Cancel</button>
           <button class="primary" @click=${() => void confirmAddCommand()}>Add</button>

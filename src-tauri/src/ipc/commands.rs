@@ -82,8 +82,9 @@ pub fn add_command(
     cmd: String,
     kind: ProcKind,
     autostart: bool,
+    use_dynamic_port: bool,
 ) -> Result<Command, String> {
-    sup.add_command(&project_id, name, cmd, kind, autostart)
+    sup.add_command(&project_id, name, cmd, kind, autostart, use_dynamic_port)
 }
 
 #[tauri::command]

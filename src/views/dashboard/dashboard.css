@@ -105,7 +105,8 @@
   padding: 1px 5px;
 }
 
-.pid {
+.pid,
+.port {
   color: var(--muted);
   font-size: 12px;
 }

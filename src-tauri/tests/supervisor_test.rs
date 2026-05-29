@@ -124,7 +124,7 @@ fn crud_add_remove_project_and_command() {
     assert_eq!(p.id, "my-app", "id should be slugged from the name");
 
     let c = sup
-        .add_command(&p.id, "Dev".into(), "ping -n 2 127.0.0.1".into(), ProcKind::Generic, false)
+        .add_command(&p.id, "Dev".into(), "ping -n 2 127.0.0.1".into(), ProcKind::Generic, false, false)
         .unwrap();
     let composite = format!("{}:{}", p.id, c.id);
 
