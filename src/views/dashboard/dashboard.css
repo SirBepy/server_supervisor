@@ -4,6 +4,10 @@
   background: var(--bg);
   padding: 16px 20px 12px;
   border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  z-index: 5;
 }
 
 .topbar h1 {
@@ -12,6 +16,49 @@
   display: flex;
   align-items: center;
   gap: 8px;
+}
+
+.add-project,
+.group-actions button {
+  background: transparent;
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 10px;
+  cursor: pointer;
+  font-size: 13px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.add-project:hover,
+.group-actions button:hover {
+  border-color: var(--accent);
+}
+
+.group-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+}
+.group-head .root {
+  color: var(--muted);
+  font-size: 11px;
+  display: block;
+  max-width: 420px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.group-actions {
+  display: flex;
+  gap: 6px;
+}
+.empty-cmd {
+  color: var(--muted);
+  font-size: 12px;
+  margin: 4px 0 10px;
 }
 
 .group {
@@ -125,7 +172,7 @@
 }
 
 .logs {
-  margin: 8px 20px 20px;
+  margin: 0 4px 8px;
   padding: 12px;
   background: #0a0c10;
   border: 1px solid var(--border);
@@ -136,4 +183,114 @@
   font-size: 12px;
   white-space: pre-wrap;
   word-break: break-word;
+}
+
+/* ----- modal / wizard ----- */
+.overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 20;
+}
+.dialog {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 18px;
+  width: min(560px, 92vw);
+  max-height: 86vh;
+  overflow: auto;
+}
+.dialog h3 {
+  margin: 0 0 12px;
+  font-size: 15px;
+}
+.dialog label {
+  display: block;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+  margin: 10px 0 4px;
+}
+.dialog input,
+.dialog select {
+  width: 100%;
+  background: var(--bg);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px 10px;
+  font-size: 13px;
+}
+.dialog .rootline {
+  font-size: 12px;
+  color: var(--muted);
+  word-break: break-all;
+}
+.detect-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 240px;
+  overflow: auto;
+}
+.detect-item {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 8px;
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--fg);
+  font-size: 12px;
+  padding: 4px 6px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+.detect-item input {
+  width: auto;
+}
+.detect-item code {
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.detect-item .d-name {
+  font-weight: 600;
+}
+.detect-item .d-src {
+  font-size: 10px;
+  color: var(--accent);
+  grid-column: 2;
+  justify-self: end;
+}
+.dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 16px;
+}
+.dialog-actions button {
+  background: transparent;
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 7px 14px;
+  cursor: pointer;
+  font-size: 13px;
+}
+.dialog-actions button.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #0a0c10;
+  font-weight: 600;
+}
+.muted {
+  color: var(--muted);
+  font-size: 12px;
 }
