@@ -22,6 +22,10 @@ use std::sync::Arc;
 use tokio::net::TcpListener;
 
 const TOKEN_FILE: &str = "api_token.txt";
+const PORT_FILE: &str = "api_port.txt";
+/// How many ports above the preferred one we probe before falling back to an
+/// OS-assigned ephemeral port.
+const PORT_PROBE_TRIES: u16 = 20;
 
 #[derive(Clone)]
 struct ApiState {
@@ -68,16 +72,50 @@ pub fn router(sup: Arc<Supervisor>, ports: Arc<PortRegistry>, token: String) -> 
         .with_state(state)
 }
 
-pub async fn serve(sup: Arc<Supervisor>, ports: Arc<PortRegistry>, port: u16, token: String) {
-    let app = router(sup, ports, token);
-    match TcpListener::bind(("127.0.0.1", port)).await {
-        Ok(listener) => {
-            log::info!("supervisor API listening on http://127.0.0.1:{port}");
-            if let Err(e) = axum::serve(listener, app).await {
-                log::error!("supervisor API server error: {e}");
-            }
+/// Bind `127.0.0.1` starting at `preferred`, probing upward through
+/// `PORT_PROBE_TRIES` consecutive ports on collision, then falling back to an
+/// OS-assigned ephemeral port (port 0) so we never give up. Returns the bound
+/// listener.
+async fn bind_probe(preferred: u16) -> std::io::Result<TcpListener> {
+    for offset in 0..PORT_PROBE_TRIES {
+        let candidate = preferred.saturating_add(offset);
+        match TcpListener::bind(("127.0.0.1", candidate)).await {
+            Ok(listener) => return Ok(listener),
+            Err(e) => log::warn!("API port 127.0.0.1:{candidate} unavailable: {e}; probing next"),
         }
-        Err(e) => log::error!("supervisor API failed to bind 127.0.0.1:{port}: {e}"),
+    }
+    log::warn!("no port free in {preferred}..{}; binding OS-assigned ephemeral port", preferred.saturating_add(PORT_PROBE_TRIES));
+    TcpListener::bind(("127.0.0.1", 0)).await
+}
+
+pub async fn serve(
+    sup: Arc<Supervisor>,
+    ports: Arc<PortRegistry>,
+    port: u16,
+    token: String,
+    data_dir: std::path::PathBuf,
+) {
+    let app = router(sup, ports, token);
+    let listener = match bind_probe(port).await {
+        Ok(l) => l,
+        Err(e) => {
+            log::error!("supervisor API failed to bind any 127.0.0.1 port: {e}");
+            return;
+        }
+    };
+    // Read the ACTUAL bound port (may differ from `port` after probing) and
+    // publish it to a discovery file, mirroring how the bearer token is written.
+    let bound = match listener.local_addr() {
+        Ok(addr) => addr.port(),
+        Err(e) => {
+            log::error!("supervisor API could not read local_addr: {e}");
+            return;
+        }
+    };
+    let _ = std::fs::write(data_dir.join(PORT_FILE), bound.to_string());
+    log::info!("supervisor API listening on http://127.0.0.1:{bound}");
+    if let Err(e) = axum::serve(listener, app).await {
+        log::error!("supervisor API server error: {e}");
     }
 }
 
@@ -143,5 +181,26 @@ async fn get_logs(State(s): State<ApiState>, Path(id): Path<String>) -> Response
     match s.sup.logs(&id) {
         Ok(lines) => Json(lines).into_response(),
         Err(e) => (StatusCode::NOT_FOUND, e).into_response(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn bind_probe_skips_occupied_port() {
+        // Occupy a real port by letting the OS pick a free one for us.
+        let occupied = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+        let occupied_port = occupied.local_addr().unwrap().port();
+
+        // Probing with the occupied port as preferred must land elsewhere.
+        let probed = bind_probe(occupied_port).await.unwrap();
+        let probed_port = probed.local_addr().unwrap().port();
+
+        assert_ne!(
+            probed_port, occupied_port,
+            "bind_probe must probe past an occupied preferred port"
+        );
     }
 }

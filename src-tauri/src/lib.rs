@@ -72,8 +72,9 @@ pub fn run() {
             let token = api::ensure_token(&data_dir);
             let api_sup = supervisor.clone();
             let api_ports = ports.clone();
+            let api_data_dir = data_dir.clone();
             tauri::async_runtime::spawn(async move {
-                api::serve(api_sup, api_ports, port, token).await;
+                api::serve(api_sup, api_ports, port, token, api_data_dir).await;
             });
 
             handle.manage(supervisor);
