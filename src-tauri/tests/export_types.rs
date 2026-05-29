@@ -5,7 +5,9 @@
 //! npm `prebuild` / `gen-types` script.
 
 use server_supervisor_lib::settings::Settings;
-use server_supervisor_lib::types::{LogLine, ProcInfo, ProcKind, ProcSpec, ProcStatus};
+use server_supervisor_lib::types::{
+    Command, DetectedCommand, LogLine, ProcInfo, ProcKind, ProcSpec, ProcStatus, Project,
+};
 use std::fs;
 use std::path::PathBuf;
 use ts_rs::TS;
@@ -33,6 +35,9 @@ fn emit_ipc_types() {
     out.push_str(&decl::<ProcSpec>());
     out.push_str(&decl::<ProcInfo>());
     out.push_str(&decl::<LogLine>());
+    out.push_str(&decl::<Command>());
+    out.push_str(&decl::<Project>());
+    out.push_str(&decl::<DetectedCommand>());
     out.push_str(&decl::<Settings>());
 
     let path = output_path();

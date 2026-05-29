@@ -36,6 +36,12 @@ pub fn run() {
             ipc::commands::restart_proc,
             ipc::commands::reload_proc,
             ipc::commands::get_proc_logs,
+            ipc::commands::list_projects,
+            ipc::commands::add_project,
+            ipc::commands::remove_project,
+            ipc::commands::add_command,
+            ipc::commands::remove_command,
+            ipc::commands::detect_commands,
         ])
         .setup(|app| {
             let handle = app.handle().clone();

@@ -6,11 +6,11 @@ use server_supervisor_lib::supervisor::Supervisor;
 use std::sync::Arc;
 
 fn write_procs(dir: &std::path::Path) {
-    let cwd = dir.display().to_string().replace('\\', "/");
+    let root = dir.display().to_string().replace('\\', "/");
     let json = format!(
-        r#"[{{"id":"t1","project":"test","name":"job","cmd":"ping -n 30 127.0.0.1","cwd":"{cwd}","kind":"generic","autostart":false}}]"#
+        r#"[{{"id":"test","name":"test","root":"{root}","commands":[{{"id":"job","name":"job","cmd":"ping -n 30 127.0.0.1","kind":"generic","autostart":false}}]}}]"#
     );
-    std::fs::write(dir.join("procs.json"), json).unwrap();
+    std::fs::write(dir.join("projects.json"), json).unwrap();
 }
 
 async fn spawn_api(token: &str, dir: &std::path::Path) -> String {
@@ -61,7 +61,7 @@ async fn procs_requires_token() {
         .unwrap();
     assert_eq!(ok.status(), 200);
     let list: Vec<serde_json::Value> = ok.json().await.unwrap();
-    assert!(list.iter().any(|p| p["id"] == "t1"));
+    assert!(list.iter().any(|p| p["id"] == "test:job"));
 }
 
 #[tokio::test]
@@ -72,7 +72,7 @@ async fn start_then_stop_over_api() {
     let client = reqwest::Client::new();
 
     let start = client
-        .post(format!("{base}/procs/t1/start"))
+        .post(format!("{base}/procs/test:job/start"))
         .bearer_auth("secret")
         .send()
         .await
@@ -82,7 +82,7 @@ async fn start_then_stop_over_api() {
     tokio::time::sleep(std::time::Duration::from_millis(1200)).await;
 
     let logs: Vec<serde_json::Value> = client
-        .get(format!("{base}/procs/t1/logs"))
+        .get(format!("{base}/procs/test:job/logs"))
         .bearer_auth("secret")
         .send()
         .await
@@ -93,7 +93,7 @@ async fn start_then_stop_over_api() {
     assert!(!logs.is_empty(), "logs should be captured after start");
 
     let stop = client
-        .post(format!("{base}/procs/t1/stop"))
+        .post(format!("{base}/procs/test:job/stop"))
         .bearer_auth("secret")
         .send()
         .await

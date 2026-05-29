@@ -1,40 +1,38 @@
 use super::config;
 use super::proc::ManagedProc;
 use super::reaper::{self, PidEntry};
-use crate::types::{LogLine, ProcInfo};
+use crate::types::{unit_id, Command, LogLine, ProcInfo, ProcKind, ProcSpec, Project};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Mutex;
 
-/// Owns every supervised process. The single owner of all spawned children:
-/// nothing else holds their handles, so cleanup has one authority.
+/// Owns every supervised process. `projects` is the persisted config (source of
+/// truth); `procs` is the live runtime map keyed by composite `project/command` id.
 pub struct Supervisor {
+    projects: Mutex<Vec<Project>>,
     procs: Mutex<HashMap<String, ManagedProc>>,
     data_dir: PathBuf,
 }
 
 impl Supervisor {
-    /// Build from the declared registry in `<data_dir>/procs.json`. All entries
-    /// start in the Stopped state.
     pub fn new(data_dir: PathBuf) -> Self {
         let _ = std::fs::create_dir_all(&data_dir);
-        let specs = config::load(&data_dir);
+        let projects = config::load(&data_dir);
         let mut map = HashMap::new();
-        for spec in specs {
-            map.insert(spec.id.clone(), ManagedProc::new(spec));
+        for project in &projects {
+            ensure_procs(&mut map, project);
         }
         Self {
+            projects: Mutex::new(projects),
             procs: Mutex::new(map),
             data_dir,
         }
     }
 
-    /// Kill any leftover children from a prior crashed session.
     pub fn reconcile_orphans(&self) {
         reaper::reconcile(&self.data_dir);
     }
 
-    /// Start every process flagged `autostart` in the registry config.
     pub fn start_autostart(&self) {
         let ids: Vec<String> = {
             let guard = self.procs.lock().unwrap();
@@ -50,6 +48,8 @@ impl Supervisor {
             }
         }
     }
+
+    // ----- runtime control (by composite id) -----
 
     pub fn list(&self) -> Vec<ProcInfo> {
         let mut guard = self.procs.lock().unwrap();
@@ -101,7 +101,6 @@ impl Supervisor {
         self.start(id)
     }
 
-    /// Flutter-only hot reload / restart via the daemon's stdin.
     pub fn reload(&self, id: &str, full: bool) -> Result<(), String> {
         let mut guard = self.procs.lock().unwrap();
         let p = guard
@@ -110,7 +109,6 @@ impl Supervisor {
         p.reload(full)
     }
 
-    /// Kill every running child and clear the PID file. Called on app exit.
     pub fn shutdown_all(&self) {
         {
             let mut guard = self.procs.lock().unwrap();
@@ -123,7 +121,109 @@ impl Supervisor {
         reaper::write_pids(&self.data_dir, &[]);
     }
 
-    /// Snapshot running PIDs to `pids.json` for crash-recovery reaping.
+    // ----- config CRUD (mutates projects + runtime map, persists) -----
+
+    pub fn list_projects(&self) -> Vec<Project> {
+        self.projects.lock().unwrap().clone()
+    }
+
+    pub fn add_project(&self, name: String, root: String) -> Result<Project, String> {
+        let name = name.trim().to_string();
+        let root = root.trim().to_string();
+        if name.is_empty() || root.is_empty() {
+            return Err("project name and root are required".to_string());
+        }
+        let mut projects = self.projects.lock().unwrap();
+        let id = unique_id(&name, &|cand| projects.iter().any(|p| p.id == cand));
+        let project = Project {
+            id,
+            name,
+            root,
+            commands: Vec::new(),
+        };
+        projects.push(project.clone());
+        config::save(&self.data_dir, &projects);
+        Ok(project)
+    }
+
+    pub fn remove_project(&self, project_id: &str) -> Result<(), String> {
+        let mut projects = self.projects.lock().unwrap();
+        let idx = projects
+            .iter()
+            .position(|p| p.id == project_id)
+            .ok_or_else(|| format!("unknown project: {project_id}"))?;
+        let removed = projects.remove(idx);
+        config::save(&self.data_dir, &projects);
+        drop(projects);
+
+        let mut map = self.procs.lock().unwrap();
+        for c in &removed.commands {
+            if let Some(mut proc) = map.remove(&unit_id(&removed.id, &c.id)) {
+                proc.stop();
+            }
+        }
+        Ok(())
+    }
+
+    pub fn add_command(
+        &self,
+        project_id: &str,
+        name: String,
+        cmd: String,
+        kind: ProcKind,
+        autostart: bool,
+    ) -> Result<Command, String> {
+        let name = name.trim().to_string();
+        let cmd = cmd.trim().to_string();
+        if name.is_empty() || cmd.is_empty() {
+            return Err("command name and cmd are required".to_string());
+        }
+        let mut projects = self.projects.lock().unwrap();
+        let project = projects
+            .iter_mut()
+            .find(|p| p.id == project_id)
+            .ok_or_else(|| format!("unknown project: {project_id}"))?;
+        let cid = unique_id(&name, &|cand| project.commands.iter().any(|c| c.id == cand));
+        let command = Command {
+            id: cid,
+            name,
+            cmd,
+            kind,
+            autostart,
+        };
+        project.commands.push(command.clone());
+        let project_snapshot = project.clone();
+        config::save(&self.data_dir, &projects);
+        drop(projects);
+
+        let mut map = self.procs.lock().unwrap();
+        let spec = ProcSpec::from_unit(&project_snapshot, &command);
+        map.entry(spec.id.clone())
+            .or_insert_with(|| ManagedProc::new(spec));
+        Ok(command)
+    }
+
+    pub fn remove_command(&self, project_id: &str, command_id: &str) -> Result<(), String> {
+        let mut projects = self.projects.lock().unwrap();
+        let project = projects
+            .iter_mut()
+            .find(|p| p.id == project_id)
+            .ok_or_else(|| format!("unknown project: {project_id}"))?;
+        let before = project.commands.len();
+        project.commands.retain(|c| c.id != command_id);
+        if project.commands.len() == before {
+            return Err(format!("unknown command: {command_id}"));
+        }
+        config::save(&self.data_dir, &projects);
+        drop(projects);
+
+        let mut map = self.procs.lock().unwrap();
+        if let Some(mut proc) = map.remove(&unit_id(project_id, command_id)) {
+            proc.stop();
+        }
+        Ok(())
+    }
+
     fn persist_pids(&self) {
         let entries: Vec<PidEntry> = {
             let guard = self.procs.lock().unwrap();
@@ -139,5 +239,30 @@ impl Supervisor {
                 .collect()
         };
         reaper::write_pids(&self.data_dir, &entries);
+    }
+}
+
+/// Insert a ManagedProc for each of the project's commands that isn't already
+/// tracked. Existing (possibly running) entries are left untouched.
+fn ensure_procs(map: &mut HashMap<String, ManagedProc>, project: &Project) {
+    for c in &project.commands {
+        let spec = ProcSpec::from_unit(project, c);
+        map.entry(spec.id.clone())
+            .or_insert_with(|| ManagedProc::new(spec));
+    }
+}
+
+fn unique_id(base: &str, taken: &dyn Fn(&str) -> bool) -> String {
+    let b = config::slug(base);
+    if !taken(&b) {
+        return b;
+    }
+    let mut n = 2;
+    loop {
+        let cand = format!("{b}-{n}");
+        if !taken(&cand) {
+            return cand;
+        }
+        n += 1;
     }
 }

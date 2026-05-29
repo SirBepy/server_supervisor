@@ -54,6 +54,62 @@ pub struct ProcInfo {
     pub pid: Option<u32>,
 }
 
+/// Composite runtime id for a (project, command) pair. Uses `:` (never emitted
+/// by `slug`) so the id stays a single URL path segment for the API.
+pub fn unit_id(project_id: &str, command_id: &str) -> String {
+    format!("{project_id}:{command_id}")
+}
+
+impl ProcSpec {
+    /// Flatten a project + command into a runnable spec.
+    pub fn from_unit(project: &Project, command: &Command) -> ProcSpec {
+        ProcSpec {
+            id: unit_id(&project.id, &command.id),
+            project: project.name.clone(),
+            name: command.name.clone(),
+            cmd: command.cmd.clone(),
+            cwd: project.root.clone(),
+            kind: command.kind.clone(),
+            autostart: command.autostart,
+        }
+    }
+}
+
+/// A runnable command within a project.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+pub struct Command {
+    pub id: String,
+    pub name: String,
+    /// Full shell command, run via `cmd /C`.
+    pub cmd: String,
+    #[serde(default)]
+    pub kind: ProcKind,
+    #[serde(default)]
+    pub autostart: bool,
+}
+
+/// A project: a named root folder with a set of runnable commands. This is the
+/// source-of-truth config the user edits (persisted to `projects.json`).
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+pub struct Project {
+    pub id: String,
+    pub name: String,
+    /// Absolute path the commands run in.
+    pub root: String,
+    #[serde(default)]
+    pub commands: Vec<Command>,
+}
+
+/// A command candidate surfaced by auto-detection, before the user accepts it.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+pub struct DetectedCommand {
+    /// Where it was found: "package.json", "launch.json", or "readme".
+    pub source: String,
+    pub name: String,
+    pub cmd: String,
+    pub kind: ProcKind,
+}
+
 /// One captured line of process output.
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 pub struct LogLine {

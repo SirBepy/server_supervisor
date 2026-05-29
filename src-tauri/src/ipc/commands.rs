@@ -1,7 +1,7 @@
 use crate::settings::{self, Settings};
 use crate::state::AppState;
-use crate::supervisor::Supervisor;
-use crate::types::{LogLine, ProcInfo};
+use crate::supervisor::{detect, Supervisor};
+use crate::types::{Command, DetectedCommand, LogLine, ProcInfo, ProcKind, Project};
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use tauri::{AppHandle, Manager, State};
@@ -52,4 +52,49 @@ pub fn reload_proc(sup: State<Arc<Supervisor>>, id: String, full: bool) -> Resul
 #[tauri::command]
 pub fn get_proc_logs(sup: State<Arc<Supervisor>>, id: String) -> Result<Vec<LogLine>, String> {
     sup.logs(&id)
+}
+
+#[tauri::command]
+pub fn list_projects(sup: State<Arc<Supervisor>>) -> Vec<Project> {
+    sup.list_projects()
+}
+
+#[tauri::command]
+pub fn add_project(
+    sup: State<Arc<Supervisor>>,
+    name: String,
+    root: String,
+) -> Result<Project, String> {
+    sup.add_project(name, root)
+}
+
+#[tauri::command]
+pub fn remove_project(sup: State<Arc<Supervisor>>, project_id: String) -> Result<(), String> {
+    sup.remove_project(&project_id)
+}
+
+#[tauri::command]
+pub fn add_command(
+    sup: State<Arc<Supervisor>>,
+    project_id: String,
+    name: String,
+    cmd: String,
+    kind: ProcKind,
+    autostart: bool,
+) -> Result<Command, String> {
+    sup.add_command(&project_id, name, cmd, kind, autostart)
+}
+
+#[tauri::command]
+pub fn remove_command(
+    sup: State<Arc<Supervisor>>,
+    project_id: String,
+    command_id: String,
+) -> Result<(), String> {
+    sup.remove_command(&project_id, &command_id)
+}
+
+#[tauri::command]
+pub fn detect_commands(path: String) -> Vec<DetectedCommand> {
+    detect::detect(std::path::Path::new(&path))
 }
