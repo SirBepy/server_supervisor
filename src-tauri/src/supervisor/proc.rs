@@ -50,6 +50,7 @@ impl ManagedProc {
             kind: self.spec.kind.clone(),
             status: self.status.clone(),
             pid: self.pid,
+            port: None,
         }
     }
 

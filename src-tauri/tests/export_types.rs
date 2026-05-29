@@ -4,6 +4,7 @@
 //! per-type `#[ts(export)]`, which races on a shared output path). Run via the
 //! npm `prebuild` / `gen-types` script.
 
+use server_supervisor_lib::ports::PortEntry;
 use server_supervisor_lib::settings::Settings;
 use server_supervisor_lib::types::{
     Command, DetectedCommand, LogLine, ProcInfo, ProcKind, ProcSpec, ProcStatus, Project,
@@ -38,6 +39,7 @@ fn emit_ipc_types() {
     out.push_str(&decl::<Command>());
     out.push_str(&decl::<Project>());
     out.push_str(&decl::<DetectedCommand>());
+    out.push_str(&decl::<PortEntry>());
     out.push_str(&decl::<Settings>());
 
     let path = output_path();

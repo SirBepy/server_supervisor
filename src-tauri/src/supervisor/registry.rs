@@ -197,6 +197,7 @@ impl Supervisor {
             cmd,
             kind,
             autostart,
+            use_dynamic_port: false,
         };
         project.commands.push(command.clone());
         let project_snapshot = project.clone();

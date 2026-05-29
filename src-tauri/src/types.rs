@@ -41,6 +41,8 @@ pub struct ProcSpec {
     pub kind: ProcKind,
     #[serde(default)]
     pub autostart: bool,
+    #[serde(default)]
+    pub use_dynamic_port: bool,
 }
 
 /// Dashboard / API view of one supervised process.
@@ -52,6 +54,7 @@ pub struct ProcInfo {
     pub kind: ProcKind,
     pub status: ProcStatus,
     pub pid: Option<u32>,
+    pub port: Option<u16>,
 }
 
 /// Composite runtime id for a (project, command) pair. Uses `:` (never emitted
@@ -71,6 +74,7 @@ impl ProcSpec {
             cwd: project.root.clone(),
             kind: command.kind.clone(),
             autostart: command.autostart,
+            use_dynamic_port: command.use_dynamic_port,
         }
     }
 }
@@ -86,6 +90,8 @@ pub struct Command {
     pub kind: ProcKind,
     #[serde(default)]
     pub autostart: bool,
+    #[serde(default)]
+    pub use_dynamic_port: bool,
 }
 
 /// A project: a named root folder with a set of runnable commands. This is the

@@ -77,6 +77,7 @@ fn migrate(specs: Vec<ProcSpec>) -> Vec<Project> {
             cmd: spec.cmd,
             kind: spec.kind,
             autostart: spec.autostart,
+            use_dynamic_port: spec.use_dynamic_port,
         };
         if let Some(p) = projects.iter_mut().find(|p| p.id == pid) {
             p.commands.push(cmd);
