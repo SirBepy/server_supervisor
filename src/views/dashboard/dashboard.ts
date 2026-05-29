@@ -461,7 +461,7 @@ function addProjectModal(m: Extract<Modal, { t: "addProject" }>): TemplateResult
   };
 
   return html`
-    <div class="overlay" @click=${(e: Event) => e.target === e.currentTarget && closeModal()}>
+    <div class="overlay">
       <div class="dialog">
         <h3>Add project</h3>
 
@@ -551,7 +551,7 @@ function addCommandModal(m: Extract<Modal, { t: "addCommand" }>): TemplateResult
   const showFreeText = q.length > 0 && !exactMatch;
 
   return html`
-    <div class="overlay" @click=${(e: Event) => e.target === e.currentTarget && closeModal()}>
+    <div class="overlay">
       <div class="dialog">
         <h3>Add command</h3>
         <div class="field-row">

@@ -318,11 +318,6 @@
   justify-content: flex-end;
   gap: 8px;
   margin-top: 16px;
-  /* Layer above the absolute combobox dropdown (z 30) with a solid backdrop so
-     the dropdown floats behind the buttons rather than pushing them out. */
-  position: relative;
-  z-index: 40;
-  background: var(--surface);
 }
 .dialog-actions button {
   background: transparent;
@@ -367,8 +362,8 @@
 .combo-pop {
   /* Absolute so it floats without pushing the Cancel/Add buttons out of the
      dialog; the dialog's overflow:visible lets it spill past the edge instead
-     of forcing a scrollbar. The actions bar layers on top (see .dialog-actions)
-     so the dropdown never blocks the buttons. */
+     of forcing a scrollbar. It floats above everything below it, including the
+     action buttons (standard combobox behavior). */
   position: absolute;
   left: 0;
   right: 0;
