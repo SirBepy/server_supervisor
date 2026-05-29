@@ -336,3 +336,109 @@
   color: var(--muted);
   font-size: 12px;
 }
+.muted.note {
+  margin: 4px 0 8px;
+}
+
+/* ----- combobox ----- */
+.combo {
+  position: relative;
+}
+.combo-input {
+  width: 100%;
+  background: var(--bg);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 7px 9px;
+  font-size: 13px;
+}
+.combo-input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+.combo-pop {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: calc(100% + 4px);
+  z-index: 30;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  max-height: 240px;
+  overflow: auto;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+}
+.combo-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 6px 10px;
+  cursor: pointer;
+  font-size: 12px;
+}
+.combo-row code {
+  color: var(--fg);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.combo-row .combo-src {
+  color: var(--muted);
+  font-size: 11px;
+  flex: 0 0 auto;
+}
+.combo-row.active {
+  background: var(--accent);
+  color: #0a0c10;
+}
+.combo-row.active code,
+.combo-row.active .combo-src {
+  color: #0a0c10;
+}
+.combo-row.free {
+  color: var(--accent);
+  border-top: 1px solid var(--border);
+}
+.combo-row.free.active {
+  color: #0a0c10;
+}
+.combo-row.free.active code {
+  color: #0a0c10;
+}
+
+/* ----- chips ----- */
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0 0 8px;
+}
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 3px 6px 3px 10px;
+  font-size: 12px;
+  color: var(--fg);
+}
+.chip button {
+  background: transparent;
+  border: none;
+  color: var(--muted);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  padding: 2px;
+  font-size: 12px;
+  line-height: 1;
+  border-radius: 50%;
+}
+.chip button:hover {
+  color: var(--fg);
+}

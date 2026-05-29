@@ -6,6 +6,8 @@ import type { ProcInfo, Project, DetectedCommand, ProcKind } from "../../types/i
 
 const POLL_MS = 2500;
 
+type PickedCommand = { name: string; cmd: string; kind: ProcKind };
+
 type Modal =
   | null
   | {
@@ -13,15 +15,22 @@ type Modal =
       name: string;
       root: string;
       detected: DetectedCommand[];
-      selected: Set<number>;
+      picked: PickedCommand[];
+      query: string;
+      highlight: number;
+      existingName: string | null;
     }
   | {
       t: "addCommand";
       projectId: string;
+      root: string;
+      detected: DetectedCommand[];
       name: string;
       cmd: string;
       kind: ProcKind;
       useDynamicPort: boolean;
+      query: string;
+      highlight: number;
     };
 
 let root: HTMLElement;
@@ -31,6 +40,8 @@ let openLogsFor: string | null = null;
 let logText = "";
 let error: string | null = null;
 let modal: Modal = null;
+// Whether the combobox dropdown is currently shown (driven by input focus).
+let comboOpen = false;
 
 export function mountDashboard(el: HTMLElement) {
   root = el;
@@ -81,9 +92,22 @@ function basename(p: string): string {
   return p.replace(/[\\/]+$/, "").split(/[\\/]/).pop() ?? p;
 }
 
-// Default selection: everything except the fuzzy README finds.
-function defaultSelection(detected: DetectedCommand[]): Set<number> {
-  return new Set(detected.flatMap((d, i) => (d.source === "readme" ? [] : [i])));
+// Normalize a folder path for equality: lowercase + strip trailing slash(es).
+function normPath(p: string): string {
+  return p.replace(/[\\/]+$/, "").toLowerCase();
+}
+
+// Find an existing project whose root matches the picked folder; return its name.
+function existingProjectName(path: string): string | null {
+  const want = normPath(path);
+  return projects.find((p) => normPath(p.root) === want)?.name ?? null;
+}
+
+// Derive a short command name. `npm run X` / `pnpm run X` / `yarn X` -> X.
+function deriveName(cmd: string): string {
+  const c = cmd.trim();
+  const m = c.match(/^(?:npm|pnpm)\s+run\s+(\S+)/i) ?? c.match(/^yarn\s+(\S+)/i);
+  return m ? m[1] : c;
 }
 
 async function detectInto(path: string): Promise<DetectedCommand[]> {
@@ -104,8 +128,12 @@ async function startAddProject() {
     name: basename(picked),
     root: picked,
     detected,
-    selected: defaultSelection(detected),
+    picked: [],
+    query: "",
+    highlight: -1,
+    existingName: existingProjectName(picked),
   };
+  comboOpen = false;
   draw();
 }
 
@@ -119,19 +147,13 @@ async function repickFolder() {
     name: modal.name.trim() || basename(picked),
     root: picked,
     detected,
-    selected: defaultSelection(detected),
+    picked: [],
+    query: "",
+    highlight: -1,
+    existingName: existingProjectName(picked),
   };
+  comboOpen = false;
   draw();
-}
-
-function groupDetected(detected: DetectedCommand[]): Map<string, { i: number; d: DetectedCommand }[]> {
-  const map = new Map<string, { i: number; d: DetectedCommand }[]>();
-  detected.forEach((d, i) => {
-    const arr = map.get(d.source) ?? [];
-    arr.push({ i, d });
-    map.set(d.source, arr);
-  });
-  return map;
 }
 
 async function confirmAddProject() {
@@ -144,9 +166,8 @@ async function confirmAddProject() {
   }
   try {
     const project = await ipc.addProject(m.name, m.root);
-    for (const i of m.selected) {
-      const d = m.detected[i];
-      await ipc.addCommand(project.id, d.name, d.cmd, d.kind, false, false);
+    for (const p of m.picked) {
+      await ipc.addCommand(project.id, p.name, p.cmd, p.kind, false, false);
     }
     error = null;
     modal = null;
@@ -242,15 +263,21 @@ function projectSection(project: Project): TemplateResult {
         <div class="group-actions">
           <button
             title="Add command"
-            @click=${() => {
+            @click=${async () => {
+              const detected = await detectInto(project.root);
               modal = {
                 t: "addCommand",
                 projectId: project.id,
+                root: project.root,
+                detected,
                 name: "",
                 cmd: "",
                 kind: "generic",
                 useDynamicPort: false,
+                query: "",
+                highlight: -1,
               };
+              comboOpen = false;
               draw();
             }}
           >
@@ -268,23 +295,151 @@ function projectSection(project: Project): TemplateResult {
   `;
 }
 
-function addProjectModal(m: Extract<Modal, { t: "addProject" }>): TemplateResult {
-  const groups = groupDetected(m.detected);
-  const allIdx = m.detected.map((_, i) => i);
-  const allSelected = allIdx.length > 0 && allIdx.every((i) => m.selected.has(i));
+// ----- combobox -----
 
-  const toggleAll = () => {
-    if (allSelected) m.selected.clear();
-    else allIdx.forEach((i) => m.selected.add(i));
-    draw();
+type ComboConfig = {
+  query: string;
+  highlight: number;
+  suggestions: DetectedCommand[]; // already filtered + excluding picked
+  showFreeText: boolean; // whether to render the "+ add ..." row as last item
+  placeholder?: string;
+  onQuery: (q: string) => void;
+  onHighlight: (i: number) => void;
+  onSelect: (d: DetectedCommand) => void;
+  onFreeText: () => void;
+};
+
+// Total number of selectable rows (suggestions + optional free-text row).
+function comboRowCount(c: ComboConfig): number {
+  return c.suggestions.length + (c.showFreeText ? 1 : 0);
+}
+
+function comboBox(c: ComboConfig): TemplateResult {
+  const rows = comboRowCount(c);
+  const freeIdx = c.showFreeText ? c.suggestions.length : -1;
+
+  const commit = (i: number) => {
+    if (i < 0 || i >= rows) return;
+    if (i === freeIdx) c.onFreeText();
+    else c.onSelect(c.suggestions[i]);
   };
 
-  const groupAll = (items: { i: number }[]) => items.length > 0 && items.every((x) => m.selected.has(x.i));
-  const toggleGroup = (e: Event, items: { i: number }[]) => {
-    e.preventDefault();
-    e.stopPropagation();
-    const on = groupAll(items);
-    items.forEach((x) => (on ? m.selected.delete(x.i) : m.selected.add(x.i)));
+  const onKeydown = (e: KeyboardEvent) => {
+    if (!comboOpen) {
+      if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+        comboOpen = true;
+        draw();
+        e.preventDefault();
+        return;
+      }
+    }
+    switch (e.key) {
+      case "ArrowDown":
+        if (rows === 0) return;
+        e.preventDefault();
+        c.onHighlight(c.highlight + 1 >= rows ? 0 : c.highlight + 1);
+        break;
+      case "ArrowUp":
+        if (rows === 0) return;
+        e.preventDefault();
+        c.onHighlight(c.highlight - 1 < 0 ? rows - 1 : c.highlight - 1);
+        break;
+      case "Enter": {
+        if (!comboOpen || rows === 0) return;
+        e.preventDefault();
+        // Default to the only-or-free-text row when nothing highlighted.
+        const target = c.highlight >= 0 ? c.highlight : c.showFreeText ? freeIdx : 0;
+        commit(target);
+        break;
+      }
+      case "Escape":
+        e.preventDefault();
+        comboOpen = false;
+        c.onQuery("");
+        break;
+    }
+  };
+
+  return html`
+    <div class="combo">
+      <input
+        class="combo-input"
+        placeholder=${c.placeholder ?? ""}
+        .value=${c.query}
+        @focus=${() => {
+          comboOpen = true;
+          draw();
+        }}
+        @blur=${() => {
+          // Delay so a row's @click registers before close.
+          window.setTimeout(() => {
+            comboOpen = false;
+            draw();
+          }, 120);
+        }}
+        @input=${(e: Event) => c.onQuery((e.target as HTMLInputElement).value)}
+        @keydown=${onKeydown}
+      />
+      ${comboOpen && rows > 0
+        ? html`
+            <div class="combo-pop" role="listbox">
+              ${c.suggestions.map(
+                (d, i) => html`
+                  <div
+                    class="combo-row ${c.highlight === i ? "active" : ""}"
+                    role="option"
+                    @mousedown=${(e: Event) => e.preventDefault()}
+                    @mouseenter=${() => c.onHighlight(i)}
+                    @click=${() => c.onSelect(d)}
+                  >
+                    <code>${d.cmd}</code>
+                    <span class="combo-src">${d.source}</span>
+                  </div>
+                `,
+              )}
+              ${c.showFreeText
+                ? html`
+                    <div
+                      class="combo-row free ${c.highlight === freeIdx ? "active" : ""}"
+                      role="option"
+                      @mousedown=${(e: Event) => e.preventDefault()}
+                      @mouseenter=${() => c.onHighlight(freeIdx)}
+                      @click=${() => c.onFreeText()}
+                    >
+                      + add "<code>${c.query.trim()}</code>"
+                    </div>
+                  `
+                : nothing}
+            </div>
+          `
+        : nothing}
+    </div>
+  `;
+}
+
+// Case-insensitive substring match against cmd AND name.
+function filterDetected(detected: DetectedCommand[], query: string): DetectedCommand[] {
+  const q = query.trim().toLowerCase();
+  if (!q) return detected;
+  return detected.filter(
+    (d) => d.cmd.toLowerCase().includes(q) || d.name.toLowerCase().includes(q),
+  );
+}
+
+function addProjectModal(m: Extract<Modal, { t: "addProject" }>): TemplateResult {
+  const q = m.query.trim();
+  const pickedCmds = new Set(m.picked.map((p) => p.cmd));
+  const available = m.detected.filter((d) => !pickedCmds.has(d.cmd));
+  const suggestions = filterDetected(available, m.query);
+  // Free-text row when query is non-empty, not an exact existing suggestion cmd, and not already picked.
+  const exactMatch = m.detected.some((d) => d.cmd === q) || pickedCmds.has(q);
+  const showFreeText = q.length > 0 && !exactMatch;
+
+  const addPicked = (p: PickedCommand) => {
+    if (m.picked.some((x) => x.cmd === p.cmd)) return; // dedupe by cmd
+    m.picked.push(p);
+    m.query = "";
+    m.highlight = -1;
     draw();
   };
 
@@ -308,44 +463,58 @@ function addProjectModal(m: Extract<Modal, { t: "addProject" }>): TemplateResult
           </button>
         </div>
 
+        ${m.existingName
+          ? html`<p class="muted note">
+              This folder is already "${m.existingName}" — new commands merge into it.
+            </p>`
+          : nothing}
+
         <div class="detect-head">
-          <span>Detected commands</span>
-          ${m.detected.length > 0
-            ? html`<button class="link" @click=${toggleAll}>
-                ${allSelected ? "Deselect all" : "Select all"}
-              </button>`
-            : nothing}
+          <span>Commands</span>
         </div>
 
-        ${m.detected.length === 0
-          ? html`<p class="muted">None found. Create the project, then add commands manually.</p>`
-          : [...groups.entries()].map(
-              ([src, items]) => html`
-                <details open class="detect-group">
-                  <summary>
-                    <span>${src} <span class="count">${items.length}</span></span>
-                    <button class="link" @click=${(e: Event) => toggleGroup(e, items)}>
-                      ${groupAll(items) ? "none" : "all"}
+        ${m.picked.length > 0
+          ? html`<div class="chips">
+              ${m.picked.map(
+                (p) => html`
+                  <span class="chip">
+                    ${p.name}
+                    <button
+                      title="Remove"
+                      @click=${() => {
+                        m.picked = m.picked.filter((x) => x.cmd !== p.cmd);
+                        draw();
+                      }}
+                    >
+                      <i class="ph ph-x"></i>
                     </button>
-                  </summary>
-                  ${items.map(
-                    ({ i, d }) => html`
-                      <label class="detect-row">
-                        <input
-                          type="checkbox"
-                          .checked=${m.selected.has(i)}
-                          @change=${(e: Event) =>
-                            (e.target as HTMLInputElement).checked
-                              ? m.selected.add(i)
-                              : m.selected.delete(i)}
-                        />
-                        <code>${d.cmd}</code>
-                      </label>
-                    `,
-                  )}
-                </details>
-              `,
-            )}
+                  </span>
+                `,
+              )}
+            </div>`
+          : nothing}
+
+        ${comboBox({
+          query: m.query,
+          highlight: m.highlight,
+          suggestions,
+          showFreeText,
+          placeholder: "Search detected commands or type your own…",
+          onQuery: (val) => {
+            m.query = val;
+            m.highlight = -1;
+            draw();
+          },
+          onHighlight: (i) => {
+            m.highlight = i;
+            draw();
+          },
+          onSelect: (d) => addPicked({ name: d.name, cmd: d.cmd, kind: d.kind }),
+          onFreeText: () => {
+            const cmd = m.query.trim();
+            if (cmd) addPicked({ name: deriveName(cmd), cmd, kind: "generic" });
+          },
+        })}
 
         <div class="dialog-actions">
           <button @click=${closeModal}>Cancel</button>
@@ -357,6 +526,11 @@ function addProjectModal(m: Extract<Modal, { t: "addProject" }>): TemplateResult
 }
 
 function addCommandModal(m: Extract<Modal, { t: "addCommand" }>): TemplateResult {
+  const q = m.query.trim();
+  const suggestions = filterDetected(m.detected, m.query);
+  const exactMatch = m.detected.some((d) => d.cmd === q);
+  const showFreeText = q.length > 0 && !exactMatch;
+
   return html`
     <div class="overlay" @click=${(e: Event) => e.target === e.currentTarget && closeModal()}>
       <div class="dialog">
@@ -367,17 +541,49 @@ function addCommandModal(m: Extract<Modal, { t: "addCommand" }>): TemplateResult
         </div>
         <div class="field-row">
           <label>Command</label>
-          <input
-            placeholder="npm run dev:up"
-            .value=${m.cmd}
-            @input=${(e: Event) => (m.cmd = (e.target as HTMLInputElement).value)}
-          />
+          ${comboBox({
+            query: m.query,
+            highlight: m.highlight,
+            suggestions,
+            showFreeText,
+            placeholder: "npm run dev:up",
+            onQuery: (val) => {
+              m.query = val;
+              m.cmd = val; // free-text: cmd tracks the typed text
+              m.highlight = -1;
+              draw();
+            },
+            onHighlight: (i) => {
+              m.highlight = i;
+              draw();
+            },
+            onSelect: (d) => {
+              m.cmd = d.cmd;
+              m.name = d.name;
+              m.kind = d.kind;
+              m.query = d.cmd;
+              m.highlight = -1;
+              comboOpen = false;
+              draw();
+            },
+            onFreeText: () => {
+              const cmd = m.query.trim();
+              m.cmd = cmd;
+              if (!m.name.trim()) m.name = deriveName(cmd);
+              m.highlight = -1;
+              comboOpen = false;
+              draw();
+            },
+          })}
         </div>
         <div class="field-row">
           <label>Kind</label>
-          <select @change=${(e: Event) => (m.kind = (e.target as HTMLSelectElement).value as ProcKind)}>
-            <option value="generic" ?selected=${m.kind === "generic"}>generic</option>
-            <option value="flutter" ?selected=${m.kind === "flutter"}>flutter</option>
+          <select
+            .value=${m.kind}
+            @change=${(e: Event) => (m.kind = (e.target as HTMLSelectElement).value as ProcKind)}
+          >
+            <option value="generic">generic</option>
+            <option value="flutter">flutter</option>
           </select>
         </div>
         <label class="detect-row">
