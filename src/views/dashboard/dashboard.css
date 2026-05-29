@@ -208,13 +208,17 @@
   margin: 0 0 12px;
   font-size: 15px;
 }
-.dialog label {
-  display: block;
-  font-size: 11px;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
+.dialog .field-row {
+  display: grid;
+  grid-template-columns: 64px 1fr auto;
+  align-items: center;
+  gap: 10px;
+  margin: 8px 0;
+}
+.dialog .field-row label {
+  font-size: 12px;
   color: var(--muted);
-  margin: 10px 0 4px;
+  margin: 0;
 }
 .dialog input,
 .dialog select {
@@ -223,51 +227,88 @@
   color: var(--fg);
   border: 1px solid var(--border);
   border-radius: 6px;
-  padding: 8px 10px;
+  padding: 7px 9px;
   font-size: 13px;
 }
-.dialog .rootline {
+.dialog .field-row .folder {
   font-size: 12px;
-  color: var(--muted);
-  word-break: break-all;
-}
-.detect-list {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  max-height: 240px;
-  overflow: auto;
-}
-.detect-item {
-  display: grid;
-  grid-template-columns: auto 1fr auto;
-  align-items: center;
-  gap: 8px;
-  text-transform: none;
-  letter-spacing: 0;
   color: var(--fg);
-  font-size: 12px;
-  padding: 4px 6px;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-}
-.detect-item input {
-  width: auto;
-}
-.detect-item code {
-  color: var(--muted);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.detect-item .d-name {
-  font-weight: 600;
+.dialog .ghost {
+  background: transparent;
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 9px;
+  font-size: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
 }
-.detect-item .d-src {
-  font-size: 10px;
+.dialog .ghost:hover {
+  border-color: var(--accent);
+}
+
+.detect-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin: 14px 0 6px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.link {
+  background: transparent;
+  border: none;
   color: var(--accent);
-  grid-column: 2;
-  justify-self: end;
+  cursor: pointer;
+  font-size: 12px;
+  padding: 0;
+}
+.detect-group {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  margin-bottom: 6px;
+}
+.detect-group summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 10px;
+  cursor: pointer;
+  font-size: 12px;
+  list-style: none;
+}
+.detect-group summary::-webkit-details-marker {
+  display: none;
+}
+.detect-group .count {
+  color: var(--muted);
+  margin-left: 4px;
+}
+.detect-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 10px 2px 22px;
+  font-size: 12px;
+}
+.detect-row input {
+  width: auto;
+}
+.detect-row code {
+  color: var(--fg);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.detect-group > .detect-row:last-child {
+  padding-bottom: 8px;
 }
 .dialog-actions {
   display: flex;

@@ -74,24 +74,57 @@ function basename(p: string): string {
   return p.replace(/[\\/]+$/, "").split(/[\\/]/).pop() ?? p;
 }
 
+// Default selection: everything except the fuzzy README finds.
+function defaultSelection(detected: DetectedCommand[]): Set<number> {
+  return new Set(detected.flatMap((d, i) => (d.source === "readme" ? [] : [i])));
+}
+
+async function detectInto(path: string): Promise<DetectedCommand[]> {
+  try {
+    return await ipc.detectCommands(path);
+  } catch (e) {
+    error = String(e);
+    return [];
+  }
+}
+
 async function startAddProject() {
   const picked = await open({ directory: true, multiple: false, title: "Pick a project folder" });
   if (typeof picked !== "string") return;
-  let detected: DetectedCommand[] = [];
-  try {
-    detected = await ipc.detectCommands(picked);
-  } catch (e) {
-    error = String(e);
-  }
+  const detected = await detectInto(picked);
   modal = {
     t: "addProject",
     name: basename(picked),
     root: picked,
     detected,
-    // Pre-select package.json + launch.json finds; leave fuzzy readme unchecked.
-    selected: new Set(detected.flatMap((d, i) => (d.source === "readme" ? [] : [i]))),
+    selected: defaultSelection(detected),
   };
   draw();
+}
+
+async function repickFolder() {
+  if (modal?.t !== "addProject") return;
+  const picked = await open({ directory: true, multiple: false, title: "Pick a project folder" });
+  if (typeof picked !== "string") return;
+  const detected = await detectInto(picked);
+  modal = {
+    t: "addProject",
+    name: modal.name.trim() || basename(picked),
+    root: picked,
+    detected,
+    selected: defaultSelection(detected),
+  };
+  draw();
+}
+
+function groupDetected(detected: DetectedCommand[]): Map<string, { i: number; d: DetectedCommand }[]> {
+  const map = new Map<string, { i: number; d: DetectedCommand }[]>();
+  detected.forEach((d, i) => {
+    const arr = map.get(d.source) ?? [];
+    arr.push({ i, d });
+    map.set(d.source, arr);
+  });
+  return map;
 }
 
 async function confirmAddProject() {
@@ -219,71 +252,118 @@ function projectSection(project: Project): TemplateResult {
   `;
 }
 
-function modalView(): TemplateResult | typeof nothing {
-  if (!modal) return nothing;
-  if (modal.t === "addProject") {
-    const m = modal;
-    return html`
-      <div class="overlay" @click=${(e: Event) => e.target === e.currentTarget && closeModal()}>
-        <div class="dialog">
-          <h3>Add project</h3>
+function addProjectModal(m: Extract<Modal, { t: "addProject" }>): TemplateResult {
+  const groups = groupDetected(m.detected);
+  const allIdx = m.detected.map((_, i) => i);
+  const allSelected = allIdx.length > 0 && allIdx.every((i) => m.selected.has(i));
+
+  const toggleAll = () => {
+    if (allSelected) m.selected.clear();
+    else allIdx.forEach((i) => m.selected.add(i));
+    draw();
+  };
+
+  const groupAll = (items: { i: number }[]) => items.length > 0 && items.every((x) => m.selected.has(x.i));
+  const toggleGroup = (e: Event, items: { i: number }[]) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const on = groupAll(items);
+    items.forEach((x) => (on ? m.selected.delete(x.i) : m.selected.add(x.i)));
+    draw();
+  };
+
+  return html`
+    <div class="overlay" @click=${(e: Event) => e.target === e.currentTarget && closeModal()}>
+      <div class="dialog">
+        <h3>Add project</h3>
+
+        <div class="field-row">
           <label>Name</label>
           <input
             .value=${m.name}
             @input=${(e: Event) => (m.name = (e.target as HTMLInputElement).value)}
           />
+        </div>
+        <div class="field-row">
           <label>Folder</label>
-          <div class="rootline">${m.root}</div>
-          <label>Detected commands</label>
-          ${m.detected.length === 0
-            ? html`<p class="muted">None found. Create the project, then add commands manually.</p>`
-            : html`<div class="detect-list">
-                ${m.detected.map(
-                  (d, i) => html`
-                    <label class="detect-item">
-                      <input
-                        type="checkbox"
-                        .checked=${m.selected.has(i)}
-                        @change=${(e: Event) => {
-                          (e.target as HTMLInputElement).checked
-                            ? m.selected.add(i)
-                            : m.selected.delete(i);
-                        }}
-                      />
-                      <span class="d-name">${d.name}</span>
-                      <code>${d.cmd}</code>
-                      <span class="d-src">${d.source}</span>
-                    </label>
-                  `,
-                )}
-              </div>`}
-          <div class="dialog-actions">
-            <button @click=${closeModal}>Cancel</button>
-            <button class="primary" @click=${() => void confirmAddProject()}>Add</button>
-          </div>
+          <span class="folder" title=${m.root}>${m.root}</span>
+          <button class="ghost" @click=${() => void repickFolder()}>
+            <i class="ph ph-folder-open"></i> Pick again
+          </button>
+        </div>
+
+        <div class="detect-head">
+          <span>Detected commands</span>
+          ${m.detected.length > 0
+            ? html`<button class="link" @click=${toggleAll}>
+                ${allSelected ? "Deselect all" : "Select all"}
+              </button>`
+            : nothing}
+        </div>
+
+        ${m.detected.length === 0
+          ? html`<p class="muted">None found. Create the project, then add commands manually.</p>`
+          : [...groups.entries()].map(
+              ([src, items]) => html`
+                <details open class="detect-group">
+                  <summary>
+                    <span>${src} <span class="count">${items.length}</span></span>
+                    <button class="link" @click=${(e: Event) => toggleGroup(e, items)}>
+                      ${groupAll(items) ? "none" : "all"}
+                    </button>
+                  </summary>
+                  ${items.map(
+                    ({ i, d }) => html`
+                      <label class="detect-row">
+                        <input
+                          type="checkbox"
+                          .checked=${m.selected.has(i)}
+                          @change=${(e: Event) =>
+                            (e.target as HTMLInputElement).checked
+                              ? m.selected.add(i)
+                              : m.selected.delete(i)}
+                        />
+                        <code>${d.cmd}</code>
+                      </label>
+                    `,
+                  )}
+                </details>
+              `,
+            )}
+
+        <div class="dialog-actions">
+          <button @click=${closeModal}>Cancel</button>
+          <button class="primary" @click=${() => void confirmAddProject()}>Add</button>
         </div>
       </div>
-    `;
-  }
-  // addCommand
-  const m = modal;
+    </div>
+  `;
+}
+
+function addCommandModal(m: Extract<Modal, { t: "addCommand" }>): TemplateResult {
   return html`
     <div class="overlay" @click=${(e: Event) => e.target === e.currentTarget && closeModal()}>
       <div class="dialog">
         <h3>Add command</h3>
-        <label>Name</label>
-        <input .value=${m.name} @input=${(e: Event) => (m.name = (e.target as HTMLInputElement).value)} />
-        <label>Command (run via cmd /C)</label>
-        <input
-          placeholder="npm run dev:up"
-          .value=${m.cmd}
-          @input=${(e: Event) => (m.cmd = (e.target as HTMLInputElement).value)}
-        />
-        <label>Kind</label>
-        <select @change=${(e: Event) => (m.kind = (e.target as HTMLSelectElement).value as ProcKind)}>
-          <option value="generic" ?selected=${m.kind === "generic"}>generic</option>
-          <option value="flutter" ?selected=${m.kind === "flutter"}>flutter</option>
-        </select>
+        <div class="field-row">
+          <label>Name</label>
+          <input .value=${m.name} @input=${(e: Event) => (m.name = (e.target as HTMLInputElement).value)} />
+        </div>
+        <div class="field-row">
+          <label>Command</label>
+          <input
+            placeholder="npm run dev:up"
+            .value=${m.cmd}
+            @input=${(e: Event) => (m.cmd = (e.target as HTMLInputElement).value)}
+          />
+        </div>
+        <div class="field-row">
+          <label>Kind</label>
+          <select @change=${(e: Event) => (m.kind = (e.target as HTMLSelectElement).value as ProcKind)}>
+            <option value="generic" ?selected=${m.kind === "generic"}>generic</option>
+            <option value="flutter" ?selected=${m.kind === "flutter"}>flutter</option>
+          </select>
+        </div>
         <div class="dialog-actions">
           <button @click=${closeModal}>Cancel</button>
           <button class="primary" @click=${() => void confirmAddCommand()}>Add</button>
@@ -291,6 +371,11 @@ function modalView(): TemplateResult | typeof nothing {
       </div>
     </div>
   `;
+}
+
+function modalView(): TemplateResult | typeof nothing {
+  if (!modal) return nothing;
+  return modal.t === "addProject" ? addProjectModal(modal) : addCommandModal(modal);
 }
 
 function draw() {
