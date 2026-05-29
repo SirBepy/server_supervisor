@@ -2,6 +2,7 @@
 //! driven over real HTTP against the actual axum router.
 
 use server_supervisor_lib::api;
+use server_supervisor_lib::ports::PortRegistry;
 use server_supervisor_lib::supervisor::Supervisor;
 use std::sync::Arc;
 
@@ -14,7 +15,8 @@ fn write_procs(dir: &std::path::Path) {
 }
 
 async fn spawn_api(token: &str, dir: &std::path::Path) -> String {
-    let sup = Arc::new(Supervisor::new(dir.to_path_buf()));
+    let ports = Arc::new(PortRegistry::new(dir.to_path_buf()));
+    let sup = Arc::new(Supervisor::new(dir.to_path_buf(), ports));
     let app = api::router(sup, token.to_string());
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();

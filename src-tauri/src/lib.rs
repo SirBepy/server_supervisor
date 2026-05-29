@@ -1,5 +1,6 @@
 pub mod api;
 pub mod ipc;
+pub mod ports;
 pub mod settings;
 pub mod state;
 pub mod supervisor;
@@ -58,7 +59,9 @@ pub fn run() {
                 .unwrap_or_else(|_| std::path::PathBuf::from("."))
                 .join("supervisor");
             let _ = std::fs::create_dir_all(&data_dir);
-            let supervisor = std::sync::Arc::new(supervisor::Supervisor::new(data_dir.clone()));
+            let ports = std::sync::Arc::new(ports::PortRegistry::new(data_dir.clone()));
+            let supervisor =
+                std::sync::Arc::new(supervisor::Supervisor::new(data_dir.clone(), ports.clone()));
             supervisor.reconcile_orphans();
             supervisor.start_autostart();
 
@@ -71,6 +74,7 @@ pub fn run() {
             });
 
             handle.manage(supervisor);
+            handle.manage(ports);
 
             tray::setup(&handle)?;
 

@@ -1,9 +1,16 @@
 //! Integration tests that exercise the real Supervisor: it spawns actual
 //! processes (Windows `ping`), captures their output, and tree-kills them.
 
+use server_supervisor_lib::ports::PortRegistry;
 use server_supervisor_lib::supervisor::Supervisor;
 use server_supervisor_lib::types::{ProcKind, ProcStatus};
+use std::sync::Arc;
 use std::time::Duration;
+
+/// Build a Supervisor with a fresh PortRegistry rooted at the same temp dir.
+fn new_sup(dir: &std::path::Path) -> Supervisor {
+    Supervisor::new(dir.to_path_buf(), Arc::new(PortRegistry::new(dir.to_path_buf())))
+}
 
 /// Composite runtime id for the project/command written by `write_project`.
 const ID: &str = "test:job";
@@ -20,7 +27,7 @@ fn write_project(dir: &std::path::Path, cmd: &str) {
 fn spawn_list_logs_stop() {
     let dir = tempfile::tempdir().unwrap();
     write_project(dir.path(), "ping -n 30 127.0.0.1");
-    let sup = Supervisor::new(dir.path().to_path_buf());
+    let sup = new_sup(dir.path());
 
     let list = sup.list();
     assert_eq!(list.len(), 1);
@@ -49,7 +56,7 @@ fn spawn_list_logs_stop() {
 fn restart_works() {
     let dir = tempfile::tempdir().unwrap();
     write_project(dir.path(), "ping -n 30 127.0.0.1");
-    let sup = Supervisor::new(dir.path().to_path_buf());
+    let sup = new_sup(dir.path());
 
     sup.start(ID).unwrap();
     std::thread::sleep(Duration::from_millis(800));
@@ -66,7 +73,7 @@ fn restart_works() {
 fn unknown_id_errors() {
     let dir = tempfile::tempdir().unwrap();
     write_project(dir.path(), "ping -n 2 127.0.0.1");
-    let sup = Supervisor::new(dir.path().to_path_buf());
+    let sup = new_sup(dir.path());
     assert!(sup.start("nope").is_err());
     assert!(sup.stop("nope").is_err());
     assert!(sup.logs("nope").is_err());
@@ -76,7 +83,7 @@ fn unknown_id_errors() {
 fn reload_rejects_generic() {
     let dir = tempfile::tempdir().unwrap();
     write_project(dir.path(), "ping -n 2 127.0.0.1");
-    let sup = Supervisor::new(dir.path().to_path_buf());
+    let sup = new_sup(dir.path());
     sup.start(ID).unwrap();
     assert!(sup.reload(ID, true).is_err());
     sup.shutdown_all();
@@ -86,7 +93,7 @@ fn reload_rejects_generic() {
 fn shutdown_kills_all_and_clears_pids() {
     let dir = tempfile::tempdir().unwrap();
     write_project(dir.path(), "ping -n 30 127.0.0.1");
-    let sup = Supervisor::new(dir.path().to_path_buf());
+    let sup = new_sup(dir.path());
 
     sup.start(ID).unwrap();
     std::thread::sleep(Duration::from_millis(800));
@@ -100,7 +107,7 @@ fn shutdown_kills_all_and_clears_pids() {
 #[test]
 fn config_default_written_when_missing() {
     let dir = tempfile::tempdir().unwrap();
-    let sup = Supervisor::new(dir.path().to_path_buf());
+    let sup = new_sup(dir.path());
     assert!(sup.list().is_empty());
     assert!(
         dir.path().join("projects.json").exists(),
@@ -111,7 +118,7 @@ fn config_default_written_when_missing() {
 #[test]
 fn crud_add_remove_project_and_command() {
     let dir = tempfile::tempdir().unwrap();
-    let sup = Supervisor::new(dir.path().to_path_buf());
+    let sup = new_sup(dir.path());
 
     let p = sup.add_project("My App".into(), "C:/tmp".into()).unwrap();
     assert_eq!(p.id, "my-app", "id should be slugged from the name");
@@ -144,7 +151,7 @@ fn migrates_legacy_procs_json() {
         r#"[{"id":"old","project":"Zng","name":"API","cmd":"ping -n 2 127.0.0.1","cwd":"C:/x","kind":"generic","autostart":false}]"#,
     )
     .unwrap();
-    let sup = Supervisor::new(dir.path().to_path_buf());
+    let sup = new_sup(dir.path());
 
     assert!(dir.path().join("projects.json").exists(), "migration should write projects.json");
     let projects = sup.list_projects();

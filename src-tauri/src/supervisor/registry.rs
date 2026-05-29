@@ -1,10 +1,11 @@
 use super::config;
 use super::proc::ManagedProc;
 use super::reaper::{self, PidEntry};
+use crate::ports::PortRegistry;
 use crate::types::{unit_id, Command, LogLine, ProcInfo, ProcKind, ProcSpec, Project};
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 /// Owns every supervised process. `projects` is the persisted config (source of
 /// truth); `procs` is the live runtime map keyed by composite `project/command` id.
@@ -12,10 +13,11 @@ pub struct Supervisor {
     projects: Mutex<Vec<Project>>,
     procs: Mutex<HashMap<String, ManagedProc>>,
     data_dir: PathBuf,
+    ports: Arc<PortRegistry>,
 }
 
 impl Supervisor {
-    pub fn new(data_dir: PathBuf) -> Self {
+    pub fn new(data_dir: PathBuf, ports: Arc<PortRegistry>) -> Self {
         let _ = std::fs::create_dir_all(&data_dir);
         let projects = config::load(&data_dir);
         let mut map = HashMap::new();
@@ -26,7 +28,12 @@ impl Supervisor {
             projects: Mutex::new(projects),
             procs: Mutex::new(map),
             data_dir,
+            ports,
         }
+    }
+
+    pub fn ports(&self) -> &Arc<PortRegistry> {
+        &self.ports
     }
 
     pub fn reconcile_orphans(&self) {
