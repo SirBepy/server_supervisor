@@ -107,6 +107,47 @@ impl Supervisor {
             }
         }
         res?;
+
+        // EADDRINUSE retry-once (dynamic-port only). The registry bind-probes
+        // before handing out a port, but a TOCTOU race can let another process
+        // grab it between probe and spawn. If the child dies within ~1500ms with
+        // EADDRINUSE in its logs, release that port and respawn once on a fresh
+        // acquire. This blocks `start` ~1500ms for dynamic-port commands only;
+        // start is user/AI-initiated (not a hot path), so that's acceptable.
+        if let Some(p_port) = port {
+            std::thread::sleep(std::time::Duration::from_millis(1500));
+            let crashed_addrinuse = {
+                let mut guard = self.procs.lock().unwrap();
+                if let Some(proc) = guard.get_mut(id) {
+                    proc.refresh();
+                    proc.status == crate::types::ProcStatus::Crashed
+                        && proc
+                            .logs_snapshot()
+                            .iter()
+                            .any(|l| l.text.contains("EADDRINUSE"))
+                } else {
+                    false
+                }
+            };
+            if crashed_addrinuse {
+                self.ports.release(p_port);
+                log::warn!("supervisor: {id} hit EADDRINUSE on {p_port}, retrying once");
+                let retry = self.acquire_free_port(id)?;
+                let retry_res = {
+                    let mut guard = self.procs.lock().unwrap();
+                    if let Some(proc) = guard.get_mut(id) {
+                        proc.start(Some(retry)).map_err(|e| e.to_string())
+                    } else {
+                        Ok(0)
+                    }
+                };
+                if retry_res.is_err() {
+                    self.ports.release(retry);
+                }
+                retry_res?;
+            }
+        }
+
         self.persist_pids();
         Ok(())
     }
