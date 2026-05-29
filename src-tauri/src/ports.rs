@@ -4,7 +4,6 @@
 //! 8080, 1420, ...) and below the Windows ephemeral range that starts at 49152.
 
 use serde::{Deserialize, Serialize};
-use std::collections::HashSet;
 use std::net::TcpListener;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
@@ -22,7 +21,10 @@ pub struct PortEntry {
 }
 
 pub struct PortRegistry {
-    entries: Mutex<Vec<PortEntry>>,
+    /// Persistent reserved ports (seeds + always-on apps). Written to ports.json.
+    reserved: Mutex<Vec<PortEntry>>,
+    /// Ephemeral per-run acquisitions, in-memory only, freed on process exit.
+    acquired: Mutex<std::collections::HashSet<u16>>,
     data_dir: PathBuf,
 }
 
@@ -30,55 +32,71 @@ impl PortRegistry {
     pub fn new(data_dir: PathBuf) -> Self {
         let _ = std::fs::create_dir_all(&data_dir);
         let reg = Self {
-            entries: Mutex::new(load(&data_dir)),
+            reserved: Mutex::new(load(&data_dir)),
+            acquired: Mutex::new(std::collections::HashSet::new()),
             data_dir,
         };
-        // Seed known/blocked ports (idempotent).
         reg.reserve("server_supervisor", 7716, "vite dev (self)");
         reg.reserve("_blocked_default", 1420, "common Tauri default - never assign");
         reg
     }
 
     pub fn list(&self) -> Vec<PortEntry> {
-        self.entries.lock().unwrap().clone()
+        self.reserved.lock().unwrap().clone()
     }
 
-    /// Record a port under `owner` if that exact port isn't already tracked.
+    /// Record an exact port for an owner (idempotent on port). Persistent.
     pub fn reserve(&self, owner: &str, port: u16, note: &str) {
-        let mut g = self.entries.lock().unwrap();
+        let mut g = self.reserved.lock().unwrap();
         if g.iter().any(|e| e.port == port) {
             return;
         }
-        g.push(PortEntry {
-            owner: owner.into(),
-            port,
-            note: note.into(),
-        });
+        g.push(PortEntry { owner: owner.into(), port, note: note.into() });
         save(&self.data_dir, &g);
     }
 
-    /// Idempotent per owner: returns the owner's existing port, otherwise
-    /// allocates the lowest free port >= BASE that is neither already tracked
-    /// nor currently bound on the OS, records it, and returns it.
-    pub fn allocate(&self, owner: &str) -> Result<u16, String> {
-        let mut g = self.entries.lock().unwrap();
-        if let Some(e) = g.iter().find(|e| e.owner == owner) {
-            return Ok(e.port);
+    /// Reserve a fresh persistent port for an always-on app (idempotent per owner).
+    /// Returns the owner's existing reserved port, else the lowest free >= BASE.
+    pub fn reserve_next(&self, owner: &str) -> u16 {
+        {
+            let g = self.reserved.lock().unwrap();
+            if let Some(e) = g.iter().find(|e| e.owner == owner) {
+                return e.port;
+            }
         }
-        let taken: HashSet<u16> = g.iter().map(|e| e.port).collect();
-        for port in BASE..MAX {
-            if taken.contains(&port) || !port_free(port) {
+        let taken = self.taken_set();
+        let port = (BASE..MAX).find(|p| !taken.contains(p)).unwrap_or(BASE);
+        self.reserve(owner, port, "always-on app");
+        port
+    }
+
+    /// Acquire an ephemeral per-run port: lowest free >= BASE not reserved, not
+    /// already acquired, not OS-bound. Held in-memory until `release`.
+    pub fn acquire(&self) -> Result<u16, String> {
+        let taken = self.taken_set();
+        let mut acq = self.acquired.lock().unwrap();
+        for p in BASE..MAX {
+            if taken.contains(&p) || acq.contains(&p) {
                 continue;
             }
-            g.push(PortEntry {
-                owner: owner.into(),
-                port,
-                note: "auto-allocated".into(),
-            });
-            save(&self.data_dir, &g);
-            return Ok(port);
+            if !port_free(p) {
+                continue;
+            }
+            acq.insert(p);
+            return Ok(p);
         }
         Err(format!("no free port available in {BASE}..{MAX}"))
+    }
+
+    pub fn release(&self, port: u16) {
+        self.acquired.lock().unwrap().remove(&port);
+    }
+
+    fn taken_set(&self) -> std::collections::HashSet<u16> {
+        let mut set: std::collections::HashSet<u16> =
+            self.reserved.lock().unwrap().iter().map(|e| e.port).collect();
+        set.extend(self.acquired.lock().unwrap().iter().copied());
+        set
     }
 }
 
@@ -104,41 +122,42 @@ mod tests {
     use super::*;
 
     #[test]
-    fn seeds_known_ports() {
+    fn seeds_block_1420_and_records_7716() {
         let dir = tempfile::tempdir().unwrap();
         let reg = PortRegistry::new(dir.path().to_path_buf());
-        let ports: Vec<u16> = reg.list().iter().map(|e| e.port).collect();
-        assert!(ports.contains(&7716));
-        assert!(ports.contains(&1420));
+        let reserved: Vec<u16> = reg.list().iter().map(|e| e.port).collect();
+        assert!(reserved.contains(&7716));
+        assert!(reserved.contains(&1420));
     }
 
     #[test]
-    fn allocates_in_range_and_is_idempotent() {
+    fn reserve_persists_and_is_idempotent() {
         let dir = tempfile::tempdir().unwrap();
-        let reg = PortRegistry::new(dir.path().to_path_buf());
-        let p = reg.allocate("proj-a").unwrap();
-        assert!((BASE..MAX).contains(&p));
-        assert_eq!(reg.allocate("proj-a").unwrap(), p, "same owner -> same port");
-        let q = reg.allocate("proj-b").unwrap();
-        assert_ne!(p, q, "different owners -> different ports");
-    }
-
-    #[test]
-    fn never_allocates_a_reserved_port() {
-        let dir = tempfile::tempdir().unwrap();
-        let reg = PortRegistry::new(dir.path().to_path_buf());
-        reg.reserve("x", BASE, "taken");
-        assert_ne!(reg.allocate("proj").unwrap(), BASE);
-    }
-
-    #[test]
-    fn persists_across_reload() {
-        let dir = tempfile::tempdir().unwrap();
-        let p = {
+        {
             let reg = PortRegistry::new(dir.path().to_path_buf());
-            reg.allocate("proj").unwrap()
-        };
+            let p = reg.reserve_next("always-on-app");
+            assert!((BASE..MAX).contains(&p));
+            assert_eq!(reg.reserve_next("always-on-app"), p, "idempotent per owner");
+        }
+        // survives reload
         let reg2 = PortRegistry::new(dir.path().to_path_buf());
-        assert_eq!(reg2.allocate("proj").unwrap(), p, "should remember across reload");
+        assert!(reg2.list().iter().any(|e| e.owner == "always-on-app"));
+    }
+
+    #[test]
+    fn acquire_skips_reserved_and_is_ephemeral() {
+        let dir = tempfile::tempdir().unwrap();
+        let reg = PortRegistry::new(dir.path().to_path_buf());
+        let reserved = reg.reserve_next("app"); // takes BASE (42000)
+        let a = reg.acquire().unwrap();
+        let b = reg.acquire().unwrap();
+        assert_ne!(a, reserved);
+        assert_ne!(a, b, "two live acquisitions differ");
+        // acquisitions are in-memory only: not written to ports.json
+        let saved = std::fs::read_to_string(dir.path().join("ports.json")).unwrap();
+        assert!(!saved.contains(&a.to_string()), "ephemeral ports must not persist");
+        reg.release(a);
+        let c = reg.acquire().unwrap();
+        assert_eq!(c, a, "released port is reusable");
     }
 }
