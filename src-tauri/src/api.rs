@@ -5,6 +5,7 @@
 //! file under the supervisor data dir. Because this endpoint can spawn arbitrary
 //! commands, it must never bind to a non-loopback address.
 
+use crate::ports::{PortEntry, PortRegistry};
 use crate::supervisor::Supervisor;
 use crate::types::ProcInfo;
 use axum::{
@@ -15,6 +16,7 @@ use axum::{
     routing::{get, post},
     Json, Router,
 };
+use serde::Deserialize;
 use std::path::Path as FsPath;
 use std::sync::Arc;
 use tokio::net::TcpListener;
@@ -24,7 +26,13 @@ const TOKEN_FILE: &str = "api_token.txt";
 #[derive(Clone)]
 struct ApiState {
     sup: Arc<Supervisor>,
+    ports: Arc<PortRegistry>,
     token: String,
+}
+
+#[derive(Deserialize)]
+struct ReserveBody {
+    owner: String,
 }
 
 /// Read the bearer token from `<data_dir>/api_token.txt`, generating a fresh
@@ -43,8 +51,8 @@ pub fn ensure_token(data_dir: &FsPath) -> String {
 }
 
 /// Build the router. Exposed for tests so the API can be exercised without Tauri.
-pub fn router(sup: Arc<Supervisor>, token: String) -> Router {
-    let state = ApiState { sup, token };
+pub fn router(sup: Arc<Supervisor>, ports: Arc<PortRegistry>, token: String) -> Router {
+    let state = ApiState { sup, ports, token };
     Router::new()
         .route("/procs", get(list_procs))
         .route("/procs/:id/start", post(start_proc))
@@ -52,14 +60,16 @@ pub fn router(sup: Arc<Supervisor>, token: String) -> Router {
         .route("/procs/:id/restart", post(restart_proc))
         .route("/procs/:id/reload", post(reload_proc))
         .route("/procs/:id/logs", get(get_logs))
+        .route("/ports", get(list_ports))
+        .route("/ports/reserve", post(reserve_port))
         .route_layer(middleware::from_fn_with_state(state.clone(), auth))
         // /health is added after the auth layer, so it stays unauthenticated.
         .route("/health", get(health))
         .with_state(state)
 }
 
-pub async fn serve(sup: Arc<Supervisor>, port: u16, token: String) {
-    let app = router(sup, token);
+pub async fn serve(sup: Arc<Supervisor>, ports: Arc<PortRegistry>, port: u16, token: String) {
+    let app = router(sup, ports, token);
     match TcpListener::bind(("127.0.0.1", port)).await {
         Ok(listener) => {
             log::info!("supervisor API listening on http://127.0.0.1:{port}");
@@ -95,6 +105,14 @@ async fn health() -> &'static str {
 
 async fn list_procs(State(s): State<ApiState>) -> Json<Vec<ProcInfo>> {
     Json(s.sup.list())
+}
+
+async fn list_ports(State(s): State<ApiState>) -> Json<Vec<PortEntry>> {
+    Json(s.ports.list())
+}
+
+async fn reserve_port(State(s): State<ApiState>, Json(body): Json<ReserveBody>) -> Json<u16> {
+    Json(s.ports.reserve_next(&body.owner))
 }
 
 fn unit_result(r: Result<(), String>) -> Response {

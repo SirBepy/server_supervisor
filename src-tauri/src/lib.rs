@@ -43,6 +43,8 @@ pub fn run() {
             ipc::commands::add_command,
             ipc::commands::remove_command,
             ipc::commands::detect_commands,
+            ipc::commands::list_ports,
+            ipc::commands::reserve_port,
         ])
         .setup(|app| {
             let handle = app.handle().clone();
@@ -69,8 +71,9 @@ pub fn run() {
             let port = settings::load(&handle).api_port;
             let token = api::ensure_token(&data_dir);
             let api_sup = supervisor.clone();
+            let api_ports = ports.clone();
             tauri::async_runtime::spawn(async move {
-                api::serve(api_sup, port, token).await;
+                api::serve(api_sup, api_ports, port, token).await;
             });
 
             handle.manage(supervisor);

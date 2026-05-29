@@ -16,8 +16,8 @@ fn write_procs(dir: &std::path::Path) {
 
 async fn spawn_api(token: &str, dir: &std::path::Path) -> String {
     let ports = Arc::new(PortRegistry::new(dir.to_path_buf()));
-    let sup = Arc::new(Supervisor::new(dir.to_path_buf(), ports));
-    let app = api::router(sup, token.to_string());
+    let sup = Arc::new(Supervisor::new(dir.to_path_buf(), ports.clone()));
+    let app = api::router(sup, ports, token.to_string());
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     tokio::spawn(async move {
@@ -64,6 +64,47 @@ async fn procs_requires_token() {
     assert_eq!(ok.status(), 200);
     let list: Vec<serde_json::Value> = ok.json().await.unwrap();
     assert!(list.iter().any(|p| p["id"] == "test:job"));
+}
+
+#[tokio::test]
+async fn ports_requires_token_and_lists_seeds() {
+    let dir = tempfile::tempdir().unwrap();
+    write_procs(dir.path());
+    let base = spawn_api("secret", dir.path()).await;
+    let client = reqwest::Client::new();
+
+    let no_token = client.get(format!("{base}/ports")).send().await.unwrap();
+    assert_eq!(no_token.status(), 401);
+
+    let ok = client
+        .get(format!("{base}/ports"))
+        .bearer_auth("secret")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(ok.status(), 200);
+    let list: Vec<serde_json::Value> = ok.json().await.unwrap();
+    assert!(list.iter().any(|p| p["port"] == 7716));
+}
+
+#[tokio::test]
+async fn reserve_port_over_api() {
+    let dir = tempfile::tempdir().unwrap();
+    write_procs(dir.path());
+    let base = spawn_api("secret", dir.path()).await;
+    let client = reqwest::Client::new();
+
+    let port: u16 = client
+        .post(format!("{base}/ports/reserve"))
+        .bearer_auth("secret")
+        .json(&serde_json::json!({ "owner": "my-app" }))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert!((42000..49000).contains(&port));
 }
 
 #[tokio::test]

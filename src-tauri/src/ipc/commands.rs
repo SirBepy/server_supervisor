@@ -1,3 +1,4 @@
+use crate::ports::{PortEntry, PortRegistry};
 use crate::settings::{self, Settings};
 use crate::state::AppState;
 use crate::supervisor::{detect, Supervisor};
@@ -97,4 +98,14 @@ pub fn remove_command(
 #[tauri::command]
 pub fn detect_commands(path: String) -> Vec<DetectedCommand> {
     detect::detect(std::path::Path::new(&path))
+}
+
+#[tauri::command]
+pub fn list_ports(reg: State<Arc<PortRegistry>>) -> Vec<PortEntry> {
+    reg.list()
+}
+
+#[tauri::command]
+pub fn reserve_port(reg: State<Arc<PortRegistry>>, owner: String) -> u16 {
+    reg.reserve_next(&owner)
 }
