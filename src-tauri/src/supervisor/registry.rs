@@ -207,6 +207,11 @@ impl Supervisor {
             return Err("project name and root are required".to_string());
         }
         let mut projects = self.projects.lock().unwrap();
+        // Idempotent on the folder: same canonical path -> reuse the existing
+        // project unchanged (keep its name; ignore the re-entered one). No dup.
+        if let Some(existing) = projects.iter().find(|p| same_path(&p.root, &root)) {
+            return Ok(existing.clone());
+        }
         let id = unique_id(&name, &|cand| projects.iter().any(|p| p.id == cand));
         let project = Project {
             id,
@@ -257,6 +262,12 @@ impl Supervisor {
             .iter_mut()
             .find(|p| p.id == project_id)
             .ok_or_else(|| format!("unknown project: {project_id}"))?;
+        // Idempotent on the exact cmd string within this project: if a command
+        // with the same cmd already exists, return it (the runtime procs map
+        // already holds its entry, so don't re-insert).
+        if let Some(existing) = project.commands.iter().find(|c| c.cmd == cmd) {
+            return Ok(existing.clone());
+        }
         let cid = unique_id(&name, &|cand| project.commands.iter().any(|c| c.id == cand));
         let command = Command {
             id: cid,
@@ -337,6 +348,22 @@ fn ensure_procs(map: &mut HashMap<String, ManagedProc>, project: &Project) {
         map.entry(spec.id.clone())
             .or_insert_with(|| ManagedProc::new(spec));
     }
+}
+
+/// True if two folder paths refer to the same location. Canonicalize both and
+/// compare the resulting `PathBuf`s (handles drive-letter case, `/` vs `\`,
+/// trailing separators, and `.`/`..` on Windows). If canonicalize fails for
+/// either path (e.g. it no longer exists), fall back to a normalized string
+/// compare: lowercase + strip trailing `\` and `/`.
+fn same_path(a: &str, b: &str) -> bool {
+    match (std::fs::canonicalize(a), std::fs::canonicalize(b)) {
+        (Ok(ca), Ok(cb)) => ca == cb,
+        _ => norm_path(a) == norm_path(b),
+    }
+}
+
+fn norm_path(p: &str) -> String {
+    p.trim_end_matches(['\\', '/']).to_lowercase()
 }
 
 fn unique_id(base: &str, taken: &dyn Fn(&str) -> bool) -> String {

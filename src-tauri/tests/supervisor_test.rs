@@ -143,6 +143,57 @@ fn crud_add_remove_project_and_command() {
 }
 
 #[test]
+fn adding_same_folder_twice_reuses_project() {
+    let dir = tempfile::tempdir().unwrap();
+    let sup = new_sup(dir.path());
+
+    // First add: a real on-disk folder so canonicalize succeeds.
+    let root = dir.path().display().to_string();
+    let p1 = sup.add_project("A".into(), root.clone()).unwrap();
+
+    // Second add: same folder, different name, trailing separator + forward
+    // slashes. canonicalize must collapse these to the same path -> no dup.
+    let variant = format!("{}/", root.replace('\\', "/"));
+    let p2 = sup.add_project("A again".into(), variant).unwrap();
+
+    // Exactly one project, and the second call returned the existing one
+    // unchanged (same id, original name kept).
+    let projects = sup.list_projects();
+    assert_eq!(projects.len(), 1, "same folder must not create a duplicate project");
+    assert_eq!(p2.id, p1.id, "second add should return the existing project id");
+    assert_eq!(p2.name, "A", "re-entered name must be ignored; original name kept");
+}
+
+#[test]
+fn adding_duplicate_command_is_noop() {
+    let dir = tempfile::tempdir().unwrap();
+    let sup = new_sup(dir.path());
+
+    let p = sup.add_project("My App".into(), "C:/tmp".into()).unwrap();
+
+    let c1 = sup
+        .add_command(&p.id, "dev".into(), "npm run dev".into(), ProcKind::Generic, false, false)
+        .unwrap();
+    let c2 = sup
+        .add_command(&p.id, "dev2".into(), "npm run dev".into(), ProcKind::Generic, false, false)
+        .unwrap();
+
+    let projects = sup.list_projects();
+    assert_eq!(projects.len(), 1);
+    let cmds = &projects[0].commands;
+    assert_eq!(cmds.len(), 1, "duplicate cmd string must not be appended");
+    assert_eq!(c2.id, c1.id, "second add should return the existing command id");
+
+    // Runtime map has exactly one entry for this command (no double-insert).
+    let composite = format!("{}:{}", p.id, c1.id);
+    assert_eq!(
+        sup.list().iter().filter(|x| x.id == composite).count(),
+        1,
+        "runtime procs map must have a single entry for the command"
+    );
+}
+
+#[test]
 fn migrates_legacy_procs_json() {
     let dir = tempfile::tempdir().unwrap();
     // Old flat format with an explicit id that should be re-derived on migrate.
