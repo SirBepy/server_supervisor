@@ -20,7 +20,7 @@ pub struct Settings {
 }
 
 fn default_port() -> u16 {
-    7717
+    6970
 }
 
 impl Default for Settings {

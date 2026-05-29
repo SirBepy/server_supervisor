@@ -36,7 +36,8 @@ impl PortRegistry {
             acquired: Mutex::new(std::collections::HashSet::new()),
             data_dir,
         };
-        reg.reserve("server_supervisor", 7716, "vite dev (self)");
+        reg.reserve("server_supervisor", 6969, "vite dev (self)");
+        reg.reserve("server_supervisor_api", 6970, "localhost API (self)");
         reg.reserve("_blocked_default", 1420, "common Tauri default - never assign");
         reg
     }
@@ -122,11 +123,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn seeds_block_1420_and_records_7716() {
+    fn seeds_block_1420_and_records_self_ports() {
         let dir = tempfile::tempdir().unwrap();
         let reg = PortRegistry::new(dir.path().to_path_buf());
         let reserved: Vec<u16> = reg.list().iter().map(|e| e.port).collect();
-        assert!(reserved.contains(&7716));
+        assert!(reserved.contains(&6969));
+        assert!(reserved.contains(&6970));
         assert!(reserved.contains(&1420));
     }
 

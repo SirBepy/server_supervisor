@@ -84,7 +84,7 @@ async fn ports_requires_token_and_lists_seeds() {
         .unwrap();
     assert_eq!(ok.status(), 200);
     let list: Vec<serde_json::Value> = ok.json().await.unwrap();
-    assert!(list.iter().any(|p| p["port"] == 7716));
+    assert!(list.iter().any(|p| p["port"] == 6969));
 }
 
 #[tokio::test]
