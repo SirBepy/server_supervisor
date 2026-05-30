@@ -14,6 +14,10 @@ Tauri 2, Rust backend, vanilla TypeScript + Vite + lit-html, plain CSS per featu
 - The localhost API binds `127.0.0.1` only and requires a bearer token read from a 0600 config file on every request. It can spawn arbitrary commands, so it must never bind externally.
 - Flutter processes launch with `flutter run --machine`; reload/restart is an `app.restart` JSON message to the daemon's stdin. Flutter web hot reload is upstream-broken, so web uses fullRestart only.
 
+## Testing
+
+No Playwright e2e here - the UI is a native Tauri webview, not browser-driveable. The global verification floor applies (Rust `cargo test`, `tsc --noEmit`, `vite build`); do NOT `@import` the `test-e2e` snippet. For UI/visual behavior, state explicitly that it needs Joe's eyes rather than claiming it verified.
+
 ## Structure
 
 Follows `~/.claude/skills/migrate-structure/structure/tauri.md`: domain-grouped Rust modules (sibling `.rs` + folder, no `mod.rs`), one view per folder on the frontend, ts-rs `prebuild` emits `src/types/ipc.generated.ts` (gitignored).
