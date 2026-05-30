@@ -289,6 +289,40 @@ impl Supervisor {
         Ok(command)
     }
 
+    /// Register a project (by folder) + a command (by cmd string) if not already
+    /// present - both are idempotent - then start it and return its ProcInfo.
+    /// The composite used by the `POST /run` API for one-call server launch.
+    pub fn ensure_and_run(
+        &self,
+        root: &str,
+        cmd: &str,
+        name: Option<String>,
+        kind: ProcKind,
+        use_dynamic_port: bool,
+    ) -> Result<ProcInfo, String> {
+        let project_name = std::path::Path::new(root)
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or(root)
+            .to_string();
+        let project = self.add_project(project_name, root.to_string())?;
+        let command_name = name.unwrap_or_else(|| derive_name(cmd));
+        let command = self.add_command(
+            &project.id,
+            command_name,
+            cmd.to_string(),
+            kind,
+            false,
+            use_dynamic_port,
+        )?;
+        let id = unit_id(&project.id, &command.id);
+        self.start(&id)?;
+        self.list()
+            .into_iter()
+            .find(|p| p.id == id)
+            .ok_or_else(|| format!("started but not found in list: {id}"))
+    }
+
     pub fn remove_command(&self, project_id: &str, command_id: &str) -> Result<(), String> {
         let mut projects = self.projects.lock().unwrap();
         let project = projects

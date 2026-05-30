@@ -248,3 +248,31 @@ fn migrates_legacy_procs_json() {
     // Runtime id is now composite project/command, not the old flat "old".
     assert!(sup.list().iter().any(|x| x.id == "zng:api"));
 }
+
+#[test]
+fn ensure_and_run_registers_starts_and_is_idempotent() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("server.js"),
+        "const p=process.env.PORT;require('http').createServer((_,r)=>r.end('ok')).listen(p,()=>console.log('LISTENING '+p));",
+    )
+    .unwrap();
+    let sup = new_sup(dir.path());
+    let root = dir.path().to_str().unwrap();
+
+    let info = sup
+        .ensure_and_run(root, "node server.js", None, ProcKind::Generic, true)
+        .unwrap();
+    assert_eq!(info.status, ProcStatus::Running);
+    let port = info.port.expect("dynamic port should be assigned");
+    assert!((42000..49000).contains(&port));
+
+    // Idempotent: same root+cmd reuses the same project/command (no duplicate).
+    let info2 = sup
+        .ensure_and_run(root, "node server.js", None, ProcKind::Generic, true)
+        .unwrap();
+    assert_eq!(info2.id, info.id);
+    assert_eq!(sup.list().len(), 1, "no duplicate registration");
+
+    sup.stop(&info.id).unwrap();
+}
