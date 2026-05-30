@@ -47,6 +47,7 @@ pub fn run() {
             ipc::commands::validate_command,
             ipc::commands::list_ports,
             ipc::commands::reserve_port,
+            ipc::commands::get_api_token,
         ])
         .setup(|app| {
             let handle = app.handle().clone();

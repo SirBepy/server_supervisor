@@ -12,15 +12,23 @@ const FILE: &str = "settings.json";
 pub struct Settings {
     #[serde(default = "default_port")]
     pub api_port: u16,
-    #[serde(default)]
+    #[serde(default)] // default false
     pub autostart: bool,
+    #[serde(default = "default_true")]
+    pub ai_can_add_commands: bool,
+    #[serde(default = "default_true")]
+    pub ai_can_add_projects: bool,
     #[serde(flatten)]
     #[ts(skip)]
     pub kit: KitSettings,
 }
 
 fn default_port() -> u16 {
-    6970
+    6969
+}
+
+fn default_true() -> bool {
+    true
 }
 
 impl Default for Settings {
@@ -28,6 +36,8 @@ impl Default for Settings {
         Self {
             api_port: default_port(),
             autostart: false,
+            ai_can_add_commands: true,
+            ai_can_add_projects: true,
             kit: KitSettings::default(),
         }
     }

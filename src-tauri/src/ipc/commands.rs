@@ -129,3 +129,18 @@ pub fn list_ports(reg: State<Arc<PortRegistry>>) -> Vec<PortEntry> {
 pub fn reserve_port(reg: State<Arc<PortRegistry>>, owner: String) -> u16 {
     reg.reserve_next(&owner)
 }
+
+/// Returns the raw HTTP API bearer token. Callers receive the full secret —
+/// never forward it to untrusted renderers or external services.
+#[tauri::command]
+pub fn get_api_token(app: AppHandle) -> Result<String, String> {
+    let path = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| e.to_string())?
+        .join("supervisor")
+        .join(crate::api::TOKEN_FILE);
+    std::fs::read_to_string(&path)
+        .map(|s| s.trim().to_string())
+        .map_err(|e| e.to_string())
+}

@@ -24,7 +24,7 @@ use std::path::Path as FsPath;
 use std::sync::Arc;
 use tokio::net::TcpListener;
 
-const TOKEN_FILE: &str = "api_token.txt";
+pub const TOKEN_FILE: &str = "api_token.txt";
 const PORT_FILE: &str = "api_port.txt";
 /// How many ports above the preferred one we probe before falling back to an
 /// OS-assigned ephemeral port.
