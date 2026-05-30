@@ -42,6 +42,18 @@ type Modal =
       check: CommandCheck | null;
     }
   | {
+      t: "editCommand";
+      projectId: string;
+      commandId: string;
+      root: string;
+      name: string;
+      cmd: string;
+      kind: ProcKind;
+      autostart: boolean;
+      useDynamicPort: boolean;
+      check: CommandCheck | null;
+    }
+  | {
       t: "confirmDeleteCommand";
       projectId: string;
       commandId: string;
@@ -226,6 +238,26 @@ async function confirmAddCommand() {
   await refresh();
 }
 
+async function confirmEditCommand() {
+  if (modal?.t !== "editCommand") return;
+  const m = modal;
+  const cmd = m.cmd.trim();
+  if (!cmd) {
+    error = "command is required";
+    draw();
+    return;
+  }
+  const name = m.name.trim() || deriveName(cmd);
+  try {
+    await ipc.updateCommand(m.projectId, m.commandId, name, cmd, m.kind, m.autostart, m.useDynamicPort);
+    error = null;
+    modal = null;
+  } catch (e) {
+    error = String(e);
+  }
+  await refresh();
+}
+
 function closeModal() {
   modal = null;
   if (validateTimer !== undefined) {
@@ -235,15 +267,21 @@ function closeModal() {
   draw();
 }
 
-// Debounced advisory check for the add-command modal's `cmd`. Stale-guarded:
-// only applies if the same modal is still open and its cmd still matches what
-// was validated. Never blocks; failures are silently ignored.
+// The two modals that carry a free-text `cmd` to validate (add + edit).
+type CmdModal = Extract<Modal, { t: "addCommand" } | { t: "editCommand" }>;
+function cmdModal(): CmdModal | null {
+  return modal && (modal.t === "addCommand" || modal.t === "editCommand") ? modal : null;
+}
+
+// Debounced advisory check for a cmd-bearing modal's `cmd`. Stale-guarded: only
+// applies if the same modal is still open and its cmd still matches what was
+// validated. Never blocks; failures are silently ignored.
 function scheduleValidate() {
   if (validateTimer !== undefined) window.clearTimeout(validateTimer);
   validateTimer = window.setTimeout(() => {
     validateTimer = undefined;
-    if (modal?.t !== "addCommand") return;
-    const m = modal;
+    const m = cmdModal();
+    if (!m) return;
     const cmd = m.cmd.trim();
     if (!cmd) {
       m.check = null;
@@ -255,8 +293,7 @@ function scheduleValidate() {
       .validateCommand(root, cmd)
       .then((res) => {
         // Guard against stale results from a fast typer / reopened modal.
-        if (modal?.t !== "addCommand") return;
-        if (modal !== m || modal.cmd.trim() !== cmd || modal.root !== root) return;
+        if (modal !== m || m.cmd.trim() !== cmd || m.root !== root) return;
         m.check = res;
         draw();
       })
@@ -330,6 +367,27 @@ function commandRow(project: Project, cmd: Project["commands"][number]): Templat
           @click=${() => toggleLogs(id)}
         >
           <i class="ph ph-terminal-window"></i>
+        </button>
+        <button
+          title="Edit command"
+          @click=${() => {
+            modal = {
+              t: "editCommand",
+              projectId: project.id,
+              commandId: cmd.id,
+              root: project.root,
+              name: cmd.name,
+              cmd: cmd.cmd,
+              kind: cmd.kind,
+              autostart: cmd.autostart,
+              useDynamicPort: cmd.use_dynamic_port,
+              check: null,
+            };
+            comboOpen = false;
+            draw();
+          }}
+        >
+          <i class="ph ph-pencil-simple"></i>
         </button>
         <button
           title="Remove command"
@@ -723,6 +781,74 @@ function addCommandModal(m: Extract<Modal, { t: "addCommand" }>): TemplateResult
   `;
 }
 
+function editCommandModal(m: Extract<Modal, { t: "editCommand" }>): TemplateResult {
+  return html`
+    <div class="overlay">
+      <div class="dialog">
+        <h3>Edit command</h3>
+        <div class="field-row">
+          <label>Name</label>
+          <input
+            placeholder=${deriveName(m.cmd)}
+            .value=${m.name}
+            @input=${(e: Event) => (m.name = (e.target as HTMLInputElement).value)}
+          />
+        </div>
+        <div class="field-row">
+          <label>Command</label>
+          <input
+            placeholder="npm run dev:up"
+            .value=${m.cmd}
+            @input=${(e: Event) => {
+              m.cmd = (e.target as HTMLInputElement).value;
+              m.check = null; // clear stale warning until the debounce resolves
+              scheduleValidate();
+              draw();
+            }}
+          />
+        </div>
+        ${m.check && !m.check.ok
+          ? html`<div class="cmd-warn">
+              <i class="ph ph-warning"></i>
+              <span title=${m.check.reason}>${m.check.reason}</span>
+            </div>`
+          : nothing}
+        <div class="field-row">
+          <label>Kind</label>
+          <select
+            .value=${m.kind}
+            @change=${(e: Event) => (m.kind = (e.target as HTMLSelectElement).value as ProcKind)}
+          >
+            <option value="generic">generic</option>
+            <option value="flutter">flutter</option>
+          </select>
+        </div>
+        <label class="detect-row">
+          <input
+            type="checkbox"
+            .checked=${m.useDynamicPort}
+            @change=${(e: Event) => (m.useDynamicPort = (e.target as HTMLInputElement).checked)}
+          />
+          <span>Assign a dynamic port</span>
+        </label>
+        <label class="detect-row">
+          <input
+            type="checkbox"
+            .checked=${m.autostart}
+            @change=${(e: Event) => (m.autostart = (e.target as HTMLInputElement).checked)}
+          />
+          <span>Start automatically when the supervisor launches</span>
+        </label>
+        <p class="muted note">Saving relaunches the command if it's running.</p>
+        <div class="dialog-actions">
+          <button @click=${closeModal}>Cancel</button>
+          <button class="primary" @click=${() => void confirmEditCommand()}>Save</button>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
 function confirmDeleteCommandModal(
   m: Extract<Modal, { t: "confirmDeleteCommand" }>,
 ): TemplateResult {
@@ -761,6 +887,8 @@ function modalView(): TemplateResult | typeof nothing {
       return addProjectModal(modal);
     case "addCommand":
       return addCommandModal(modal);
+    case "editCommand":
+      return editCommandModal(modal);
     case "confirmDeleteCommand":
       return confirmDeleteCommandModal(modal);
   }

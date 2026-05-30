@@ -89,6 +89,21 @@ pub fn add_command(
 }
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
+pub fn update_command(
+    sup: State<Arc<Supervisor>>,
+    project_id: String,
+    command_id: String,
+    name: String,
+    cmd: String,
+    kind: ProcKind,
+    autostart: bool,
+    use_dynamic_port: bool,
+) -> Result<Command, String> {
+    sup.update_command(&project_id, &command_id, name, cmd, kind, autostart, use_dynamic_port)
+}
+
+#[tauri::command]
 pub fn remove_command(
     sup: State<Arc<Supervisor>>,
     project_id: String,

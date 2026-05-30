@@ -41,6 +41,24 @@ export const addCommand = (
     autostart,
     useDynamicPort,
   });
+export const updateCommand = (
+  projectId: string,
+  commandId: string,
+  name: string,
+  cmd: string,
+  kind: ProcKind,
+  autostart: boolean,
+  useDynamicPort: boolean,
+) =>
+  invoke<Command>("update_command", {
+    projectId,
+    commandId,
+    name,
+    cmd,
+    kind,
+    autostart,
+    useDynamicPort,
+  });
 export const removeCommand = (projectId: string, commandId: string) =>
   invoke<void>("remove_command", { projectId, commandId });
 export const detectCommands = (path: string) =>

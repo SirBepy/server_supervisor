@@ -231,6 +231,94 @@ fn adding_duplicate_command_is_noop() {
 }
 
 #[test]
+fn update_command_edits_in_place_and_keeps_id() {
+    let dir = tempfile::tempdir().unwrap();
+    let sup = new_sup(dir.path());
+
+    let p = sup.add_project("My App".into(), "C:/tmp".into()).unwrap();
+    let c = sup
+        .add_command(&p.id, "Dev".into(), "ping -n 2 127.0.0.1".into(), ProcKind::Generic, false, false)
+        .unwrap();
+
+    let updated = sup
+        .update_command(
+            &p.id,
+            &c.id,
+            "Serve".into(),
+            "ping -n 5 127.0.0.1".into(),
+            ProcKind::Flutter,
+            true,
+            true,
+        )
+        .unwrap();
+
+    // The id is a stable handle (keys the runtime map + logs + API path).
+    assert_eq!(updated.id, c.id, "id must not change on edit");
+
+    let projects = sup.list_projects();
+    let cmd = &projects[0].commands[0];
+    assert_eq!(cmd.name, "Serve");
+    assert_eq!(cmd.cmd, "ping -n 5 127.0.0.1");
+    assert_eq!(cmd.kind, ProcKind::Flutter);
+    assert!(cmd.autostart);
+    assert!(cmd.use_dynamic_port);
+
+    // Runtime view reflects the edit under the same composite id.
+    let info = sup
+        .list()
+        .into_iter()
+        .find(|x| x.id == format!("{}:{}", p.id, c.id))
+        .expect("command still present in runtime map");
+    assert_eq!(info.name, "Serve");
+    assert_eq!(info.kind, ProcKind::Flutter);
+}
+
+#[test]
+fn update_command_unknown_errors() {
+    let dir = tempfile::tempdir().unwrap();
+    let sup = new_sup(dir.path());
+    let p = sup.add_project("My App".into(), "C:/tmp".into()).unwrap();
+    assert!(sup
+        .update_command(&p.id, "nope", "X".into(), "ping".into(), ProcKind::Generic, false, false)
+        .is_err());
+    assert!(sup
+        .update_command("nope", "job", "X".into(), "ping".into(), ProcKind::Generic, false, false)
+        .is_err());
+}
+
+#[test]
+fn update_command_restarts_running_process() {
+    let dir = tempfile::tempdir().unwrap();
+    write_project(dir.path(), "ping -n 30 127.0.0.1");
+    let sup = new_sup(dir.path());
+
+    sup.start(ID).unwrap();
+    std::thread::sleep(Duration::from_millis(800));
+    let pid_before = sup.list()[0].pid.expect("must be running before edit");
+
+    // Editing the cmd of a running process auto-restarts it: it stays running,
+    // but on a fresh pid spawned with the new command.
+    sup.update_command(
+        "test",
+        "job",
+        "job".into(),
+        "ping -n 31 127.0.0.1".into(),
+        ProcKind::Generic,
+        false,
+        false,
+    )
+    .unwrap();
+    std::thread::sleep(Duration::from_millis(800));
+
+    let after = sup.list();
+    assert_eq!(after[0].status, ProcStatus::Running, "should be running again after auto-restart");
+    let pid_after = after[0].pid.expect("must be running after auto-restart");
+    assert_ne!(pid_before, pid_after, "auto-restart should spawn a fresh process");
+
+    sup.shutdown_all();
+}
+
+#[test]
 fn migrates_legacy_procs_json() {
     let dir = tempfile::tempdir().unwrap();
     // Old flat format with an explicit id that should be re-derived on migrate.

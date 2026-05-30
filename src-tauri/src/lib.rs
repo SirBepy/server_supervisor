@@ -41,6 +41,7 @@ pub fn run() {
             ipc::commands::add_project,
             ipc::commands::remove_project,
             ipc::commands::add_command,
+            ipc::commands::update_command,
             ipc::commands::remove_command,
             ipc::commands::detect_commands,
             ipc::commands::validate_command,

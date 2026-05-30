@@ -319,6 +319,78 @@ impl Supervisor {
             .ok_or_else(|| format!("started but not found in list: {id}"))
     }
 
+    /// Edit an existing command in place. The command `id` is a stable handle
+    /// (it keys the runtime procs map, the captured logs, and the API path), so
+    /// it never changes here - only the mutable fields do. The runtime
+    /// `ManagedProc` is mutated in place (preserving its log buffer and any live
+    /// child handle). If the process is running and the edit changes a field the
+    /// spawn depends on (cmd, cwd, kind, dynamic-port), it is restarted so the
+    /// live process reflects the edit.
+    pub fn update_command(
+        &self,
+        project_id: &str,
+        command_id: &str,
+        name: String,
+        cmd: String,
+        kind: ProcKind,
+        autostart: bool,
+        use_dynamic_port: bool,
+    ) -> Result<Command, String> {
+        let name = name.trim().to_string();
+        let cmd = cmd.trim().to_string();
+        if name.is_empty() || cmd.is_empty() {
+            return Err("command name and cmd are required".to_string());
+        }
+        let (updated, project_snapshot) = {
+            let mut projects = self.projects.lock().unwrap();
+            let project = projects
+                .iter_mut()
+                .find(|p| p.id == project_id)
+                .ok_or_else(|| format!("unknown project: {project_id}"))?;
+            let command = project
+                .commands
+                .iter_mut()
+                .find(|c| c.id == command_id)
+                .ok_or_else(|| format!("unknown command: {command_id}"))?;
+            command.name = name;
+            command.cmd = cmd;
+            command.kind = kind;
+            command.autostart = autostart;
+            command.use_dynamic_port = use_dynamic_port;
+            let updated = command.clone();
+            let snapshot = project.clone();
+            config::save(&self.data_dir, &projects);
+            (updated, snapshot)
+        };
+
+        let new_spec = ProcSpec::from_unit(&project_snapshot, &updated);
+        let id = new_spec.id.clone();
+        let restart_needed = {
+            let mut map = self.procs.lock().unwrap();
+            match map.get_mut(&id) {
+                Some(proc) => {
+                    let affects_running = proc.spec.cmd != new_spec.cmd
+                        || proc.spec.cwd != new_spec.cwd
+                        || proc.spec.kind != new_spec.kind
+                        || proc.spec.use_dynamic_port != new_spec.use_dynamic_port;
+                    let running = proc.pid.is_some();
+                    proc.spec = new_spec;
+                    running && affects_running
+                }
+                None => {
+                    // Defensive: every command should already have a runtime entry,
+                    // but if not, create one so the edit is at least startable.
+                    map.insert(id.clone(), ManagedProc::new(new_spec));
+                    false
+                }
+            }
+        };
+        if restart_needed {
+            self.restart(&id)?;
+        }
+        Ok(updated)
+    }
+
     pub fn remove_command(&self, project_id: &str, command_id: &str) -> Result<(), String> {
         let mut projects = self.projects.lock().unwrap();
         let project = projects
