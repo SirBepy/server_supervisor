@@ -37,11 +37,12 @@ async function detectInto(path: string): Promise<DetectedCommand[]> {
   }
 }
 
-// Focus the name input once the modal has rendered, so picking a folder lands
-// the cursor there immediately (folder name shows as a placeholder hint).
-function focusNameField() {
+// Focus the command combobox once the modal has rendered: picking a folder lands
+// the cursor on the field you actually fill (Name is optional and defaults to the
+// folder name, shown as its placeholder).
+function focusCommandField() {
   window.setTimeout(() => {
-    ui.root.querySelector<HTMLInputElement>(".dialog .field-row input")?.focus();
+    ui.root.querySelector<HTMLInputElement>(".dialog .combo-input")?.focus();
   }, 0);
 }
 
@@ -61,7 +62,7 @@ export async function startAddProject() {
   };
   ui.comboOpen = false;
   draw();
-  focusNameField();
+  focusCommandField();
 }
 
 async function repickFolder() {
@@ -81,7 +82,7 @@ async function repickFolder() {
   };
   ui.comboOpen = false;
   draw();
-  focusNameField();
+  focusCommandField();
 }
 
 // Open the add-command modal for a project, pre-loading detected commands.
