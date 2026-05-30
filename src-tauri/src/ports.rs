@@ -73,11 +73,17 @@ impl PortRegistry {
 
     /// Acquire an ephemeral per-run port: lowest free >= BASE not reserved, not
     /// already acquired, not OS-bound. Held in-memory until `release`.
+    ///
+    /// OS-bound ports are detected two ways: the live LISTENING set from the OS
+    /// TCP table (one netstat call, catches wildcard `[::]:port` / `0.0.0.0:port`
+    /// holders that a loopback bind-probe misses on Windows) plus a bind-probe as
+    /// a secondary check. Either signal marks the port taken.
     pub fn acquire(&self) -> Result<u16, String> {
         let taken = self.taken_set();
+        let listening = listening_ports();
         let mut acq = self.acquired.lock().unwrap();
         for p in BASE..MAX {
-            if taken.contains(&p) || acq.contains(&p) {
+            if taken.contains(&p) || acq.contains(&p) || listening.contains(&p) {
                 continue;
             }
             if !port_free(p) {
@@ -107,10 +113,59 @@ impl PortRegistry {
 /// probing only `127.0.0.1` would then hand out a port that is actually taken.
 /// On Windows `IPV6_V6ONLY` defaults to true, so the two binds are independent and
 /// must both succeed. Either failure means "taken".
+///
+/// This is a secondary check: on Windows a process bound to the wildcard
+/// `[::]:port` does NOT block a later bind to the specific loopback `[::1]:port`
+/// (specific-vs-wildcard binds don't conflict without `SO_EXCLUSIVEADDRUSE`), so
+/// the bind-probe alone can report such a port free. `listening_ports()` (the OS
+/// TCP table) is the primary detector for those holders; see `acquire`.
 fn port_free(port: u16) -> bool {
     use std::net::{Ipv4Addr, Ipv6Addr};
     TcpListener::bind((Ipv4Addr::LOCALHOST, port)).is_ok()
         && TcpListener::bind((Ipv6Addr::LOCALHOST, port)).is_ok()
+}
+
+/// The set of local ports currently in TCP LISTENING state, read once from the
+/// OS via `netstat -ano`. Covers both IPv4 (`0.0.0.0:port`) and IPv6
+/// (`[::]:port`) wildcard listeners regardless of how they were bound, which a
+/// bind-probe cannot reliably detect on Windows. Best-effort: returns an empty
+/// set if netstat is unavailable (the bind-probe still applies).
+#[cfg(windows)]
+fn listening_ports() -> std::collections::HashSet<u16> {
+    use std::os::windows::process::CommandExt;
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    let mut set = std::collections::HashSet::new();
+    let Ok(out) = std::process::Command::new("netstat")
+        .args(["-ano"])
+        .creation_flags(CREATE_NO_WINDOW)
+        .output()
+    else {
+        return set;
+    };
+    let text = String::from_utf8_lossy(&out.stdout);
+    for line in text.lines() {
+        // Columns: Proto, Local Address, Foreign Address, State, PID.
+        let cols: Vec<&str> = line.split_whitespace().collect();
+        if cols.len() >= 4 && cols[0].eq_ignore_ascii_case("TCP") && cols[3] == "LISTENING" {
+            if let Some(port) = local_port(cols[1]) {
+                set.insert(port);
+            }
+        }
+    }
+    set
+}
+
+#[cfg(not(windows))]
+fn listening_ports() -> std::collections::HashSet<u16> {
+    std::collections::HashSet::new()
+}
+
+/// Parse the port from a netstat local-address column: `0.0.0.0:42000`,
+/// `[::]:42000`, `127.0.0.1:42000`, `[::1]:42000`. The port is the segment after
+/// the final `:`.
+#[cfg(windows)]
+fn local_port(local: &str) -> Option<u16> {
+    local.rsplit(':').next()?.parse().ok()
 }
 
 fn load(data_dir: &Path) -> Vec<PortEntry> {
@@ -179,5 +234,28 @@ mod tests {
         let listener = TcpListener::bind((Ipv6Addr::LOCALHOST, 0)).unwrap();
         let port = listener.local_addr().unwrap().port();
         assert!(!port_free(port), "IPv6-bound port must count as taken");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn local_port_parses_netstat_addresses() {
+        assert_eq!(local_port("0.0.0.0:42000"), Some(42000));
+        assert_eq!(local_port("[::]:42000"), Some(42000));
+        assert_eq!(local_port("127.0.0.1:6969"), Some(6969));
+        assert_eq!(local_port("[::1]:1"), Some(1));
+        assert_eq!(local_port("*:*"), None);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn listening_ports_includes_a_bound_port() {
+        use std::net::{Ipv4Addr, TcpListener};
+        // Bind a real port and confirm the OS TCP table reports it as listening.
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        assert!(
+            listening_ports().contains(&port),
+            "a freshly bound listener must show up in the OS LISTENING set"
+        );
     }
 }
