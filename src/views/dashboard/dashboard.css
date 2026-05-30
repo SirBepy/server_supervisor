@@ -48,19 +48,25 @@
   gap: 10px;
   min-width: 0;
 }
-/* Path is hidden by default to cut clutter; hovering the project name reveals it
-   inline, to the right of the name. No native title tooltip. */
+/* Path is hidden by default to cut clutter; hovering the project name fades it
+   in inline, to the right of the name. No native title tooltip. The right
+   padding is a hover buffer: overshooting slightly past the text (e.g. while
+   selecting it) keeps the cursor inside .titles, so it doesn't blink out. */
 .group-head .root {
-  display: none;
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 0.15s ease, visibility 0.15s ease;
   color: var(--muted);
   font-size: 11px;
   max-width: 420px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  padding-right: 32px;
 }
 .group-head .titles:hover .root {
-  display: block;
+  opacity: 1;
+  visibility: visible;
 }
 .group-actions {
   display: flex;
