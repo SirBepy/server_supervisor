@@ -5,3 +5,4 @@
 /src/types/ipc.generated.ts
 *.log
 .DS_Store
+/.playwright-mcp
