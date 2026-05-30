@@ -385,3 +385,31 @@ fn unique_id(base: &str, taken: &dyn Fn(&str) -> bool) -> String {
         n += 1;
     }
 }
+
+/// Short display name for a command: `npm|pnpm|yarn run X` and `yarn X` -> `X`,
+/// otherwise the trimmed command string. Used when `POST /run` omits a name.
+fn derive_name(cmd: &str) -> String {
+    let toks: Vec<&str> = cmd.split_whitespace().collect();
+    match toks.as_slice() {
+        [runner, "run", x, ..] if *runner == "npm" || *runner == "pnpm" || *runner == "yarn" => {
+            x.to_string()
+        }
+        ["yarn", x, ..] => x.to_string(),
+        _ => cmd.trim().to_string(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::derive_name;
+
+    #[test]
+    fn derive_name_handles_runners_and_fallback() {
+        assert_eq!(derive_name("npm run dev"), "dev");
+        assert_eq!(derive_name("pnpm run build"), "build");
+        assert_eq!(derive_name("yarn run start"), "start");
+        assert_eq!(derive_name("yarn dev"), "dev");
+        assert_eq!(derive_name("node server.js"), "node server.js");
+        assert_eq!(derive_name("  flutter run  "), "flutter run");
+    }
+}
