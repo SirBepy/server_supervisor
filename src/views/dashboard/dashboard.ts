@@ -123,7 +123,7 @@ function projectSection(project: Project): TemplateResult {
     <section class="group">
       <div class="group-head">
         <div class="titles">
-          <h2 title=${project.root}>${project.name}</h2>
+          <h2>${project.name}</h2>
           <span class="root">${project.root}</span>
         </div>
         <div class="group-actions">
