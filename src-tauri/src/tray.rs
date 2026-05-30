@@ -41,7 +41,8 @@ pub fn setup(app: &AppHandle) -> tauri::Result<()> {
                 ..
             } = event
             {
-                toggle_main(tray.app_handle());
+                // Left-click only ever shows / raises the window - never hides it.
+                show_main(tray.app_handle());
             }
         })
         .build(app)?;
@@ -52,18 +53,7 @@ pub fn setup(app: &AppHandle) -> tauri::Result<()> {
 fn show_main(app: &AppHandle) {
     if let Some(w) = app.get_webview_window("main") {
         let _ = w.show();
-        let _ = w.set_focus();
-    }
-}
-
-fn toggle_main(app: &AppHandle) {
-    let Some(w) = app.get_webview_window("main") else {
-        return;
-    };
-    if w.is_visible().unwrap_or(false) {
-        let _ = w.hide();
-    } else {
-        let _ = w.show();
+        let _ = w.unminimize();
         let _ = w.set_focus();
     }
 }
