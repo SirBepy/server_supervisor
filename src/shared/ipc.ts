@@ -64,4 +64,5 @@ export function validateCommand(root: string, cmd: string): Promise<CommandCheck
 }
 
 export const getSettings = () => invoke<Settings>("get_settings");
+export const getApiToken = () => invoke<string>("get_api_token");
 export const quitApp = () => invoke<void>("quit_app");
