@@ -346,6 +346,18 @@ impl Supervisor {
         }
         // Kind is always inferred from the command string (no manual picker).
         let kind = ProcKind::infer(&cmd);
+        // A running command is locked: editing it would silently relaunch the
+        // live process. Require the caller to stop it first. Refresh so a child
+        // that already exited on its own does not count as running.
+        {
+            let mut map = self.procs.lock().unwrap();
+            if let Some(proc) = map.get_mut(&unit_id(project_id, command_id)) {
+                proc.refresh();
+                if proc.pid.is_some() {
+                    return Err("stop the command before editing it".to_string());
+                }
+            }
+        }
         let (updated, project_snapshot) = {
             let mut projects = self.projects.lock().unwrap();
             let project = projects
@@ -397,6 +409,17 @@ impl Supervisor {
     }
 
     pub fn remove_command(&self, project_id: &str, command_id: &str) -> Result<(), String> {
+        // Same lock as edit: a running command must be stopped before it can be
+        // removed, so deletion never races a live child.
+        {
+            let mut map = self.procs.lock().unwrap();
+            if let Some(proc) = map.get_mut(&unit_id(project_id, command_id)) {
+                proc.refresh();
+                if proc.pid.is_some() {
+                    return Err("stop the command before removing it".to_string());
+                }
+            }
+        }
         let mut projects = self.projects.lock().unwrap();
         let project = projects
             .iter_mut()

@@ -8,6 +8,7 @@ import * as ipc from "../../shared/ipc";
 import type { Project } from "../../types/ipc.generated";
 import { ui, setDraw, refresh, act } from "./state";
 import { modalView, startAddProject, startAddCommand } from "./modals";
+import { renderAnsi } from "../../shared/ansi";
 
 const POLL_MS = 2500;
 
@@ -82,44 +83,50 @@ function commandRow(project: Project, cmd: Project["commands"][number]): Templat
         >
           <i class="ph ph-terminal-window"></i>
         </button>
-        <button
-          title="Edit command"
-          @click=${() => {
-            ui.modal = {
-              t: "editCommand",
-              projectId: project.id,
-              commandId: cmd.id,
-              root: project.root,
-              name: cmd.name,
-              cmd: cmd.cmd,
-              autostart: cmd.autostart,
-              useDynamicPort: cmd.use_dynamic_port,
-              check: null,
-            };
-            ui.comboOpen = false;
-            draw();
-          }}
-        >
-          <i class="ph ph-pencil-simple"></i>
-        </button>
-        <button
-          title="Remove command"
-          @click=${() => {
-            ui.modal = {
-              t: "confirmDeleteCommand",
-              projectId: project.id,
-              commandId: cmd.id,
-              cmdName: cmd.name,
-              lastOne: project.commands.length === 1,
-            };
-            draw();
-          }}
-        >
-          <i class="ph ph-trash"></i>
-        </button>
+        ${running
+          ? nothing
+          : html`
+              <button
+                title="Edit command"
+                @click=${() => {
+                  ui.modal = {
+                    t: "editCommand",
+                    projectId: project.id,
+                    commandId: cmd.id,
+                    root: project.root,
+                    name: cmd.name,
+                    cmd: cmd.cmd,
+                    autostart: cmd.autostart,
+                    useDynamicPort: cmd.use_dynamic_port,
+                    check: null,
+                  };
+                  ui.comboOpen = false;
+                  draw();
+                }}
+              >
+                <i class="ph ph-pencil-simple"></i>
+              </button>
+              <button
+                title="Remove command"
+                @click=${() => {
+                  ui.modal = {
+                    t: "confirmDeleteCommand",
+                    projectId: project.id,
+                    commandId: cmd.id,
+                    cmdName: cmd.name,
+                    lastOne: project.commands.length === 1,
+                  };
+                  draw();
+                }}
+              >
+                <i class="ph ph-trash"></i>
+              </button>
+            `}
       </div>
     </div>
-    ${ui.openLogsFor === id ? html`<pre class="logs">${ui.logText || "(no output yet)"}</pre>` : nothing}
+    ${ui.openLogsFor === id
+      ? html`<pre class="logs">${ui.logText ? renderAnsi(ui.logText) : "(no output yet)"}</pre>`
+      : nothing}
   `;
 }
 
