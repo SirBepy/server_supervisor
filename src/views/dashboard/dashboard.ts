@@ -146,14 +146,17 @@ function draw() {
   render(
     html`
       <header class="topbar">
-        <h1><i class="ph ph-stack"></i> Server Supervisor</h1>
-        <button class="add-project" @click=${() => void startAddProject()}>
-          <i class="ph ph-folder-plus"></i> Add project
+        <button class="icon-btn" title="Add project" @click=${() => void startAddProject()}>
+          <i class="ph ph-folder-plus"></i>
+        </button>
+        <h1>Server Supervisor</h1>
+        <button class="icon-btn" title="Settings" @click=${() => { location.hash = "#settings"; }}>
+          <i class="ph ph-gear"></i>
         </button>
       </header>
       ${ui.error ? html`<div class="error">${ui.error}</div>` : nothing}
       ${ui.projects.length === 0
-        ? html`<p class="empty">No projects yet. Click "Add project" to pick a folder.</p>`
+        ? html`<p class="empty">No projects yet. Use the + button to add a project.</p>`
         : ui.projects.map(projectSection)}
       ${modalView()}
     `,
