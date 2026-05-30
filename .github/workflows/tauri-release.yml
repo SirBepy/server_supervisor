@@ -1,0 +1,136 @@
+name: Tauri Release
+
+# On every push to main, release if the package.json version has no matching
+# `v<version>` git tag yet. This pairs with `/commit pushnbump`: the version
+# bump is the release trigger. Windows-only (the supervisor backend is
+# Windows-specific and the bundle targets are msi + nsis). No updater here, so
+# no signing keys / latest.json - just build the installers and attach them to
+# a GitHub Release.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    outputs:
+      should_release: ${{ steps.check.outputs.should_release }}
+      tag: ${{ steps.check.outputs.tag }}
+      version: ${{ steps.check.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Resolve version and tag
+        id: check
+        shell: bash
+        run: |
+          VERSION=$(jq -r .version package.json)
+          TAG="v$VERSION"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          if git rev-parse "refs/tags/$TAG" >/dev/null 2>&1; then
+            echo "Tag $TAG already exists. Skipping release."
+            echo "should_release=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "Tag $TAG not found. Will release."
+            echo "should_release=true" >> "$GITHUB_OUTPUT"
+          fi
+
+  build:
+    needs: check
+    if: needs.check.outputs.should_release == 'true'
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Sync version into tauri.conf.json, Cargo.toml, and package.json
+        shell: bash
+        run: |
+          VERSION="${{ needs.check.outputs.version }}"
+          # package.json is the source of truth; mirror it into the Tauri bundler
+          # config and the crate manifest so the built installer carries the same
+          # version. These edits are build-time only and not committed back.
+          jq --arg v "$VERSION" '.version = $v' src-tauri/tauri.conf.json > src-tauri/tauri.conf.json.tmp
+          mv src-tauri/tauri.conf.json.tmp src-tauri/tauri.conf.json
+          # Only the top-level `^version = "..."` line; dependency versions inside
+          # inline tables are indented and won't match. `-i.bak` is the form both
+          # GNU and BSD sed accept.
+          sed -i.bak -E "s/^version = \".*\"/version = \"$VERSION\"/" src-tauri/Cargo.toml
+          rm src-tauri/Cargo.toml.bak
+          jq --arg v "$VERSION" '.version = $v' package.json > package.json.tmp
+          mv package.json.tmp package.json
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+          cache-on-failure: true
+
+      - name: Install Tauri CLI
+        uses: taiki-e/install-action@v2
+        with:
+          tool: tauri-cli
+
+      - name: Build
+        working-directory: src-tauri
+        # cargo-tauri (the binary from tauri-cli), not `cargo tauri`, to avoid the
+        # rustup shim shadowing cargo's subcommand dispatch. beforeBuildCommand
+        # (`npm run build`) runs the type-export prebuild then vite build.
+        run: cargo-tauri build
+
+      - name: Stage artifacts
+        shell: bash
+        working-directory: src-tauri/target/release/bundle
+        run: |
+          VERSION="${{ needs.check.outputs.version }}"
+          mkdir -p "$GITHUB_WORKSPACE/release-staging"
+          MSI=$(ls msi/*.msi | head -n 1)
+          cp "$MSI" "$GITHUB_WORKSPACE/release-staging/Server-Supervisor_${VERSION}_windows_x64.msi"
+          EXE=$(ls nsis/*-setup.exe | head -n 1)
+          cp "$EXE" "$GITHUB_WORKSPACE/release-staging/Server-Supervisor_${VERSION}_windows_x64-setup.exe"
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-windows
+          path: release-staging/
+
+  publish:
+    needs: [check, build]
+    if: needs.check.outputs.should_release == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts/
+          pattern: release-*
+          merge-multiple: true
+
+      - name: Upload to release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            artifacts/*.msi
+            artifacts/*-setup.exe
+          tag_name: ${{ needs.check.outputs.tag }}
+          name: ${{ needs.check.outputs.tag }}
+          draft: false
+          make_latest: "true"
