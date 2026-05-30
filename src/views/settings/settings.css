@@ -1,3 +1,15 @@
+/* Full-height flex column: the kit's settings pages use position:absolute and
+   height:100%, so the content host below must have a definite height to fill. */
+.settings-view {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+}
+.settings-content {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
 .settings-topbar {
   position: sticky;
   top: 0;
@@ -8,6 +20,7 @@
   align-items: center;
   justify-content: space-between;
   z-index: 5;
+  flex: 0 0 auto;
 }
 
 .settings-title {

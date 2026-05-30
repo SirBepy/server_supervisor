@@ -11,11 +11,16 @@ import { modalView, startAddProject, startAddCommand } from "./modals";
 
 const POLL_MS = 2500;
 
-export function mountDashboard(el: HTMLElement) {
+export function mountDashboard(el: HTMLElement): () => void {
   ui.root = el;
   setDraw(draw);
   void refresh();
-  window.setInterval(() => void refresh(), POLL_MS);
+  // Capture the poll handle and clear it on teardown. Without this the interval
+  // outlives navigation and keeps calling draw() into the (now replaced) root,
+  // throwing lit-html "ChildPart has no parentNode" every tick and corrupting
+  // whatever view replaced it.
+  const timer = window.setInterval(() => void refresh(), POLL_MS);
+  return () => window.clearInterval(timer);
 }
 
 async function toggleLogs(id: string) {
