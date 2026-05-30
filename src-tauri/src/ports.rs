@@ -101,8 +101,16 @@ impl PortRegistry {
     }
 }
 
+/// A port counts as free only if it can be bound on BOTH the IPv4 and the IPv6
+/// loopback. Servers (notably Node) frequently bind the IPv6 wildcard `[::]:port`,
+/// which occupies the port for localhost clients while leaving the IPv4 bind free;
+/// probing only `127.0.0.1` would then hand out a port that is actually taken.
+/// On Windows `IPV6_V6ONLY` defaults to true, so the two binds are independent and
+/// must both succeed. Either failure means "taken".
 fn port_free(port: u16) -> bool {
-    TcpListener::bind(("127.0.0.1", port)).is_ok()
+    use std::net::{Ipv4Addr, Ipv6Addr};
+    TcpListener::bind((Ipv4Addr::LOCALHOST, port)).is_ok()
+        && TcpListener::bind((Ipv6Addr::LOCALHOST, port)).is_ok()
 }
 
 fn load(data_dir: &Path) -> Vec<PortEntry> {
@@ -161,5 +169,15 @@ mod tests {
         reg.release(a);
         let c = reg.acquire().unwrap();
         assert_eq!(c, a, "released port is reusable");
+    }
+
+    #[test]
+    fn port_free_detects_ipv6_only_bind() {
+        use std::net::{Ipv6Addr, TcpListener};
+        // Bind the IPv6 loopback only (mirrors a server on `[::]:port`); IPv4 is
+        // still free, so an IPv4-only probe would wrongly report the port free.
+        let listener = TcpListener::bind((Ipv6Addr::LOCALHOST, 0)).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        assert!(!port_free(port), "IPv6-bound port must count as taken");
     }
 }
