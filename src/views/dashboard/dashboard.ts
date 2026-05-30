@@ -131,7 +131,7 @@ function projectSection(project: Project): TemplateResult {
             title="Add command"
             @click=${() => void startAddCommand(project.id, project.root)}
           >
-            <i class="ph ph-plus"></i> command
+            <i class="ph ph-plus"></i>
           </button>
         </div>
       </div>
