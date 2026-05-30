@@ -159,3 +159,62 @@ async fn unknown_proc_start_is_400() {
         .unwrap();
     assert_eq!(r.status(), 400);
 }
+
+#[tokio::test]
+async fn run_registers_starts_requires_token_and_is_idempotent() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("server.js"),
+        "const p=process.env.PORT;require('http').createServer((_,r)=>r.end('ok')).listen(p,()=>console.log('LISTENING '+p));",
+    )
+    .unwrap();
+    let base = spawn_api("secret", dir.path()).await;
+    let client = reqwest::Client::new();
+    let root = dir.path().display().to_string();
+    let body = serde_json::json!({ "root": root, "cmd": "node server.js" });
+
+    // Auth required.
+    let no_token = client
+        .post(format!("{base}/run"))
+        .json(&body)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(no_token.status(), 401);
+
+    // With token: registers + starts, returns ProcInfo with a dynamic port.
+    let info: serde_json::Value = client
+        .post(format!("{base}/run"))
+        .bearer_auth("secret")
+        .json(&body)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let id = info["id"].as_str().unwrap().to_string();
+    let port = info["port"].as_u64().unwrap();
+    assert!((42000..49000).contains(&(port as u16)));
+
+    // Idempotent: a second /run with the same root+cmd reuses the same unit.
+    let info2: serde_json::Value = client
+        .post(format!("{base}/run"))
+        .bearer_auth("secret")
+        .json(&body)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(info2["id"].as_str().unwrap(), id);
+
+    // Teardown.
+    let _ = client
+        .post(format!("{base}/procs/{id}/stop"))
+        .bearer_auth("secret")
+        .send()
+        .await
+        .unwrap();
+}

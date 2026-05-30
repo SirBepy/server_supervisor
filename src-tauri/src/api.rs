@@ -3,11 +3,14 @@
 //! Binds `127.0.0.1` only and requires `Authorization: Bearer <token>` on every
 //! route except `/health`. The token is generated on first run and stored in a
 //! file under the supervisor data dir. Because this endpoint can spawn arbitrary
-//! commands, it must never bind to a non-loopback address.
+//! commands, it must never bind to a non-loopback address. In particular `/run`
+//! lets an authorized caller register-and-run an arbitrary command in one call
+//! (define-and-run), so loopback-only binding plus the bearer token matter
+//! doubly here.
 
 use crate::ports::{PortEntry, PortRegistry};
 use crate::supervisor::Supervisor;
-use crate::types::ProcInfo;
+use crate::types::{ProcInfo, ProcKind};
 use axum::{
     extract::{Path, Request, State},
     http::{header, HeaderMap, StatusCode},
@@ -39,6 +42,18 @@ struct ReserveBody {
     owner: String,
 }
 
+#[derive(Deserialize)]
+struct RunBody {
+    root: String,
+    cmd: String,
+    #[serde(default)]
+    name: Option<String>,
+    #[serde(default)]
+    kind: Option<ProcKind>,
+    #[serde(default)]
+    use_dynamic_port: Option<bool>,
+}
+
 /// Read the bearer token from `<data_dir>/api_token.txt`, generating a fresh
 /// random token on first run.
 pub fn ensure_token(data_dir: &FsPath) -> String {
@@ -66,6 +81,7 @@ pub fn router(sup: Arc<Supervisor>, ports: Arc<PortRegistry>, token: String) -> 
         .route("/procs/:id/logs", get(get_logs))
         .route("/ports", get(list_ports))
         .route("/ports/reserve", post(reserve_port))
+        .route("/run", post(run))
         .route_layer(middleware::from_fn_with_state(state.clone(), auth))
         // /health is added after the auth layer, so it stays unauthenticated.
         .route("/health", get(health))
@@ -151,6 +167,19 @@ async fn list_ports(State(s): State<ApiState>) -> Json<Vec<PortEntry>> {
 
 async fn reserve_port(State(s): State<ApiState>, Json(body): Json<ReserveBody>) -> Json<u16> {
     Json(s.ports.reserve_next(&body.owner))
+}
+
+async fn run(State(s): State<ApiState>, Json(b): Json<RunBody>) -> Response {
+    match s.sup.ensure_and_run(
+        &b.root,
+        &b.cmd,
+        b.name,
+        b.kind.unwrap_or(ProcKind::Generic),
+        b.use_dynamic_port.unwrap_or(true),
+    ) {
+        Ok(info) => Json(info).into_response(),
+        Err(e) => (StatusCode::BAD_REQUEST, e).into_response(),
+    }
 }
 
 fn unit_result(r: Result<(), String>) -> Response {
