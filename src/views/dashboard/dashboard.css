@@ -42,14 +42,31 @@
   justify-content: space-between;
   gap: 8px;
 }
+.group-head .titles {
+  position: relative;
+}
+/* Path is hidden by default to cut clutter; hovering (or focusing) the project
+   name reveals it as a floating label so the command list never shifts. */
 .group-head .root {
+  display: none;
+  position: absolute;
+  top: 100%;
+  left: 0;
+  z-index: 5;
   color: var(--muted);
   font-size: 11px;
-  display: block;
   max-width: 420px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 2px 6px;
+}
+.group-head .titles:hover .root,
+.group-head .titles:focus-within .root {
+  display: block;
 }
 .group-actions {
   display: flex;

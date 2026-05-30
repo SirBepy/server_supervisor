@@ -122,9 +122,9 @@ function projectSection(project: Project): TemplateResult {
   return html`
     <section class="group">
       <div class="group-head">
-        <div>
-          <h2>${project.name}</h2>
-          <span class="root" title=${project.root}>${project.root}</span>
+        <div class="titles">
+          <h2 title=${project.root}>${project.name}</h2>
+          <span class="root">${project.root}</span>
         </div>
         <div class="group-actions">
           <button
