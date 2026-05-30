@@ -32,10 +32,6 @@ impl Supervisor {
         }
     }
 
-    pub fn ports(&self) -> &Arc<PortRegistry> {
-        &self.ports
-    }
-
     pub fn reconcile_orphans(&self) {
         reaper::reconcile(&self.data_dir);
     }
