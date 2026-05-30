@@ -12,14 +12,14 @@ export default defineConfig({
   build: {
     outDir: resolve(__dirname, "dist"),
     emptyOutDir: true,
-    rollupOptions: {
-      // These packages are vendor peer deps (tauri_kit updater/opener features)
-      // not used by this app. Tauri provides them at runtime via its plugin system,
-      // so they must not be bundled.
-      external: ["@tauri-apps/plugin-updater", "@tauri-apps/plugin-opener"],
-    },
   },
   resolve: {
-    alias: { "@": resolve(__dirname, "src") },
+    alias: {
+      "@": resolve(__dirname, "src"),
+      // tauri_kit vendor peer deps not installed in this app — stub them out so
+      // both the dev server and production build resolve without errors.
+      "@tauri-apps/plugin-opener": resolve(__dirname, "src/vendor-stubs/plugin-opener.ts"),
+      "@tauri-apps/plugin-updater": resolve(__dirname, "src/vendor-stubs/plugin-updater.ts"),
+    },
   },
 });
