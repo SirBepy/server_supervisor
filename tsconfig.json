@@ -12,6 +12,6 @@
     "types": ["node"],
     "noEmit": true
   },
-  "include": ["src/**/*.ts"],
+  "include": ["src/**/*.ts", "vendor/tauri_kit/frontend/settings/schema.ts"],
   "exclude": ["node_modules", "dist"]
 }
