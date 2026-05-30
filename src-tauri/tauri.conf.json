@@ -5,7 +5,7 @@
   "identifier": "com.sirbepy.server-supervisor",
   "build": {
     "frontendDist": "../dist",
-    "devUrl": "http://localhost:6969",
+    "devUrl": "http://localhost:6970",
     "beforeDevCommand": "npm run dev",
     "beforeBuildCommand": "npm run build"
   },
@@ -16,7 +16,7 @@
         "label": "main",
         "url": "index.html",
         "title": "Server Supervisor",
-        "width": 760,
+        "width": 440,
         "height": 580,
         "minWidth": 440,
         "minHeight": 380,

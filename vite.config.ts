@@ -5,10 +5,10 @@ export default defineConfig({
   root: resolve(__dirname, "src"),
   publicDir: false,
   clearScreen: false,
-  // Unique per-project dev port (avoid the 1420 default other Tauri apps use,
-  // or their webviews collide on http://localhost:1420). 6969 is the vite dev
-  // port; the runtime localhost API sits beside it on 6970.
-  server: { port: 6969, strictPort: true },
+  // Non-default port to avoid colliding with the 1420 Tauri default when
+  // multiple Tauri apps run concurrently. 6970 is the Vite dev port; the
+  // runtime localhost API defaults to 6969.
+  server: { port: 6970, strictPort: true },
   build: {
     outDir: resolve(__dirname, "dist"),
     emptyOutDir: true,
