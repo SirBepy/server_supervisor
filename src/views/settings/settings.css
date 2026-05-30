@@ -1,0 +1,80 @@
+.settings-topbar {
+  position: sticky;
+  top: 0;
+  background: var(--bg);
+  padding: 12px 20px;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  z-index: 5;
+}
+
+.settings-title {
+  font-size: 15px;
+  font-weight: 600;
+}
+
+/* icon-btn is also defined in dashboard.css for the topbar buttons there */
+.settings-topbar .icon-btn {
+  background: transparent;
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 9px;
+  cursor: pointer;
+  font-size: 16px;
+  display: inline-flex;
+  align-items: center;
+  line-height: 1;
+}
+
+.settings-topbar .icon-btn:hover {
+  border-color: var(--accent);
+}
+
+/* Spacer so the title stays centered when there's no right-side element */
+.settings-topbar .spacer {
+  width: 34px;
+}
+
+/* Token field inside kit-row */
+.token-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1;
+  min-width: 0;
+}
+
+.token-input {
+  flex: 1;
+  min-width: 0;
+  background: var(--bg);
+  color: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 5px 8px;
+  font-family: "Cascadia Code", Consolas, monospace;
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.token-copy {
+  background: transparent;
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 5px 8px;
+  cursor: pointer;
+  font-size: 14px;
+  display: inline-flex;
+  align-items: center;
+  line-height: 1;
+  flex-shrink: 0;
+}
+
+.token-copy:hover {
+  border-color: var(--accent);
+}
