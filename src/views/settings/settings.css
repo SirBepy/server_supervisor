@@ -57,6 +57,7 @@
   padding: 5px 8px;
   font-family: "Cascadia Code", Consolas, monospace;
   font-size: 11px;
+  white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }

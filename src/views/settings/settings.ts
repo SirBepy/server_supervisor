@@ -5,7 +5,7 @@ import { getApiToken } from "../../shared/ipc";
 import { buildSettingsSchema } from "./schema";
 import "./settings.css";
 
-export async function mountSettings(el: HTMLElement): Promise<void> {
+export async function mountSettings(el: HTMLElement): Promise<() => void> {
   const token = await getApiToken().catch(() => "(unavailable)");
 
   const headerEl = document.createElement("header");
@@ -30,7 +30,7 @@ export async function mountSettings(el: HTMLElement): Promise<void> {
     location.hash = "#dashboard";
   });
 
-  await renderSettingsPage(contentEl, {
+  const cleanup = await renderSettingsPage(contentEl, {
     schema: buildSettingsSchema(token),
     onHeaderChange(title, depth, pop) {
       if (depth === 0) {
@@ -42,4 +42,5 @@ export async function mountSettings(el: HTMLElement): Promise<void> {
       }
     },
   });
+  return cleanup;
 }
