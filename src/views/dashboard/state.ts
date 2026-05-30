@@ -8,7 +8,6 @@ import * as ipc from "../../shared/ipc";
 import type {
   ProcInfo,
   Project,
-  ProcKind,
   CommandCheck,
   DetectedCommand,
 } from "../../types/ipc.generated";
@@ -16,7 +15,7 @@ import type {
 // Debounce window for the advisory command-validity check.
 export const VALIDATE_DEBOUNCE_MS = 350;
 
-export type PickedCommand = { name: string; cmd: string; kind: ProcKind; ok?: boolean };
+export type PickedCommand = { name: string; cmd: string; ok?: boolean };
 
 export type Modal =
   | null
@@ -37,7 +36,6 @@ export type Modal =
       detected: DetectedCommand[];
       name: string;
       cmd: string;
-      kind: ProcKind;
       useDynamicPort: boolean;
       query: string;
       highlight: number;
@@ -50,7 +48,6 @@ export type Modal =
       root: string;
       name: string;
       cmd: string;
-      kind: ProcKind;
       autostart: boolean;
       useDynamicPort: boolean;
       check: CommandCheck | null;

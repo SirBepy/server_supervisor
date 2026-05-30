@@ -6,7 +6,6 @@ import type {
   Project,
   Command,
   DetectedCommand,
-  ProcKind,
   CommandCheck,
 } from "../types/ipc.generated";
 
@@ -29,7 +28,6 @@ export const addCommand = (
   projectId: string,
   name: string,
   cmd: string,
-  kind: ProcKind,
   autostart: boolean,
   useDynamicPort: boolean,
 ) =>
@@ -37,7 +35,6 @@ export const addCommand = (
     projectId,
     name,
     cmd,
-    kind,
     autostart,
     useDynamicPort,
   });
@@ -46,7 +43,6 @@ export const updateCommand = (
   commandId: string,
   name: string,
   cmd: string,
-  kind: ProcKind,
   autostart: boolean,
   useDynamicPort: boolean,
 ) =>
@@ -55,7 +51,6 @@ export const updateCommand = (
     commandId,
     name,
     cmd,
-    kind,
     autostart,
     useDynamicPort,
   });

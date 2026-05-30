@@ -174,7 +174,8 @@ async fn run(State(s): State<ApiState>, Json(b): Json<RunBody>) -> Response {
         &b.root,
         &b.cmd,
         b.name,
-        b.kind.unwrap_or(ProcKind::Generic),
+        // Omitted kind -> inferred from the command; an explicit kind overrides.
+        b.kind,
         b.use_dynamic_port.unwrap_or(true),
     ) {
         Ok(info) => Json(info).into_response(),

@@ -239,12 +239,15 @@ impl Supervisor {
         Ok(())
     }
 
+    /// Add a command. `kind` is normally inferred from the command string
+    /// (`None`); an explicit `Some(kind)` overrides inference (used by the `/run`
+    /// API when a caller knows better).
     pub fn add_command(
         &self,
         project_id: &str,
         name: String,
         cmd: String,
-        kind: ProcKind,
+        kind: Option<ProcKind>,
         autostart: bool,
         use_dynamic_port: bool,
     ) -> Result<Command, String> {
@@ -253,6 +256,7 @@ impl Supervisor {
         if name.is_empty() || cmd.is_empty() {
             return Err("command name and cmd are required".to_string());
         }
+        let kind = kind.unwrap_or_else(|| ProcKind::infer(&cmd));
         let mut projects = self.projects.lock().unwrap();
         let project = projects
             .iter_mut()
@@ -293,7 +297,7 @@ impl Supervisor {
         root: &str,
         cmd: &str,
         name: Option<String>,
-        kind: ProcKind,
+        kind: Option<ProcKind>,
         use_dynamic_port: bool,
     ) -> Result<ProcInfo, String> {
         let project_name = std::path::Path::new(root)
@@ -332,7 +336,6 @@ impl Supervisor {
         command_id: &str,
         name: String,
         cmd: String,
-        kind: ProcKind,
         autostart: bool,
         use_dynamic_port: bool,
     ) -> Result<Command, String> {
@@ -341,6 +344,8 @@ impl Supervisor {
         if name.is_empty() || cmd.is_empty() {
             return Err("command name and cmd are required".to_string());
         }
+        // Kind is always inferred from the command string (no manual picker).
+        let kind = ProcKind::infer(&cmd);
         let (updated, project_snapshot) = {
             let mut projects = self.projects.lock().unwrap();
             let project = projects

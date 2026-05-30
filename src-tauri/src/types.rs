@@ -16,6 +16,20 @@ impl Default for ProcKind {
     }
 }
 
+impl ProcKind {
+    /// Infer the kind from a command string. Every Flutter launch (`flutter run`,
+    /// `flutter run --machine`, `fvm flutter run`, ...) contains the substring
+    /// "flutter"; nothing else we run does. This is the single source of truth for
+    /// kind inference, so the UI never has to ask.
+    pub fn infer(cmd: &str) -> ProcKind {
+        if cmd.contains("flutter") {
+            ProcKind::Flutter
+        } else {
+            ProcKind::Generic
+        }
+    }
+}
+
 /// Lifecycle state of a supervised process.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "lowercase")]
@@ -124,4 +138,18 @@ pub struct LogLine {
     /// "stdout" or "stderr".
     pub stream: String,
     pub text: String,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn infer_kind_flags_flutter_commands() {
+        assert_eq!(ProcKind::infer("flutter run --machine"), ProcKind::Flutter);
+        assert_eq!(ProcKind::infer("fvm flutter run"), ProcKind::Flutter);
+        assert_eq!(ProcKind::infer("npm run dev"), ProcKind::Generic);
+        assert_eq!(ProcKind::infer("node server.js"), ProcKind::Generic);
+        assert_eq!(ProcKind::infer("cargo run"), ProcKind::Generic);
+    }
 }

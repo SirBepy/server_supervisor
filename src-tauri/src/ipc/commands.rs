@@ -3,7 +3,7 @@ use crate::settings::{self, Settings};
 use crate::state::AppState;
 use crate::supervisor::validate::CommandCheck;
 use crate::supervisor::{detect, validate, Supervisor};
-use crate::types::{Command, DetectedCommand, LogLine, ProcInfo, ProcKind, Project};
+use crate::types::{Command, DetectedCommand, LogLine, ProcInfo, Project};
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use tauri::{AppHandle, Manager, State};
@@ -81,26 +81,24 @@ pub fn add_command(
     project_id: String,
     name: String,
     cmd: String,
-    kind: ProcKind,
     autostart: bool,
     use_dynamic_port: bool,
 ) -> Result<Command, String> {
-    sup.add_command(&project_id, name, cmd, kind, autostart, use_dynamic_port)
+    // Kind is inferred from the command string (None = infer).
+    sup.add_command(&project_id, name, cmd, None, autostart, use_dynamic_port)
 }
 
 #[tauri::command]
-#[allow(clippy::too_many_arguments)]
 pub fn update_command(
     sup: State<Arc<Supervisor>>,
     project_id: String,
     command_id: String,
     name: String,
     cmd: String,
-    kind: ProcKind,
     autostart: bool,
     use_dynamic_port: bool,
 ) -> Result<Command, String> {
-    sup.update_command(&project_id, &command_id, name, cmd, kind, autostart, use_dynamic_port)
+    sup.update_command(&project_id, &command_id, name, cmd, autostart, use_dynamic_port)
 }
 
 #[tauri::command]

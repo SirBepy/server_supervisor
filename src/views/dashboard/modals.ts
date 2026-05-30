@@ -6,7 +6,7 @@
 import { html, nothing, type TemplateResult } from "lit-html";
 import { open } from "@tauri-apps/plugin-dialog";
 import * as ipc from "../../shared/ipc";
-import type { DetectedCommand, ProcKind } from "../../types/ipc.generated";
+import type { DetectedCommand } from "../../types/ipc.generated";
 import {
   ui,
   draw,
@@ -94,7 +94,6 @@ export async function startAddCommand(projectId: string, root: string) {
     detected,
     name: "",
     cmd: "",
-    kind: "generic",
     useDynamicPort: true,
     query: "",
     highlight: -1,
@@ -122,7 +121,7 @@ async function confirmAddProject() {
   try {
     const project = await ipc.addProject(name, m.root);
     for (const p of m.picked) {
-      await ipc.addCommand(project.id, p.name, p.cmd, p.kind, false, false);
+      await ipc.addCommand(project.id, p.name, p.cmd, false, false);
     }
     ui.error = null;
     ui.modal = null;
@@ -137,7 +136,7 @@ async function confirmAddCommand() {
   const m = ui.modal;
   const name = m.name.trim() || deriveName(m.cmd);
   try {
-    await ipc.addCommand(m.projectId, name, m.cmd, m.kind, false, m.useDynamicPort);
+    await ipc.addCommand(m.projectId, name, m.cmd, false, m.useDynamicPort);
     ui.error = null;
     ui.modal = null;
   } catch (e) {
@@ -157,7 +156,7 @@ async function confirmEditCommand() {
   }
   const name = m.name.trim() || deriveName(cmd);
   try {
-    await ipc.updateCommand(m.projectId, m.commandId, name, cmd, m.kind, m.autostart, m.useDynamicPort);
+    await ipc.updateCommand(m.projectId, m.commandId, name, cmd, m.autostart, m.useDynamicPort);
     ui.error = null;
     ui.modal = null;
   } catch (e) {
@@ -314,11 +313,11 @@ function addProjectModal(m: Extract<Modal, { t: "addProject" }>): TemplateResult
             m.highlight = i;
             draw();
           },
-          onSelect: (d) => addPicked({ name: d.name, cmd: d.cmd, kind: d.kind, ok: true }),
+          onSelect: (d) => addPicked({ name: d.name, cmd: d.cmd, ok: true }),
           onFreeText: () => {
             const cmd = m.query.trim();
             if (!cmd) return;
-            addPicked({ name: deriveName(cmd), cmd, kind: "generic" });
+            addPicked({ name: deriveName(cmd), cmd });
             validatePickedFreeText(m, cmd);
           },
         })}
@@ -363,7 +362,6 @@ function addCommandModal(m: Extract<Modal, { t: "addCommand" }>): TemplateResult
             onSelect: (d) => {
               m.cmd = d.cmd;
               m.name = d.name;
-              m.kind = d.kind;
               m.query = d.cmd;
               m.highlight = -1;
               m.check = null; // a detected command is inherently valid
@@ -390,16 +388,6 @@ function addCommandModal(m: Extract<Modal, { t: "addCommand" }>): TemplateResult
               <span title=${m.check.reason}>${m.check.reason}</span>
             </div>`
           : nothing}
-        <div class="field-row">
-          <label>Kind</label>
-          <select
-            .value=${m.kind}
-            @change=${(e: Event) => (m.kind = (e.target as HTMLSelectElement).value as ProcKind)}
-          >
-            <option value="generic">generic</option>
-            <option value="flutter">flutter</option>
-          </select>
-        </div>
         <label class="detect-row">
           <input
             type="checkbox"
@@ -449,16 +437,6 @@ function editCommandModal(m: Extract<Modal, { t: "editCommand" }>): TemplateResu
               <span title=${m.check.reason}>${m.check.reason}</span>
             </div>`
           : nothing}
-        <div class="field-row">
-          <label>Kind</label>
-          <select
-            .value=${m.kind}
-            @change=${(e: Event) => (m.kind = (e.target as HTMLSelectElement).value as ProcKind)}
-          >
-            <option value="generic">generic</option>
-            <option value="flutter">flutter</option>
-          </select>
-        </div>
         <label class="detect-row">
           <input
             type="checkbox"

@@ -87,7 +87,6 @@ function commandRow(project: Project, cmd: Project["commands"][number]): Templat
               root: project.root,
               name: cmd.name,
               cmd: cmd.cmd,
-              kind: cmd.kind,
               autostart: cmd.autostart,
               useDynamicPort: cmd.use_dynamic_port,
               check: null,

@@ -17,11 +17,7 @@ pub fn detect(root: &Path) -> Vec<DetectedCommand> {
 }
 
 fn kind_of(cmd: &str) -> ProcKind {
-    if cmd.contains("flutter") {
-        ProcKind::Flutter
-    } else {
-        ProcKind::Generic
-    }
+    ProcKind::infer(cmd)
 }
 
 fn dedup(mut items: Vec<DetectedCommand>) -> Vec<DetectedCommand> {

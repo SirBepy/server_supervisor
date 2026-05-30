@@ -124,7 +124,7 @@ fn crud_add_remove_project_and_command() {
     assert_eq!(p.id, "my-app", "id should be slugged from the name");
 
     let c = sup
-        .add_command(&p.id, "Dev".into(), "ping -n 2 127.0.0.1".into(), ProcKind::Generic, false, false)
+        .add_command(&p.id, "Dev".into(), "ping -n 2 127.0.0.1".into(), None, false, false)
         .unwrap();
     let composite = format!("{}:{}", p.id, c.id);
 
@@ -148,7 +148,7 @@ fn removing_last_command_deletes_project() {
 
     let p = sup.add_project("My App".into(), "C:/tmp".into()).unwrap();
     let c = sup
-        .add_command(&p.id, "Dev".into(), "ping -n 2 127.0.0.1".into(), ProcKind::Generic, false, false)
+        .add_command(&p.id, "Dev".into(), "ping -n 2 127.0.0.1".into(), None, false, false)
         .unwrap();
 
     // Removing the only command removes the now-empty project too.
@@ -166,9 +166,9 @@ fn removing_one_of_several_keeps_project() {
 
     let p = sup.add_project("My App".into(), "C:/tmp".into()).unwrap();
     let c1 = sup
-        .add_command(&p.id, "Dev".into(), "ping -n 2 127.0.0.1".into(), ProcKind::Generic, false, false)
+        .add_command(&p.id, "Dev".into(), "ping -n 2 127.0.0.1".into(), None, false, false)
         .unwrap();
-    sup.add_command(&p.id, "Build".into(), "ping -n 3 127.0.0.1".into(), ProcKind::Generic, false, false)
+    sup.add_command(&p.id, "Build".into(), "ping -n 3 127.0.0.1".into(), None, false, false)
         .unwrap();
 
     // Removing one of two commands leaves the project with the other command.
@@ -202,6 +202,30 @@ fn adding_same_folder_twice_reuses_project() {
 }
 
 #[test]
+fn add_command_infers_kind_from_cmd() {
+    let dir = tempfile::tempdir().unwrap();
+    let sup = new_sup(dir.path());
+    let p = sup.add_project("My App".into(), "C:/tmp".into()).unwrap();
+
+    // No kind passed (None): inferred from the command string.
+    let flutter = sup
+        .add_command(&p.id, "run".into(), "fvm flutter run".into(), None, false, false)
+        .unwrap();
+    assert_eq!(flutter.kind, ProcKind::Flutter, "flutter command -> Flutter");
+
+    let node = sup
+        .add_command(&p.id, "api".into(), "node server.js".into(), None, false, false)
+        .unwrap();
+    assert_eq!(node.kind, ProcKind::Generic, "non-flutter command -> Generic");
+
+    // An explicit Some(kind) overrides inference (the /run API path).
+    let forced = sup
+        .add_command(&p.id, "weird".into(), "node thing.js".into(), Some(ProcKind::Flutter), false, false)
+        .unwrap();
+    assert_eq!(forced.kind, ProcKind::Flutter, "explicit kind overrides inference");
+}
+
+#[test]
 fn adding_duplicate_command_is_noop() {
     let dir = tempfile::tempdir().unwrap();
     let sup = new_sup(dir.path());
@@ -209,10 +233,10 @@ fn adding_duplicate_command_is_noop() {
     let p = sup.add_project("My App".into(), "C:/tmp".into()).unwrap();
 
     let c1 = sup
-        .add_command(&p.id, "dev".into(), "npm run dev".into(), ProcKind::Generic, false, false)
+        .add_command(&p.id, "dev".into(), "npm run dev".into(), None, false, false)
         .unwrap();
     let c2 = sup
-        .add_command(&p.id, "dev2".into(), "npm run dev".into(), ProcKind::Generic, false, false)
+        .add_command(&p.id, "dev2".into(), "npm run dev".into(), None, false, false)
         .unwrap();
 
     let projects = sup.list_projects();
@@ -237,16 +261,17 @@ fn update_command_edits_in_place_and_keeps_id() {
 
     let p = sup.add_project("My App".into(), "C:/tmp".into()).unwrap();
     let c = sup
-        .add_command(&p.id, "Dev".into(), "ping -n 2 127.0.0.1".into(), ProcKind::Generic, false, false)
+        .add_command(&p.id, "Dev".into(), "ping -n 2 127.0.0.1".into(), None, false, false)
         .unwrap();
 
+    // Edit to a Flutter command: kind is inferred from the cmd string, so it
+    // flips to Flutter without any kind argument.
     let updated = sup
         .update_command(
             &p.id,
             &c.id,
             "Serve".into(),
-            "ping -n 5 127.0.0.1".into(),
-            ProcKind::Flutter,
+            "fvm flutter run".into(),
             true,
             true,
         )
@@ -258,8 +283,8 @@ fn update_command_edits_in_place_and_keeps_id() {
     let projects = sup.list_projects();
     let cmd = &projects[0].commands[0];
     assert_eq!(cmd.name, "Serve");
-    assert_eq!(cmd.cmd, "ping -n 5 127.0.0.1");
-    assert_eq!(cmd.kind, ProcKind::Flutter);
+    assert_eq!(cmd.cmd, "fvm flutter run");
+    assert_eq!(cmd.kind, ProcKind::Flutter, "kind inferred from the flutter command");
     assert!(cmd.autostart);
     assert!(cmd.use_dynamic_port);
 
@@ -279,10 +304,10 @@ fn update_command_unknown_errors() {
     let sup = new_sup(dir.path());
     let p = sup.add_project("My App".into(), "C:/tmp".into()).unwrap();
     assert!(sup
-        .update_command(&p.id, "nope", "X".into(), "ping".into(), ProcKind::Generic, false, false)
+        .update_command(&p.id, "nope", "X".into(), "ping".into(), false, false)
         .is_err());
     assert!(sup
-        .update_command("nope", "job", "X".into(), "ping".into(), ProcKind::Generic, false, false)
+        .update_command("nope", "job", "X".into(), "ping".into(), false, false)
         .is_err());
 }
 
@@ -303,7 +328,6 @@ fn update_command_restarts_running_process() {
         "job",
         "job".into(),
         "ping -n 31 127.0.0.1".into(),
-        ProcKind::Generic,
         false,
         false,
     )
@@ -349,7 +373,7 @@ fn ensure_and_run_registers_starts_and_is_idempotent() {
     let root = dir.path().to_str().unwrap();
 
     let info = sup
-        .ensure_and_run(root, "node server.js", None, ProcKind::Generic, true)
+        .ensure_and_run(root, "node server.js", None, None, true)
         .unwrap();
     assert_eq!(info.status, ProcStatus::Running);
     let port = info.port.expect("dynamic port should be assigned");
@@ -357,7 +381,7 @@ fn ensure_and_run_registers_starts_and_is_idempotent() {
 
     // Idempotent: same root+cmd reuses the same project/command (no duplicate).
     let info2 = sup
-        .ensure_and_run(root, "node server.js", None, ProcKind::Generic, true)
+        .ensure_and_run(root, "node server.js", None, None, true)
         .unwrap();
     assert_eq!(info2.id, info.id);
     assert_eq!(sup.list().len(), 1, "no duplicate registration");
