@@ -23,7 +23,7 @@ jobs:
       tag: ${{ steps.check.outputs.tag }}
       version: ${{ steps.check.outputs.version }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
@@ -48,14 +48,14 @@ jobs:
     if: needs.check.outputs.should_release == 'true'
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         # vendor/tauri_kit is a git submodule (public sirbepy_tauri_kit); the
         # Rust crate depends on it, so it must be checked out or the build fails
         # resolving `tauri_kit_settings`.
         with:
           submodules: recursive
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: "20"
           cache: "npm"
@@ -112,7 +112,7 @@ jobs:
           cp "$EXE" "$GITHUB_WORKSPACE/release-staging/Server-Supervisor_${VERSION}_windows_x64-setup.exe"
 
       - name: Upload artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: release-windows
           path: release-staging/
@@ -123,14 +123,14 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Download artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           path: artifacts/
           pattern: release-*
           merge-multiple: true
 
       - name: Upload to release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           files: |
             artifacts/*.msi
