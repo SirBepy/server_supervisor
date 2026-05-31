@@ -49,6 +49,11 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
+        # vendor/tauri_kit is a git submodule (public sirbepy_tauri_kit); the
+        # Rust crate depends on it, so it must be checked out or the build fails
+        # resolving `tauri_kit_settings`.
+        with:
+          submodules: recursive
 
       - uses: actions/setup-node@v4
         with:
