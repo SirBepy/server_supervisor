@@ -1,9 +1,8 @@
 import { html, render } from "lit-html";
 import { renderSettingsPage } from "../../../vendor/tauri_kit/frontend/settings/renderer";
-import { SIRBEPY_PALETTES } from "../../../vendor/tauri_kit/frontend/settings/palettes/sirbepy-default";
 import "../../../vendor/tauri_kit/frontend/settings/styles.css";
-import "../../../vendor/tauri_kit/frontend/settings/palettes/sirbepy-default.css";
 import { getApiToken } from "../../shared/ipc";
+import { PALETTES, DEFAULT_PALETTE } from "../../shared/theme";
 import { buildSettingsSchema } from "./schema";
 import "./settings.css";
 
@@ -41,10 +40,11 @@ export async function mountSettings(el: HTMLElement): Promise<() => void> {
 
   const cleanup = await renderSettingsPage(contentEl, {
     schema: buildSettingsSchema(token),
-    palettes: SIRBEPY_PALETTES,
-    // Glacier (blue) as server_supervisor's default: reads infrastructure/terminal,
-    // distinct from the other Tauri apps. Mode left at the kit default ("system").
-    theme: { defaultPalette: "glacier" },
+    palettes: PALETTES,
+    // Default palette is shared with the boot path (see shared/theme.ts) so the
+    // first-paint default and the picker default never drift. Mode left at the
+    // kit default ("system").
+    theme: { defaultPalette: DEFAULT_PALETTE },
     onHeaderChange(title, depth, pop) {
       // PageStack reports depth as the 1-based stack length, so the root page is
       // depth 1 (never 0). At the root, Back must exit settings to the dashboard;
