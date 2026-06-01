@@ -3,6 +3,7 @@ import "./styles/base.css";
 import { mountDashboard } from "./views/dashboard/dashboard";
 import { mountSettings } from "./views/settings/settings";
 import { bootstrapTheme } from "./shared/theme";
+import { runAutoUpdateCheck } from "../vendor/tauri_kit/frontend/updater/auto-check";
 
 const app = document.getElementById("app")!;
 
@@ -31,3 +32,11 @@ window.addEventListener("hashchange", () => void route());
 // default inside bootstrapTheme lands before route()'s first paint.
 void bootstrapTheme();
 void route();
+
+// On-startup auto-update check (reads the kit's __kit_auto_update setting;
+// default "onStartup" prompts before installing). Skipped under `vite dev`,
+// whose binary lags the released version and would falsely "find" an update.
+// Note: installing restarts the app, which tree-kills supervised servers - but
+// this only fires at a fresh launch, before a work session, so the blast radius
+// is minimal (autostart commands relaunch on the new version).
+if (!import.meta.env.DEV) void runAutoUpdateCheck();

@@ -31,11 +31,22 @@
   "bundle": {
     "active": true,
     "targets": ["msi", "nsis"],
+    "createUpdaterArtifacts": true,
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
       "icons/icon.ico"
     ],
     "publisher": "SirBepy"
+  },
+  "plugins": {
+    "updater": {
+      "active": true,
+      "endpoints": [
+        "https://github.com/SirBepy/server_supervisor/releases/latest/download/latest.json"
+      ],
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEJDMkUwQjcwMDg3MzA2MUEKUldRYUJuTUljQXN1dk5QWDdCYmxvRjc0Y0dVODVmTTdKWGNuT2ErdWlSSCtZdkdQaTFzdk5GNXgK",
+      "dialog": false
+    }
   }
 }

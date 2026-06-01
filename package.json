@@ -21,6 +21,7 @@
     "@phosphor-icons/web": "^2.1.2",
     "@tauri-apps/api": "^2",
     "@tauri-apps/plugin-dialog": "^2",
+    "@tauri-apps/plugin-updater": "^2",
     "lit-html": "3.3.2",
     "server_supervisor": "file:"
   }

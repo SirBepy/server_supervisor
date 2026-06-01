@@ -16,6 +16,7 @@ tauri = { version = "2", features = ["tray-icon", "image-png"] }
 tauri-plugin-autostart = "2"
 tauri-plugin-dialog = "2"
 tauri-plugin-single-instance = "2"
+tauri-plugin-updater = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 log = "0.4"
@@ -28,6 +29,7 @@ ts-rs = "10"
 # typosquat). `memory()` returns resident bytes on this version.
 sysinfo = { version = "0.39", default-features = false, features = ["system"] }
 tauri_kit_settings = { path = "../vendor/tauri_kit/tauri/settings" }
+tauri_kit_updater = { path = "../vendor/tauri_kit/tauri/updater" }
 
 [dev-dependencies]
 tempfile = "3"

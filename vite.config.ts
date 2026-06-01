@@ -16,10 +16,10 @@ export default defineConfig({
   resolve: {
     alias: {
       "@": resolve(__dirname, "src"),
-      // tauri_kit vendor peer deps not installed in this app — stub them out so
-      // both the dev server and production build resolve without errors.
+      // tauri_kit's About page uses plugin-opener, which this app doesn't
+      // install — stub it so dev + build resolve. (plugin-updater is now a real
+      // dependency, used for in-app auto-update, so it is no longer stubbed.)
       "@tauri-apps/plugin-opener": resolve(__dirname, "src/vendor-stubs/plugin-opener.ts"),
-      "@tauri-apps/plugin-updater": resolve(__dirname, "src/vendor-stubs/plugin-updater.ts"),
     },
   },
 });

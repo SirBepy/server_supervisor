@@ -26,6 +26,9 @@ pub fn run() {
         ))
         .plugin(tauri_kit_settings::with_logging())
         .plugin(tauri_kit_settings::with_kit_commands())
+        // In-app auto-update. Endpoints + pubkey are configured in
+        // tauri.conf.json; the kit wrapper just builds the updater plugin.
+        .plugin(tauri_kit_updater::plugin())
         .manage(AppState::default())
         .invoke_handler(tauri::generate_handler![
             ipc::commands::quit_app,
