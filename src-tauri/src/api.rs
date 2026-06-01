@@ -52,6 +52,9 @@ struct RunBody {
     kind: Option<ProcKind>,
     #[serde(default)]
     use_dynamic_port: Option<bool>,
+    /// Per-command env overrides, one `KEY=VALUE` per line (see `Command::env`).
+    #[serde(default)]
+    env: Option<String>,
 }
 
 /// Read the bearer token from `<data_dir>/api_token.txt`, generating a fresh
@@ -177,6 +180,7 @@ async fn run(State(s): State<ApiState>, Json(b): Json<RunBody>) -> Response {
         // Omitted kind -> inferred from the command; an explicit kind overrides.
         b.kind,
         b.use_dynamic_port.unwrap_or(true),
+        b.env.unwrap_or_default(),
     ) {
         Ok(info) => Json(info).into_response(),
         Err(e) => (StatusCode::BAD_REQUEST, e).into_response(),

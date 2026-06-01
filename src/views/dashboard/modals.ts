@@ -96,6 +96,7 @@ export async function startAddCommand(projectId: string, root: string) {
     name: "",
     cmd: "",
     useDynamicPort: true,
+    env: "",
     query: "",
     highlight: -1,
     check: null,
@@ -137,7 +138,7 @@ async function confirmAddCommand() {
   const m = ui.modal;
   const name = m.name.trim() || deriveName(m.cmd);
   try {
-    await ipc.addCommand(m.projectId, name, m.cmd, false, m.useDynamicPort);
+    await ipc.addCommand(m.projectId, name, m.cmd, false, m.useDynamicPort, m.env);
     ui.error = null;
     ui.modal = null;
   } catch (e) {
@@ -157,7 +158,7 @@ async function confirmEditCommand() {
   }
   const name = m.name.trim() || deriveName(cmd);
   try {
-    await ipc.updateCommand(m.projectId, m.commandId, name, cmd, m.autostart, m.useDynamicPort);
+    await ipc.updateCommand(m.projectId, m.commandId, name, cmd, m.autostart, m.useDynamicPort, m.env);
     ui.error = null;
     ui.modal = null;
   } catch (e) {
@@ -172,6 +173,26 @@ function cmdModal(): CmdModal | null {
   return ui.modal && (ui.modal.t === "addCommand" || ui.modal.t === "editCommand")
     ? ui.modal
     : null;
+}
+
+// Optional per-command env overrides, one KEY=VALUE per line. Values may
+// reference existing vars via ${NAME} / %NAME% (so PATH=...;%PATH% prepends).
+// Lets a command reach a toolchain the inherited env can't (e.g. node past the
+// nvm4w symlink) without a hand-rolled wrapper script.
+function envField(m: CmdModal): TemplateResult {
+  return html`
+    <div class="field-row env-row">
+      <label>Env</label>
+      <textarea
+        class="env-input"
+        rows="2"
+        spellcheck="false"
+        placeholder="optional — KEY=VALUE per line, e.g. PATH=C:\\node\\dir;%PATH%"
+        .value=${m.env}
+        @input=${(e: Event) => (m.env = (e.target as HTMLTextAreaElement).value)}
+      ></textarea>
+    </div>
+  `;
 }
 
 // Debounced advisory check for a cmd-bearing modal's `cmd`. Stale-guarded: only
@@ -397,6 +418,7 @@ function addCommandModal(m: Extract<Modal, { t: "addCommand" }>): TemplateResult
           />
           <span>Assign a dynamic port</span>
         </label>
+        ${envField(m)}
         <div class="dialog-actions">
           <button @click=${closeModal}>Cancel</button>
           <button class="primary" @click=${() => void confirmAddCommand()}>Add</button>
@@ -454,6 +476,7 @@ function editCommandModal(m: Extract<Modal, { t: "editCommand" }>): TemplateResu
           />
           <span>Start automatically when the supervisor launches</span>
         </label>
+        ${envField(m)}
         <p class="muted note">Saving relaunches the command if it's running.</p>
         <div class="dialog-actions">
           <button @click=${closeModal}>Cancel</button>

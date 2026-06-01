@@ -124,7 +124,7 @@ fn crud_add_remove_project_and_command() {
     assert_eq!(p.id, "my-app", "id should be slugged from the name");
 
     let c = sup
-        .add_command(&p.id, "Dev".into(), "ping -n 2 127.0.0.1".into(), None, false, false)
+        .add_command(&p.id, "Dev".into(), "ping -n 2 127.0.0.1".into(), None, false, false, "".into())
         .unwrap();
     let composite = format!("{}:{}", p.id, c.id);
 
@@ -148,7 +148,7 @@ fn removing_last_command_deletes_project() {
 
     let p = sup.add_project("My App".into(), "C:/tmp".into()).unwrap();
     let c = sup
-        .add_command(&p.id, "Dev".into(), "ping -n 2 127.0.0.1".into(), None, false, false)
+        .add_command(&p.id, "Dev".into(), "ping -n 2 127.0.0.1".into(), None, false, false, "".into())
         .unwrap();
 
     // Removing the only command removes the now-empty project too.
@@ -166,9 +166,9 @@ fn removing_one_of_several_keeps_project() {
 
     let p = sup.add_project("My App".into(), "C:/tmp".into()).unwrap();
     let c1 = sup
-        .add_command(&p.id, "Dev".into(), "ping -n 2 127.0.0.1".into(), None, false, false)
+        .add_command(&p.id, "Dev".into(), "ping -n 2 127.0.0.1".into(), None, false, false, "".into())
         .unwrap();
-    sup.add_command(&p.id, "Build".into(), "ping -n 3 127.0.0.1".into(), None, false, false)
+    sup.add_command(&p.id, "Build".into(), "ping -n 3 127.0.0.1".into(), None, false, false, "".into())
         .unwrap();
 
     // Removing one of two commands leaves the project with the other command.
@@ -209,18 +209,18 @@ fn add_command_infers_kind_from_cmd() {
 
     // No kind passed (None): inferred from the command string.
     let flutter = sup
-        .add_command(&p.id, "run".into(), "fvm flutter run".into(), None, false, false)
+        .add_command(&p.id, "run".into(), "fvm flutter run".into(), None, false, false, "".into())
         .unwrap();
     assert_eq!(flutter.kind, ProcKind::Flutter, "flutter command -> Flutter");
 
     let node = sup
-        .add_command(&p.id, "api".into(), "node server.js".into(), None, false, false)
+        .add_command(&p.id, "api".into(), "node server.js".into(), None, false, false, "".into())
         .unwrap();
     assert_eq!(node.kind, ProcKind::Generic, "non-flutter command -> Generic");
 
     // An explicit Some(kind) overrides inference (the /run API path).
     let forced = sup
-        .add_command(&p.id, "weird".into(), "node thing.js".into(), Some(ProcKind::Flutter), false, false)
+        .add_command(&p.id, "weird".into(), "node thing.js".into(), Some(ProcKind::Flutter), false, false, "".into())
         .unwrap();
     assert_eq!(forced.kind, ProcKind::Flutter, "explicit kind overrides inference");
 }
@@ -233,10 +233,10 @@ fn adding_duplicate_command_is_noop() {
     let p = sup.add_project("My App".into(), "C:/tmp".into()).unwrap();
 
     let c1 = sup
-        .add_command(&p.id, "dev".into(), "npm run dev".into(), None, false, false)
+        .add_command(&p.id, "dev".into(), "npm run dev".into(), None, false, false, "".into())
         .unwrap();
     let c2 = sup
-        .add_command(&p.id, "dev2".into(), "npm run dev".into(), None, false, false)
+        .add_command(&p.id, "dev2".into(), "npm run dev".into(), None, false, false, "".into())
         .unwrap();
 
     let projects = sup.list_projects();
@@ -261,7 +261,7 @@ fn update_command_edits_in_place_and_keeps_id() {
 
     let p = sup.add_project("My App".into(), "C:/tmp".into()).unwrap();
     let c = sup
-        .add_command(&p.id, "Dev".into(), "ping -n 2 127.0.0.1".into(), None, false, false)
+        .add_command(&p.id, "Dev".into(), "ping -n 2 127.0.0.1".into(), None, false, false, "".into())
         .unwrap();
 
     // Edit to a Flutter command: kind is inferred from the cmd string, so it
@@ -274,6 +274,7 @@ fn update_command_edits_in_place_and_keeps_id() {
             "fvm flutter run".into(),
             true,
             true,
+            "".into(),
         )
         .unwrap();
 
@@ -304,40 +305,53 @@ fn update_command_unknown_errors() {
     let sup = new_sup(dir.path());
     let p = sup.add_project("My App".into(), "C:/tmp".into()).unwrap();
     assert!(sup
-        .update_command(&p.id, "nope", "X".into(), "ping".into(), false, false)
+        .update_command(&p.id, "nope", "X".into(), "ping".into(), false, false, "".into())
         .is_err());
     assert!(sup
-        .update_command("nope", "job", "X".into(), "ping".into(), false, false)
+        .update_command("nope", "job", "X".into(), "ping".into(), false, false, "".into())
         .is_err());
 }
 
 #[test]
-fn update_command_restarts_running_process() {
+fn update_command_rejects_edit_while_running() {
     let dir = tempfile::tempdir().unwrap();
     write_project(dir.path(), "ping -n 30 127.0.0.1");
     let sup = new_sup(dir.path());
 
     sup.start(ID).unwrap();
     std::thread::sleep(Duration::from_millis(800));
-    let pid_before = sup.list()[0].pid.expect("must be running before edit");
+    assert_eq!(sup.list()[0].status, ProcStatus::Running, "must be running before edit");
 
-    // Editing the cmd of a running process auto-restarts it: it stays running,
-    // but on a fresh pid spawned with the new command.
-    sup.update_command(
-        "test",
-        "job",
-        "job".into(),
-        "ping -n 31 127.0.0.1".into(),
-        false,
-        false,
-    )
-    .unwrap();
-    std::thread::sleep(Duration::from_millis(800));
+    // A running command is locked: editing it is rejected, never silently
+    // relaunched. The UI hides the edit button while running for the same reason.
+    let err = sup
+        .update_command(
+            "test",
+            "job",
+            "job".into(),
+            "ping -n 31 127.0.0.1".into(),
+            false,
+            false,
+            "".into(),
+        )
+        .unwrap_err();
+    assert!(err.contains("stop the command"), "running edit should be rejected: {err}");
 
-    let after = sup.list();
-    assert_eq!(after[0].status, ProcStatus::Running, "should be running again after auto-restart");
-    let pid_after = after[0].pid.expect("must be running after auto-restart");
-    assert_ne!(pid_before, pid_after, "auto-restart should spawn a fresh process");
+    // After stopping, the same edit applies in place under the stable id.
+    sup.stop(ID).unwrap();
+    let updated = sup
+        .update_command(
+            "test",
+            "job",
+            "job".into(),
+            "ping -n 31 127.0.0.1".into(),
+            false,
+            false,
+            "".into(),
+        )
+        .unwrap();
+    assert_eq!(updated.cmd, "ping -n 31 127.0.0.1");
+    assert_eq!(sup.list_projects()[0].commands[0].cmd, "ping -n 31 127.0.0.1");
 
     sup.shutdown_all();
 }
@@ -373,7 +387,7 @@ fn ensure_and_run_registers_starts_and_is_idempotent() {
     let root = dir.path().to_str().unwrap();
 
     let info = sup
-        .ensure_and_run(root, "node server.js", None, None, true)
+        .ensure_and_run(root, "node server.js", None, None, true, "".into())
         .unwrap();
     assert_eq!(info.status, ProcStatus::Running);
     let port = info.port.expect("dynamic port should be assigned");
@@ -381,7 +395,7 @@ fn ensure_and_run_registers_starts_and_is_idempotent() {
 
     // Idempotent: same root+cmd reuses the same project/command (no duplicate).
     let info2 = sup
-        .ensure_and_run(root, "node server.js", None, None, true)
+        .ensure_and_run(root, "node server.js", None, None, true, "".into())
         .unwrap();
     assert_eq!(info2.id, info.id);
     assert_eq!(sup.list().len(), 1, "no duplicate registration");

@@ -30,6 +30,7 @@ export const addCommand = (
   cmd: string,
   autostart: boolean,
   useDynamicPort: boolean,
+  env = "",
 ) =>
   invoke<Command>("add_command", {
     projectId,
@@ -37,6 +38,7 @@ export const addCommand = (
     cmd,
     autostart,
     useDynamicPort,
+    env,
   });
 export const updateCommand = (
   projectId: string,
@@ -45,6 +47,7 @@ export const updateCommand = (
   cmd: string,
   autostart: boolean,
   useDynamicPort: boolean,
+  env = "",
 ) =>
   invoke<Command>("update_command", {
     projectId,
@@ -53,6 +56,7 @@ export const updateCommand = (
     cmd,
     autostart,
     useDynamicPort,
+    env,
   });
 export const removeCommand = (projectId: string, commandId: string) =>
   invoke<void>("remove_command", { projectId, commandId });

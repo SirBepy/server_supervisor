@@ -98,6 +98,7 @@ function commandRow(project: Project, cmd: Project["commands"][number]): Templat
                     cmd: cmd.cmd,
                     autostart: cmd.autostart,
                     useDynamicPort: cmd.use_dynamic_port,
+                    env: cmd.env,
                     check: null,
                   };
                   ui.comboOpen = false;

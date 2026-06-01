@@ -37,6 +37,7 @@ export type Modal =
       name: string;
       cmd: string;
       useDynamicPort: boolean;
+      env: string;
       query: string;
       highlight: number;
       check: CommandCheck | null;
@@ -50,6 +51,7 @@ export type Modal =
       cmd: string;
       autostart: boolean;
       useDynamicPort: boolean;
+      env: string;
       check: CommandCheck | null;
     }
   | {

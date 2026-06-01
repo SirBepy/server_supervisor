@@ -57,6 +57,11 @@ pub struct ProcSpec {
     pub autostart: bool,
     #[serde(default)]
     pub use_dynamic_port: bool,
+    /// Per-command environment overrides, one `KEY=VALUE` per line. Values may
+    /// reference existing vars via `${NAME}` / `%NAME%` (e.g.
+    /// `PATH=C:\node;%PATH%` to prepend a real node dir past the nvm symlink).
+    #[serde(default)]
+    pub env: String,
 }
 
 /// Dashboard / API view of one supervised process.
@@ -89,6 +94,7 @@ impl ProcSpec {
             kind: command.kind.clone(),
             autostart: command.autostart,
             use_dynamic_port: command.use_dynamic_port,
+            env: command.env.clone(),
         }
     }
 }
@@ -106,6 +112,10 @@ pub struct Command {
     pub autostart: bool,
     #[serde(default)]
     pub use_dynamic_port: bool,
+    /// Per-command environment overrides, one `KEY=VALUE` per line. Values may
+    /// reference existing vars via `${NAME}` / `%NAME%`.
+    #[serde(default)]
+    pub env: String,
 }
 
 /// A project: a named root folder with a set of runnable commands. This is the

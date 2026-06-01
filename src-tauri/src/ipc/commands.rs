@@ -83,9 +83,10 @@ pub fn add_command(
     cmd: String,
     autostart: bool,
     use_dynamic_port: bool,
+    env: String,
 ) -> Result<Command, String> {
     // Kind is inferred from the command string (None = infer).
-    sup.add_command(&project_id, name, cmd, None, autostart, use_dynamic_port)
+    sup.add_command(&project_id, name, cmd, None, autostart, use_dynamic_port, env)
 }
 
 #[tauri::command]
@@ -97,8 +98,9 @@ pub fn update_command(
     cmd: String,
     autostart: bool,
     use_dynamic_port: bool,
+    env: String,
 ) -> Result<Command, String> {
-    sup.update_command(&project_id, &command_id, name, cmd, autostart, use_dynamic_port)
+    sup.update_command(&project_id, &command_id, name, cmd, autostart, use_dynamic_port, env)
 }
 
 #[tauri::command]

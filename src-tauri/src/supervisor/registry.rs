@@ -250,6 +250,7 @@ impl Supervisor {
         kind: Option<ProcKind>,
         autostart: bool,
         use_dynamic_port: bool,
+        env: String,
     ) -> Result<Command, String> {
         let name = name.trim().to_string();
         let cmd = cmd.trim().to_string();
@@ -276,6 +277,7 @@ impl Supervisor {
             kind,
             autostart,
             use_dynamic_port,
+            env,
         };
         project.commands.push(command.clone());
         let project_snapshot = project.clone();
@@ -299,6 +301,7 @@ impl Supervisor {
         name: Option<String>,
         kind: Option<ProcKind>,
         use_dynamic_port: bool,
+        env: String,
     ) -> Result<ProcInfo, String> {
         let project_name = std::path::Path::new(root)
             .file_name()
@@ -314,6 +317,7 @@ impl Supervisor {
             kind,
             false,
             use_dynamic_port,
+            env,
         )?;
         let id = unit_id(&project.id, &command.id);
         self.start(&id)?;
@@ -338,6 +342,7 @@ impl Supervisor {
         cmd: String,
         autostart: bool,
         use_dynamic_port: bool,
+        env: String,
     ) -> Result<Command, String> {
         let name = name.trim().to_string();
         let cmd = cmd.trim().to_string();
@@ -374,6 +379,7 @@ impl Supervisor {
             command.kind = kind;
             command.autostart = autostart;
             command.use_dynamic_port = use_dynamic_port;
+            command.env = env;
             let updated = command.clone();
             let snapshot = project.clone();
             config::save(&self.data_dir, &projects);
@@ -389,7 +395,8 @@ impl Supervisor {
                     let affects_running = proc.spec.cmd != new_spec.cmd
                         || proc.spec.cwd != new_spec.cwd
                         || proc.spec.kind != new_spec.kind
-                        || proc.spec.use_dynamic_port != new_spec.use_dynamic_port;
+                        || proc.spec.use_dynamic_port != new_spec.use_dynamic_port
+                        || proc.spec.env != new_spec.env;
                     let running = proc.pid.is_some();
                     proc.spec = new_spec;
                     running && affects_running

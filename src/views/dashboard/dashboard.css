@@ -261,6 +261,28 @@
   padding: 7px 9px;
   font-size: 13px;
 }
+/* Env override textarea: monospace, top-aligned label, wraps its own KEY=VALUE
+   lines without a horizontal scrollbar. */
+.dialog .env-row {
+  align-items: start;
+}
+.dialog .env-input {
+  width: 100%;
+  background: var(--bg);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 7px 9px;
+  font-family: "Cascadia Code", Consolas, monospace;
+  font-size: 12px;
+  resize: vertical;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.dialog .env-input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
 .dialog .field-row .folder {
   font-size: 12px;
   color: var(--fg);

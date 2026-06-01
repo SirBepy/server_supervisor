@@ -107,6 +107,13 @@ impl ManagedProc {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
 
+        // Per-command env overrides (applied before PORT so a dynamic port still
+        // wins). These let a command prepend a real toolchain dir to PATH, e.g.
+        // to reach node past the nvm4w symlink that `cmd` refuses to traverse.
+        for (k, v) in parse_env(&self.spec.env) {
+            command.env(k, v);
+        }
+
         if let Some(p) = dynamic_port {
             command.env("PORT", p.to_string()); // env channel for process.env.PORT tools
         }
@@ -249,9 +256,56 @@ fn spawn_reader<R: Read + Send + 'static>(
     });
 }
 
+/// Parse newline-separated `KEY=VALUE` env overrides. Blank lines and `#`
+/// comments are ignored. Each value is variable-expanded (see `expand_vars`).
+fn parse_env(raw: &str) -> Vec<(String, String)> {
+    raw.lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty() && !l.starts_with('#'))
+        .filter_map(|l| l.split_once('='))
+        .map(|(k, v)| (k.trim().to_string(), expand_vars(v.trim())))
+        .collect()
+}
+
+/// Expand `${NAME}` and `%NAME%` references against the supervisor's own
+/// environment. Unknown names expand to empty; a lone/unterminated sigil is kept
+/// literally. This is what makes `PATH=C:\node;%PATH%` prepend rather than
+/// clobber: env values set via `Command::env` are NOT expanded by the child, so
+/// we resolve them here at spawn time.
+fn expand_vars(input: &str) -> String {
+    let mut out = String::new();
+    let mut rest = input;
+    while let Some(idx) = rest.find(['$', '%']) {
+        out.push_str(&rest[..idx]);
+        let tail = &rest[idx..];
+        if let Some(after) = tail.strip_prefix("${") {
+            if let Some(end) = after.find('}') {
+                out.push_str(&std::env::var(&after[..end]).unwrap_or_default());
+                rest = &after[end + 1..];
+                continue;
+            }
+        } else if tail.starts_with('%') {
+            if let Some(end) = tail[1..].find('%') {
+                let name = &tail[1..1 + end];
+                if !name.is_empty() {
+                    out.push_str(&std::env::var(name).unwrap_or_default());
+                    rest = &tail[1 + end + 1..];
+                    continue;
+                }
+            }
+        }
+        // Not a recognized token: emit the sigil char literally and advance.
+        let ch = tail.chars().next().unwrap();
+        out.push(ch);
+        rest = &tail[ch.len_utf8()..];
+    }
+    out.push_str(rest);
+    out
+}
+
 #[cfg(test)]
 mod tests {
-    use super::parse_flutter_app_id;
+    use super::{parse_env, parse_flutter_app_id};
 
     #[test]
     fn parses_app_started_event() {
@@ -264,5 +318,27 @@ mod tests {
         assert_eq!(parse_flutter_app_id("Performing hot restart..."), None);
         assert_eq!(parse_flutter_app_id(r#"[{"event":"app.progress"}]"#), None);
         assert_eq!(parse_flutter_app_id("[not json"), None);
+    }
+
+    #[test]
+    fn parse_env_skips_blanks_and_comments_and_splits_pairs() {
+        let raw = "\n# a comment\nFOO=bar\n  BAZ = qux \nNOEQ\n";
+        assert_eq!(
+            parse_env(raw),
+            vec![
+                ("FOO".to_string(), "bar".to_string()),
+                ("BAZ".to_string(), "qux".to_string()),
+            ],
+        );
+    }
+
+    #[test]
+    fn parse_env_expands_known_vars_and_keeps_literals() {
+        std::env::set_var("SS_TEST_VAR", "XYZ");
+        let pairs = parse_env("A=${SS_TEST_VAR};%SS_TEST_VAR%\nB=100% raw $ sign");
+        assert_eq!(pairs[0], ("A".to_string(), "XYZ;XYZ".to_string()));
+        // Unterminated `%` and a lone `$` survive verbatim.
+        assert_eq!(pairs[1], ("B".to_string(), "100% raw $ sign".to_string()));
+        std::env::remove_var("SS_TEST_VAR");
     }
 }
