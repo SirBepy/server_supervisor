@@ -10,9 +10,16 @@ export function normPath(p: string): string {
   return p.replace(/[\\/]+$/, "").toLowerCase();
 }
 
-// Derive a short command name. `npm run X` / `pnpm run X` / `yarn X` -> X.
+// Derive a short command name (mirrors the backend `derive_name`). Never returns
+// the whole command line: a long Flutter launch collapses to "flutter run", and
+// any unrecognized command falls back to just its program name.
 export function deriveName(cmd: string): string {
-  const c = cmd.trim();
-  const m = c.match(/^(?:npm|pnpm)\s+run\s+(\S+)/i) ?? c.match(/^yarn\s+(\S+)/i);
-  return m ? m[1] : c;
+  const toks = cmd.trim().split(/\s+/).filter(Boolean);
+  if (toks.length === 0) return cmd.trim();
+  if (toks.includes("flutter")) return "flutter run";
+  const [a, b, c] = toks;
+  if ((a === "npm" || a === "pnpm" || a === "yarn" || a === "bun") && b === "run" && c) return c;
+  if ((a === "yarn" || a === "pnpm" || a === "bun" || a === "npx") && b) return b;
+  if (a === "cargo" && b) return `cargo ${b}`;
+  return a;
 }

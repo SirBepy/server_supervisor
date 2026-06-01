@@ -523,16 +523,26 @@ fn unique_id(base: &str, taken: &dyn Fn(&str) -> bool) -> String {
     }
 }
 
-/// Short display name for a command: `npm|pnpm|yarn run X` and `yarn X` -> `X`,
-/// otherwise the trimmed command string. Used when `POST /run` omits a name.
+/// Short display name for a command, used whenever a name is omitted (the UI's
+/// add flow and the `POST /run` API). Never returns the whole command line - a
+/// long launch (a Flutter run with a wall of `--dart-define`s) collapses to a
+/// stable short label instead of becoming an unreadable title.
 fn derive_name(cmd: &str) -> String {
     let toks: Vec<&str> = cmd.split_whitespace().collect();
+    // Every Flutter launch (`flutter run`, `fvm flutter run --machine ...`)
+    // contains "flutter"; collapse the dart-define soup to one short label.
+    if toks.iter().any(|t| *t == "flutter") {
+        return "flutter run".to_string();
+    }
     match toks.as_slice() {
-        [runner, "run", x, ..] if *runner == "npm" || *runner == "pnpm" || *runner == "yarn" => {
+        [runner, "run", x, ..] if matches!(*runner, "npm" | "pnpm" | "yarn" | "bun") => {
             x.to_string()
         }
-        ["yarn", x, ..] => x.to_string(),
-        _ => cmd.trim().to_string(),
+        [runner, x, ..] if matches!(*runner, "yarn" | "pnpm" | "bun" | "npx") => x.to_string(),
+        ["cargo", x, ..] => format!("cargo {x}"),
+        // Fallback: the program name only, never the full command line.
+        [prog, ..] => prog.to_string(),
+        [] => cmd.trim().to_string(),
     }
 }
 
@@ -546,7 +556,15 @@ mod tests {
         assert_eq!(derive_name("pnpm run build"), "build");
         assert_eq!(derive_name("yarn run start"), "start");
         assert_eq!(derive_name("yarn dev"), "dev");
-        assert_eq!(derive_name("node server.js"), "node server.js");
+        assert_eq!(derive_name("npx vite"), "vite");
+        assert_eq!(derive_name("cargo run"), "cargo run");
+        assert_eq!(derive_name("cargo tauri dev"), "cargo tauri");
+        // Long launches collapse to a short label instead of the whole line.
+        assert_eq!(derive_name("node server.js"), "node");
         assert_eq!(derive_name("  flutter run  "), "flutter run");
+        assert_eq!(
+            derive_name("fvm flutter run -d web-server --web-port 5000 --dart-define=ENV=local"),
+            "flutter run"
+        );
     }
 }
