@@ -1,4 +1,5 @@
 pub mod config;
+pub mod crud;
 pub mod detect;
 pub mod mem;
 pub mod proc;
