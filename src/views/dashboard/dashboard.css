@@ -103,8 +103,9 @@
 
 .card {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
+  gap: 12px;
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: 8px;
@@ -112,8 +113,26 @@
   margin-bottom: 8px;
 }
 
+/* Name (with status dot) on the first line; the status/pid/port/tag badges wrap
+   onto a second line below, so a long command name never shoves them sideways. */
+.info {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
 .meta {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 8px;
   min-width: 0;
@@ -121,6 +140,7 @@
 
 .name {
   font-weight: 600;
+  overflow-wrap: anywhere;
 }
 
 .tag {
@@ -162,6 +182,7 @@
 .actions {
   display: flex;
   gap: 6px;
+  flex: 0 0 auto;
 }
 
 .actions button {

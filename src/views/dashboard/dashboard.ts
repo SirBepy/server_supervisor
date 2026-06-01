@@ -49,12 +49,16 @@ function commandRow(project: Project, cmd: Project["commands"][number]): Templat
   const port = ui.statusById[id]?.port;
   return html`
     <div class="card">
-      <div class="meta">
-        ${dot(id)}
-        <span class="name">${cmd.name}</span>
-        ${cmd.kind === "flutter" ? html`<span class="tag">flutter</span>` : nothing}
-        <span class="pid">${pid != null ? `pid ${pid}` : ui.statusById[id]?.status ?? "stopped"}</span>
-        ${port != null ? html`<span class="port">port ${port}</span>` : nothing}
+      <div class="info">
+        <div class="head">
+          ${dot(id)}
+          <span class="name">${cmd.name}</span>
+        </div>
+        <div class="meta">
+          <span class="pid">${pid != null ? `pid ${pid}` : ui.statusById[id]?.status ?? "stopped"}</span>
+          ${port != null ? html`<span class="port">port ${port}</span>` : nothing}
+          ${cmd.kind === "flutter" ? html`<span class="tag">flutter</span>` : nothing}
+        </div>
       </div>
       <div class="actions">
         ${running
