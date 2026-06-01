@@ -53,6 +53,28 @@ fn spawn_list_logs_stop() {
 }
 
 #[test]
+fn list_reports_subtree_memory_for_running_process() {
+    let dir = tempfile::tempdir().unwrap();
+    write_project(dir.path(), "ping -n 30 127.0.0.1");
+    let sup = new_sup(dir.path());
+
+    // Stopped: no live-looking RAM figure.
+    assert_eq!(sup.list()[0].mem_bytes, None, "stopped process reports no RAM");
+
+    sup.start(ID).unwrap();
+    std::thread::sleep(Duration::from_millis(1500));
+
+    // Running: sysinfo sampled the spawned `cmd`/`ping` subtree, so the figure
+    // is present and nonzero (proves the end-to-end wiring, not just the pure
+    // tree-walk unit test in supervisor::mem).
+    let mem = sup.list()[0].mem_bytes;
+    assert!(matches!(mem, Some(b) if b > 0), "running process must report nonzero RAM, got {mem:?}");
+
+    sup.stop(ID).unwrap();
+    assert_eq!(sup.list()[0].mem_bytes, None, "stopped again reports no RAM");
+}
+
+#[test]
 fn restart_works() {
     let dir = tempfile::tempdir().unwrap();
     write_project(dir.path(), "ping -n 30 127.0.0.1");

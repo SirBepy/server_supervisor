@@ -154,9 +154,15 @@
 }
 
 .pid,
-.port {
+.port,
+.ram {
   color: var(--muted);
   font-size: 12px;
+}
+
+/* RAM badge: tabular figures so the value doesn't jitter width as it updates. */
+.ram {
+  font-variant-numeric: tabular-nums;
 }
 
 .dot {

@@ -1,5 +1,6 @@
 pub mod config;
 pub mod detect;
+pub mod mem;
 pub mod proc;
 pub mod reaper;
 pub mod registry;

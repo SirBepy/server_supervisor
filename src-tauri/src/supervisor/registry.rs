@@ -64,6 +64,8 @@ impl Supervisor {
             })
             .collect();
         out.sort_by(|a, b| (&a.project, &a.name).cmp(&(&b.project, &b.name)));
+        // One shared System refresh pass fills per-subtree RAM for running procs.
+        super::mem::fill_memory(&mut out);
         out
     }
 

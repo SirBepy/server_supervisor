@@ -60,6 +60,10 @@ impl ManagedProc {
             status: self.status.clone(),
             pid: self.pid,
             port: self.acquired_port,
+            // Filled in a single shared refresh pass by `mem::fill_memory` after
+            // the list is built; per-proc sampling here would build one System
+            // per process, which the spec forbids.
+            mem_bytes: None,
         }
     }
 

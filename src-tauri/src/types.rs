@@ -74,6 +74,12 @@ pub struct ProcInfo {
     pub status: ProcStatus,
     pub pid: Option<u32>,
     pub port: Option<u16>,
+    /// Resident memory of the whole process subtree (the pid plus every
+    /// descendant), in bytes. `None` when stopped or not yet sampled. Summed
+    /// over descendants because the heavy RAM (e.g. a linker storm under
+    /// `cargo`) lives in grandchildren, not the top pid.
+    #[serde(default)]
+    pub mem_bytes: Option<u64>,
 }
 
 /// Composite runtime id for a (project, command) pair. Uses `:` (never emitted

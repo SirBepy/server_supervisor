@@ -23,6 +23,10 @@ tokio = { version = "1", features = ["full"] }
 axum = "0.7"
 uuid = { version = "1", features = ["v4"] }
 ts-rs = "10"
+# Per-process memory + parent/child tree walk for the dashboard RAM column.
+# Pinned to the 0.39 line (canonical crate, GuillaumeGomez; not the `sys-info`
+# typosquat). `memory()` returns resident bytes on this version.
+sysinfo = { version = "0.39", default-features = false, features = ["system"] }
 tauri_kit_settings = { path = "../vendor/tauri_kit/tauri/settings" }
 
 [dev-dependencies]

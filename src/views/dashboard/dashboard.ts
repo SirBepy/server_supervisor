@@ -7,6 +7,7 @@ import "./dashboard.css";
 import * as ipc from "../../shared/ipc";
 import type { Project } from "../../types/ipc.generated";
 import { ui, setDraw, refresh, act } from "./state";
+import { formatBytes } from "./helpers";
 import { modalView, startAddProject, startAddCommand } from "./modals";
 import { renderAnsi } from "../../shared/ansi";
 
@@ -47,6 +48,7 @@ function commandRow(project: Project, cmd: Project["commands"][number]): Templat
   const running = ui.statusById[id]?.status === "running";
   const pid = ui.statusById[id]?.pid;
   const port = ui.statusById[id]?.port;
+  const mem = ui.statusById[id]?.mem_bytes;
   return html`
     <div class="card">
       <div class="info">
@@ -57,6 +59,9 @@ function commandRow(project: Project, cmd: Project["commands"][number]): Templat
         <div class="meta">
           <span class="pid">${pid != null ? `pid ${pid}` : ui.statusById[id]?.status ?? "stopped"}</span>
           ${port != null ? html`<span class="port">port ${port}</span>` : nothing}
+          ${running && mem != null
+            ? html`<span class="ram" title="resident memory (whole process tree)">${formatBytes(mem)}</span>`
+            : nothing}
           ${cmd.kind === "flutter" ? html`<span class="tag">flutter</span>` : nothing}
         </div>
       </div>
