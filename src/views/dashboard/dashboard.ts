@@ -8,7 +8,8 @@ import * as ipc from "../../shared/ipc";
 import type { Project } from "../../types/ipc.generated";
 import { ui, setDraw, refresh, act } from "./state";
 import { formatBytes } from "./helpers";
-import { modalView, startAddProject, startAddCommand } from "./modals";
+import { modalView, startAddCommand } from "./modals";
+import { startAddProject } from "./add-project";
 import { renderAnsi } from "../../shared/ansi";
 
 const POLL_MS = 2500;
