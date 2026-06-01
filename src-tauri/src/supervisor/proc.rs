@@ -111,9 +111,19 @@ impl ManagedProc {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
 
+        // Resolve symlinked PATH directories to their real targets so a toolchain
+        // installed behind a junction (notably nvm-windows: `C:\nvm4w\nodejs` ->
+        // `...\nvm\v<ver>`) launches without the "untrusted mount point" traversal
+        // failure. Done before the per-command env overrides so an explicit
+        // `PATH=` override still wins.
+        #[cfg(windows)]
+        if let Some(path) = std::env::var_os("PATH") {
+            command.env("PATH", resolve_path_dirs(&path.to_string_lossy()));
+        }
+
         // Per-command env overrides (applied before PORT so a dynamic port still
-        // wins). These let a command prepend a real toolchain dir to PATH, e.g.
-        // to reach node past the nvm4w symlink that `cmd` refuses to traverse.
+        // wins). A `PATH=` here is now a fallback/override on top of the resolved
+        // PATH above, not the only way to reach a junction-installed toolchain.
         for (k, v) in parse_env(&self.spec.env) {
             command.env(k, v);
         }
@@ -307,6 +317,42 @@ fn expand_vars(input: &str) -> String {
     out
 }
 
+/// Resolve reparse points (symlinks/junctions) in each PATH entry to their real
+/// target directory. Windows refuses to traverse certain reparse points during
+/// process creation, failing with "the path cannot be traversed because it
+/// contains an untrusted mount point" - which breaks toolchains installed behind
+/// a symlink, notably nvm-windows (`C:\nvm4w\nodejs` -> `...\nvm\v<ver>`).
+/// Pointing the spawned child's PATH at the real directories leaves no reparse
+/// point in the exec path, so `npm`/`npx`/`node` resolve and run. Entries that
+/// don't exist (or can't be canonicalized) are kept verbatim.
+#[cfg(windows)]
+fn resolve_path_dirs(path: &str) -> String {
+    let resolved: Vec<std::path::PathBuf> = std::env::split_paths(path)
+        .map(|p| match std::fs::canonicalize(&p) {
+            Ok(real) => strip_verbatim(real),
+            Err(_) => p,
+        })
+        .collect();
+    std::env::join_paths(resolved)
+        .map(|os| os.to_string_lossy().into_owned())
+        .unwrap_or_else(|_| path.to_string())
+}
+
+/// `std::fs::canonicalize` returns Windows extended-length (`\\?\C:\...`) paths,
+/// which clutter PATH and some tools mishandle. Strip the verbatim prefix back to
+/// an ordinary path (`\\?\UNC\server\share` -> `\\server\share`).
+#[cfg(windows)]
+fn strip_verbatim(p: std::path::PathBuf) -> std::path::PathBuf {
+    let s = p.to_string_lossy();
+    if let Some(unc) = s.strip_prefix(r"\\?\UNC\") {
+        std::path::PathBuf::from(format!(r"\\{unc}"))
+    } else if let Some(rest) = s.strip_prefix(r"\\?\") {
+        std::path::PathBuf::from(rest)
+    } else {
+        p
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{parse_env, parse_flutter_app_id};
@@ -344,5 +390,52 @@ mod tests {
         // Unterminated `%` and a lone `$` survive verbatim.
         assert_eq!(pairs[1], ("B".to_string(), "100% raw $ sign".to_string()));
         std::env::remove_var("SS_TEST_VAR");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn strip_verbatim_removes_extended_prefix() {
+        use std::path::PathBuf;
+        assert_eq!(
+            super::strip_verbatim(PathBuf::from(r"\\?\C:\foo\bar")),
+            PathBuf::from(r"C:\foo\bar")
+        );
+        assert_eq!(
+            super::strip_verbatim(PathBuf::from(r"\\?\UNC\srv\share")),
+            PathBuf::from(r"\\srv\share")
+        );
+        // An already-ordinary path is left untouched.
+        assert_eq!(
+            super::strip_verbatim(PathBuf::from(r"C:\plain")),
+            PathBuf::from(r"C:\plain")
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn resolve_path_dirs_keeps_missing_and_strips_verbatim_on_real() {
+        let real = std::env::temp_dir();
+        let missing = r"C:\definitely\not\here\ss_xyz123";
+        let out = super::resolve_path_dirs(&format!("{};{}", real.display(), missing));
+        // Nonexistent entry survives verbatim; real entry carries no `\\?\` prefix.
+        assert!(out.contains(missing), "missing entry should be kept: {out}");
+        assert!(!out.contains(r"\\?\"), "no extended-length prefix should leak: {out}");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn resolve_path_dirs_follows_symlink_to_real_target() {
+        use std::os::windows::fs::symlink_dir;
+        let tmp = tempfile::tempdir().unwrap();
+        let real = tmp.path().join("real");
+        std::fs::create_dir(&real).unwrap();
+        let link = tmp.path().join("link");
+        // Symlink creation needs Developer Mode / admin; skip where it's denied.
+        if symlink_dir(&real, &link).is_err() {
+            return;
+        }
+        let out = super::resolve_path_dirs(&link.display().to_string());
+        let want = super::strip_verbatim(std::fs::canonicalize(&real).unwrap());
+        assert_eq!(out, want.display().to_string(), "symlink must resolve to real target");
     }
 }
