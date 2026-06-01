@@ -10,13 +10,13 @@
 
 use crate::ports::{PortEntry, PortRegistry};
 use crate::supervisor::Supervisor;
-use crate::types::{ProcInfo, ProcKind};
+use crate::types::{Command, ProcInfo, ProcKind};
 use axum::{
     extract::{Path, Request, State},
     http::{header, HeaderMap, StatusCode},
     middleware::{self, Next},
     response::{IntoResponse, Response},
-    routing::{get, post},
+    routing::{get, patch, post},
     Json, Router,
 };
 use serde::Deserialize;
@@ -57,6 +57,39 @@ struct RunBody {
     env: Option<String>,
 }
 
+/// Body for `POST /projects/:project_id/commands` (register a command without
+/// starting it). `kind` omitted -> inferred from `cmd`. `use_dynamic_port`
+/// defaults to true (matching the dashboard add flow and `/run`).
+#[derive(Deserialize)]
+struct AddCommandBody {
+    name: String,
+    cmd: String,
+    #[serde(default)]
+    kind: Option<ProcKind>,
+    #[serde(default)]
+    autostart: Option<bool>,
+    #[serde(default)]
+    use_dynamic_port: Option<bool>,
+    #[serde(default)]
+    env: Option<String>,
+}
+
+/// Body for `PATCH /projects/:project_id/commands/:command_id`. Mirrors the IPC
+/// `update_command`: a full field replace (kind is always re-inferred from
+/// `cmd`), so a caller must send the complete desired state, not a partial diff.
+/// Rejected backend-side (400) while the command is running.
+#[derive(Deserialize)]
+struct UpdateCommandBody {
+    name: String,
+    cmd: String,
+    #[serde(default)]
+    autostart: Option<bool>,
+    #[serde(default)]
+    use_dynamic_port: Option<bool>,
+    #[serde(default)]
+    env: Option<String>,
+}
+
 /// Read the bearer token from `<data_dir>/api_token.txt`, generating a fresh
 /// random token on first run.
 pub fn ensure_token(data_dir: &FsPath) -> String {
@@ -85,6 +118,11 @@ pub fn router(sup: Arc<Supervisor>, ports: Arc<PortRegistry>, token: String) -> 
         .route("/ports", get(list_ports))
         .route("/ports/reserve", post(reserve_port))
         .route("/run", post(run))
+        .route("/projects/:project_id/commands", post(add_command))
+        .route(
+            "/projects/:project_id/commands/:command_id",
+            patch(update_command).delete(remove_command),
+        )
         .route_layer(middleware::from_fn_with_state(state.clone(), auth))
         // /health is added after the auth layer, so it stays unauthenticated.
         .route("/health", get(health))
@@ -185,6 +223,54 @@ async fn run(State(s): State<ApiState>, Json(b): Json<RunBody>) -> Response {
         Ok(info) => Json(info).into_response(),
         Err(e) => (StatusCode::BAD_REQUEST, e).into_response(),
     }
+}
+
+/// Map a `Result<Command, String>` to JSON-on-success / 400-on-error, matching
+/// `unit_result`'s error convention for the CRUD routes that return a command.
+fn command_result(r: Result<Command, String>) -> Response {
+    match r {
+        Ok(c) => Json(c).into_response(),
+        Err(e) => (StatusCode::BAD_REQUEST, e).into_response(),
+    }
+}
+
+async fn add_command(
+    State(s): State<ApiState>,
+    Path(project_id): Path<String>,
+    Json(b): Json<AddCommandBody>,
+) -> Response {
+    command_result(s.sup.add_command(
+        &project_id,
+        b.name,
+        b.cmd,
+        b.kind,
+        b.autostart.unwrap_or(false),
+        b.use_dynamic_port.unwrap_or(true),
+        b.env.unwrap_or_default(),
+    ))
+}
+
+async fn update_command(
+    State(s): State<ApiState>,
+    Path((project_id, command_id)): Path<(String, String)>,
+    Json(b): Json<UpdateCommandBody>,
+) -> Response {
+    command_result(s.sup.update_command(
+        &project_id,
+        &command_id,
+        b.name,
+        b.cmd,
+        b.autostart.unwrap_or(false),
+        b.use_dynamic_port.unwrap_or(true),
+        b.env.unwrap_or_default(),
+    ))
+}
+
+async fn remove_command(
+    State(s): State<ApiState>,
+    Path((project_id, command_id)): Path<(String, String)>,
+) -> Response {
+    unit_result(s.sup.remove_command(&project_id, &command_id))
 }
 
 fn unit_result(r: Result<(), String>) -> Response {

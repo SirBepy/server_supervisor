@@ -161,6 +161,89 @@ async fn unknown_proc_start_is_400() {
 }
 
 #[tokio::test]
+async fn command_crud_requires_token_and_round_trips() {
+    let dir = tempfile::tempdir().unwrap();
+    write_procs(dir.path()); // project "test" with command "job"
+    let base = spawn_api("secret", dir.path()).await;
+    let client = reqwest::Client::new();
+
+    // Auth enforced: an unauthed update is rejected before touching state.
+    let unauthed = client
+        .patch(format!("{base}/projects/test/commands/job"))
+        .json(&serde_json::json!({ "name": "job", "cmd": "ping -n 1 127.0.0.1" }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(unauthed.status(), 401);
+
+    // Update (happy path): full field replace, returns the updated Command.
+    let updated: serde_json::Value = client
+        .patch(format!("{base}/projects/test/commands/job"))
+        .bearer_auth("secret")
+        .json(&serde_json::json!({ "name": "renamed", "cmd": "ping -n 5 127.0.0.1" }))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(updated["id"], "job", "update keeps the stable command id");
+    assert_eq!(updated["name"], "renamed");
+    assert_eq!(updated["cmd"], "ping -n 5 127.0.0.1");
+
+    // Add a second command; it shows up as a new unit in /procs.
+    let added: serde_json::Value = client
+        .post(format!("{base}/projects/test/commands"))
+        .bearer_auth("secret")
+        .json(&serde_json::json!({ "name": "build", "cmd": "ping -n 2 127.0.0.1" }))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let added_id = added["id"].as_str().unwrap().to_string();
+    let procs: Vec<serde_json::Value> = client
+        .get(format!("{base}/procs"))
+        .bearer_auth("secret")
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert!(procs.iter().any(|p| p["id"] == format!("test:{added_id}")));
+
+    // Remove the original command (not running, so allowed); it disappears.
+    let removed = client
+        .delete(format!("{base}/projects/test/commands/job"))
+        .bearer_auth("secret")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(removed.status(), 200);
+    let after: Vec<serde_json::Value> = client
+        .get(format!("{base}/procs"))
+        .bearer_auth("secret")
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert!(!after.iter().any(|p| p["id"] == "test:job"), "removed unit is gone");
+
+    // Unknown project/command -> 400, mirroring the other unit handlers.
+    let ghost = client
+        .delete(format!("{base}/projects/test/commands/ghost"))
+        .bearer_auth("secret")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(ghost.status(), 400);
+}
+
+#[tokio::test]
 async fn run_registers_starts_requires_token_and_is_idempotent() {
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(
