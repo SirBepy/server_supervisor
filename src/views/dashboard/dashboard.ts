@@ -168,7 +168,7 @@ function projectSection(project: Project): TemplateResult | typeof nothing {
     : project.commands;
 
   return html`
-    <section class="group">
+    <section class="group ${collapsed ? "collapsed" : ""}">
       <div class="group-head" @click=${() => toggleCollapse(project.id)}>
         <i class="ph ph-caret-right group-chevron ${collapsed ? "" : "open"}"></i>
         <div class="titles">
@@ -214,6 +214,9 @@ function draw() {
     html`
       <div class="header-block">
         <header class="topbar">
+          <button class="icon-btn" title="Add project" @click=${() => void startAddProject()}>
+            <i class="ph ph-folder-plus"></i>
+          </button>
           <h1>Server Supervisor</h1>
           <button class="icon-btn" title="Settings" @click=${() => { location.hash = "#settings"; }}>
             <i class="ph ph-gear"></i>
@@ -228,10 +231,6 @@ function draw() {
             class="filter-chip ${ui.filterRunning ? "active" : ""}"
             @click=${() => { ui.filterRunning = true; draw(); }}
           >Running</button>
-          <span class="filterbar-spacer"></span>
-          <button class="icon-btn" title="Add project" @click=${() => void startAddProject()}>
-            <i class="ph ph-folder-plus"></i>
-          </button>
         </div>
       </div>
       ${ui.error ? html`<div class="error">${ui.error}</div>` : nothing}
