@@ -314,14 +314,27 @@ fn derive_name(cmd: &str) -> String {
     if toks.iter().any(|t| *t == "flutter") {
         return "flutter run".to_string();
     }
+    let prog_short = |p: &str| {
+        std::path::Path::new(p)
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or(p)
+            .to_string()
+    };
     match toks.as_slice() {
-        [runner, "run", x, ..] if matches!(*runner, "npm" | "pnpm" | "yarn" | "bun") => {
+        [runner, "run", x, ..]
+            if matches!(prog_short(runner).as_str(), "npm" | "pnpm" | "yarn" | "bun") =>
+        {
             x.to_string()
         }
-        [runner, x, ..] if matches!(*runner, "yarn" | "pnpm" | "bun" | "npx") => x.to_string(),
-        ["cargo", x, ..] => format!("cargo {x}"),
-        // Fallback: the program name only, never the full command line.
-        [prog, ..] => prog.to_string(),
+        [runner, x, ..]
+            if matches!(prog_short(runner).as_str(), "yarn" | "pnpm" | "bun" | "npx") =>
+        {
+            x.to_string()
+        }
+        [cargo, x, ..] if prog_short(cargo) == "cargo" => format!("cargo {x}"),
+        // Fallback: basename without extension, never the full path or command line.
+        [prog, ..] => prog_short(prog),
         [] => cmd.trim().to_string(),
     }
 }
@@ -346,5 +359,13 @@ mod tests {
             derive_name("fvm flutter run -d web-server --web-port 5000 --dart-define=ENV=local"),
             "flutter run"
         );
+        // Full Windows paths strip to basename without extension.
+        assert_eq!(derive_name(r"C:\nvm4w\nodejs\npm.cmd run dev"), "dev");
+        assert_eq!(
+            derive_name(r"C:\Users\tecno\AppData\Local\nvm\v22.13.0\npm.cmd run dev"),
+            "dev"
+        );
+        assert_eq!(derive_name(r"C:/tmp/zng-api-devup.cmd"), "zng-api-devup");
+        assert_eq!(derive_name(r"C:\nvm4w\nodejs\node.exe server.js"), "node");
     }
 }
