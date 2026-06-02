@@ -39,6 +39,21 @@ async function toggleLogs(id: string) {
 
 // ----- rendering -----
 
+function runningCount(project: Project): number {
+  return project.commands.filter(
+    (c) => ui.statusById[`${project.id}:${c.id}`]?.status === "running",
+  ).length;
+}
+
+function toggleCollapse(projectId: string) {
+  if (ui.collapsed.has(projectId)) {
+    ui.collapsed.delete(projectId);
+  } else {
+    ui.collapsed.add(projectId);
+  }
+  draw();
+}
+
 function dot(id: string): TemplateResult {
   const status = ui.statusById[id]?.status ?? "stopped";
   return html`<span class="dot ${status}" title=${status}></span>`;
@@ -141,46 +156,87 @@ function commandRow(project: Project, cmd: Project["commands"][number]): Templat
   `;
 }
 
-function projectSection(project: Project): TemplateResult {
+function projectSection(project: Project): TemplateResult | typeof nothing {
+  const count = runningCount(project);
+  if (ui.filterRunning && count === 0) return nothing;
+
+  const collapsed = ui.collapsed.has(project.id);
+  const visibleCmds = ui.filterRunning
+    ? project.commands.filter(
+        (c) => ui.statusById[`${project.id}:${c.id}`]?.status === "running",
+      )
+    : project.commands;
+
   return html`
     <section class="group">
-      <div class="group-head">
+      <div class="group-head" @click=${() => toggleCollapse(project.id)}>
+        <i class="ph ph-caret-right group-chevron ${collapsed ? "" : "open"}"></i>
         <div class="titles">
           <h2>${project.name}</h2>
           <span class="root">${project.root}</span>
         </div>
-        <div class="group-actions">
-          <button
-            title="Add command"
-            @click=${() => void startAddCommand(project.id, project.root)}
-          >
-            <i class="ph ph-plus"></i>
-          </button>
-        </div>
+        ${count > 0
+          ? html`<span class="run-count"><span class="run-dot"></span>${count}</span>`
+          : nothing}
+        ${!ui.filterRunning
+          ? html`
+              <div class="group-actions">
+                <button
+                  title="Add command"
+                  @click=${(e: Event) => {
+                    e.stopPropagation();
+                    void startAddCommand(project.id, project.root);
+                  }}
+                >
+                  <i class="ph ph-plus"></i>
+                </button>
+              </div>
+            `
+          : nothing}
       </div>
-      ${project.commands.length === 0
-        ? html`<p class="empty-cmd">No commands. Add one.</p>`
-        : project.commands.map((c) => commandRow(project, c))}
+      ${collapsed
+        ? nothing
+        : visibleCmds.length === 0
+          ? html`<p class="empty-cmd">No commands. Add one.</p>`
+          : visibleCmds.map((c) => commandRow(project, c))}
     </section>
   `;
 }
 
 function draw() {
+  const emptyMsg = ui.projects.length === 0
+    ? html`<p class="empty">No projects yet. Use the + button to add a project.</p>`
+    : ui.filterRunning && ui.projects.every((p) => runningCount(p) === 0)
+      ? html`<p class="empty">No running processes.</p>`
+      : nothing;
+
   render(
     html`
-      <header class="topbar">
-        <button class="icon-btn" title="Add project" @click=${() => void startAddProject()}>
-          <i class="ph ph-folder-plus"></i>
-        </button>
-        <h1>Server Supervisor</h1>
-        <button class="icon-btn" title="Settings" @click=${() => { location.hash = "#settings"; }}>
-          <i class="ph ph-gear"></i>
-        </button>
-      </header>
+      <div class="header-block">
+        <header class="topbar">
+          <h1>Server Supervisor</h1>
+          <button class="icon-btn" title="Settings" @click=${() => { location.hash = "#settings"; }}>
+            <i class="ph ph-gear"></i>
+          </button>
+        </header>
+        <div class="filterbar">
+          <button
+            class="filter-chip ${ui.filterRunning ? "" : "active"}"
+            @click=${() => { ui.filterRunning = false; draw(); }}
+          >All</button>
+          <button
+            class="filter-chip ${ui.filterRunning ? "active" : ""}"
+            @click=${() => { ui.filterRunning = true; draw(); }}
+          >Running</button>
+          <span class="filterbar-spacer"></span>
+          <button class="icon-btn" title="Add project" @click=${() => void startAddProject()}>
+            <i class="ph ph-folder-plus"></i>
+          </button>
+        </div>
+      </div>
       ${ui.error ? html`<div class="error">${ui.error}</div>` : nothing}
-      ${ui.projects.length === 0
-        ? html`<p class="empty">No projects yet. Use the + button to add a project.</p>`
-        : ui.projects.map(projectSection)}
+      ${emptyMsg}
+      ${ui.projects.map(projectSection)}
       ${modalView()}
     `,
     ui.root,

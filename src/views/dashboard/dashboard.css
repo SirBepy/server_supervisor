@@ -1,18 +1,51 @@
-.topbar {
+.header-block {
   position: sticky;
   top: 0;
+  z-index: 5;
   background: var(--bg);
-  padding: 16px 20px 12px;
-  border-bottom: 1px solid var(--border);
+}
+
+.topbar {
+  background: var(--bg);
+  padding: 14px 20px 10px;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  z-index: 5;
 }
 
 .topbar h1 {
   font-size: 16px;
   margin: 0;
+}
+
+.filterbar {
+  background: var(--bg);
+  border-bottom: 1px solid var(--border);
+  padding: 6px 14px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.filterbar-spacer {
+  flex: 1;
+}
+
+.filter-chip {
+  background: transparent;
+  color: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  padding: 3px 11px;
+  font-size: 11px;
+  cursor: pointer;
+}
+.filter-chip:hover {
+  border-color: var(--accent);
+}
+.filter-chip.active {
+  border-color: var(--accent);
+  color: var(--accent);
 }
 
 .icon-btn {
@@ -49,15 +82,49 @@
 
 .group-head {
   display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
+  align-items: center;
   gap: 8px;
+  cursor: pointer;
+  user-select: none;
+  padding: 4px 0 2px;
 }
 .group-head .titles {
   display: flex;
   align-items: baseline;
   gap: 10px;
   min-width: 0;
+  flex: 1;
+}
+
+.group-chevron {
+  font-size: 12px;
+  color: var(--muted);
+  transition: transform 0.15s ease;
+  flex-shrink: 0;
+}
+.group-chevron.open {
+  transform: rotate(90deg);
+}
+
+.run-count {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: #46d369;
+  background: rgba(70, 211, 105, 0.1);
+  border: 1px solid rgba(70, 211, 105, 0.25);
+  border-radius: 20px;
+  padding: 1px 7px;
+  flex-shrink: 0;
+}
+
+.run-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: #46d369;
+  flex-shrink: 0;
 }
 /* Path is hidden by default to cut clutter; hovering the project name fades it
    in inline, to the right of the name. No native title tooltip. The right
@@ -94,11 +161,10 @@
 }
 
 .group h2 {
-  font-size: 11px;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  color: var(--muted);
-  margin: 8px 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--fg);
+  margin: 0;
 }
 
 .card {
