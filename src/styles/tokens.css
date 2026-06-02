@@ -1,8 +1,8 @@
 :root {
-  --bg: #0f1115;
-  --surface: #171a21;
-  --fg: #e6e8ec;
-  --muted: #8b929e;
-  --accent: #6ea8fe;
-  --border: #262b35;
+  --bg: var(--kit-bg);
+  --surface: var(--kit-bg-alt);
+  --fg: var(--kit-text);
+  --muted: var(--kit-text-dim);
+  --accent: var(--kit-accent);
+  --border: var(--kit-border);
 }
