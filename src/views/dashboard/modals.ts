@@ -4,6 +4,7 @@
 // Shared view state and the re-render trigger come from ./state; pure helpers
 // from ./helpers; the dropdown from ./combobox.
 
+import "./modals.css";
 import { html, nothing, type TemplateResult } from "lit-html";
 import * as ipc from "../../shared/ipc";
 import {

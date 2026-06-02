@@ -1,0 +1,311 @@
+/* ----- modal / wizard ----- */
+.overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 20;
+}
+.dialog {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 18px;
+  width: min(560px, 92vw);
+  max-height: 86vh;
+  /* visible (not auto) so the combobox dropdown can spill past the dialog edge
+     instead of forcing an inner scrollbar. */
+  overflow: visible;
+}
+.dialog h3 {
+  margin: 0 0 12px;
+  font-size: 15px;
+}
+.dialog .field-row {
+  display: grid;
+  grid-template-columns: 64px 1fr auto;
+  align-items: center;
+  gap: 10px;
+  margin: 8px 0;
+}
+.dialog .field-row label {
+  font-size: 12px;
+  color: var(--muted);
+  margin: 0;
+}
+.dialog input,
+.dialog select {
+  width: 100%;
+  background: var(--bg);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 7px 9px;
+  font-size: 13px;
+}
+/* Env override textarea: monospace, top-aligned label, wraps its own KEY=VALUE
+   lines without a horizontal scrollbar. */
+.dialog .env-row {
+  align-items: start;
+}
+.dialog .env-input {
+  width: 100%;
+  background: var(--bg);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 7px 9px;
+  font-family: "Cascadia Code", Consolas, monospace;
+  font-size: 12px;
+  resize: vertical;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.dialog .env-input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+.dialog .field-row .folder {
+  font-size: 12px;
+  color: var(--fg);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.dialog .ghost {
+  background: transparent;
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 9px;
+  font-size: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.dialog .ghost:hover {
+  border-color: var(--accent);
+}
+
+.detect-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin: 14px 0 6px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.link {
+  background: transparent;
+  border: none;
+  color: var(--accent);
+  cursor: pointer;
+  font-size: 12px;
+  padding: 0;
+}
+.detect-group {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  margin-bottom: 6px;
+}
+.detect-group summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 10px;
+  cursor: pointer;
+  font-size: 12px;
+  list-style: none;
+}
+.detect-group summary::-webkit-details-marker {
+  display: none;
+}
+.detect-group .count {
+  color: var(--muted);
+  margin-left: 4px;
+}
+.detect-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 10px 2px 22px;
+  font-size: 12px;
+}
+.detect-row input {
+  width: auto;
+}
+.detect-row code {
+  color: var(--fg);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.detect-group > .detect-row:last-child {
+  padding-bottom: 8px;
+}
+.dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 16px;
+}
+.dialog-actions button {
+  background: transparent;
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 7px 14px;
+  cursor: pointer;
+  font-size: 13px;
+}
+.dialog-actions button.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #0a0c10;
+  font-weight: 600;
+}
+.dialog-actions button.danger {
+  background: #e0564b;
+  border-color: #e0564b;
+  color: #0a0c10;
+  font-weight: 600;
+}
+.muted {
+  color: var(--muted);
+  font-size: 12px;
+}
+.muted.note {
+  margin: 4px 0 8px;
+}
+
+/* ----- combobox ----- */
+.combo {
+  position: relative;
+}
+.combo-input {
+  width: 100%;
+  background: var(--bg);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 7px 9px;
+  font-size: 13px;
+}
+.combo-input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+.combo-pop {
+  /* Absolute so it floats without pushing the Cancel/Add buttons out of the
+     dialog; the dialog's overflow:visible lets it spill past the edge instead
+     of forcing a scrollbar. It floats above everything below it, including the
+     action buttons (standard combobox behavior). */
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: calc(100% + 4px);
+  z-index: 30;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  max-height: 240px;
+  overflow: auto;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+}
+.combo-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 6px 10px;
+  cursor: pointer;
+  font-size: 12px;
+}
+.combo-row code {
+  color: var(--fg);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.combo-row .combo-src {
+  color: var(--muted);
+  font-size: 11px;
+  flex: 0 0 auto;
+}
+.combo-row.active {
+  background: var(--accent);
+  color: #0a0c10;
+}
+.combo-row.active code,
+.combo-row.active .combo-src {
+  color: #0a0c10;
+}
+.combo-row.free {
+  color: var(--accent);
+  border-top: 1px solid var(--border);
+}
+.combo-row.free.active {
+  color: #0a0c10;
+}
+.combo-row.free.active code {
+  color: #0a0c10;
+}
+
+/* ----- chips ----- */
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0 0 8px;
+}
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 3px 6px 3px 10px;
+  font-size: 12px;
+  color: var(--fg);
+}
+.chip button {
+  background: transparent;
+  border: none;
+  color: var(--muted);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  padding: 2px;
+  font-size: 12px;
+  line-height: 1;
+  border-radius: 50%;
+}
+.chip button:hover {
+  color: var(--fg);
+}
+
+/* ----- advisory command-validity warning (non-blocking) ----- */
+.cmd-warn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin: 4px 0 0;
+  color: #c9923a;
+  font-size: 12px;
+  opacity: 0.85;
+}
+.cmd-warn i {
+  font-size: 13px;
+}
+.cmd-warn-row {
+  margin-top: -2px;
+}
+.chip .cmd-warn {
+  margin: 0;
+  font-size: 13px;
+}
