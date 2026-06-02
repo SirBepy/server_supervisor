@@ -5,6 +5,7 @@ pub mod mem;
 pub mod proc;
 pub mod reaper;
 pub mod registry;
+pub mod spawn_env;
 pub mod validate;
 
 pub use registry::Supervisor;
