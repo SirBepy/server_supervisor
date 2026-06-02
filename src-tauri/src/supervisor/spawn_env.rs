@@ -70,7 +70,7 @@ pub(super) fn resolve_path_dirs(path: &str) -> String {
 /// which clutter PATH and some tools mishandle. Strip the verbatim prefix back to
 /// an ordinary path (`\\?\UNC\server\share` -> `\\server\share`).
 #[cfg(windows)]
-pub(super) fn strip_verbatim(p: std::path::PathBuf) -> std::path::PathBuf {
+fn strip_verbatim(p: std::path::PathBuf) -> std::path::PathBuf {
     let s = p.to_string_lossy();
     if let Some(unc) = s.strip_prefix(r"\\?\UNC\") {
         std::path::PathBuf::from(format!(r"\\{unc}"))
