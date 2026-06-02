@@ -168,7 +168,7 @@ function projectSection(project: Project): TemplateResult | typeof nothing {
     : project.commands;
 
   return html`
-    <section class="group ${collapsed ? "collapsed" : ""}">
+    <section class="group">
       <div class="group-head" @click=${() => toggleCollapse(project.id)}>
         <i class="ph ph-caret-right group-chevron ${collapsed ? "" : "open"}"></i>
         <div class="titles">
