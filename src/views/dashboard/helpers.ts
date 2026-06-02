@@ -24,14 +24,26 @@ export function formatBytes(bytes: number | bigint | null | undefined): string {
 
 // Derive a short command name (mirrors the backend `derive_name`). Never returns
 // the whole command line: a long Flutter launch collapses to "flutter run", and
-// any unrecognized command falls back to just its program name.
+// any unrecognized command falls back to its program basename (no path, no ext).
 export function deriveName(cmd: string): string {
   const toks = cmd.trim().split(/\s+/).filter(Boolean);
   if (toks.length === 0) return cmd.trim();
-  if (toks.includes("flutter")) return "flutter run";
   const [a, b, c] = toks;
-  if ((a === "npm" || a === "pnpm" || a === "yarn" || a === "bun") && b === "run" && c) return c;
-  if ((a === "yarn" || a === "pnpm" || a === "bun" || a === "npx") && b) return b;
-  if (a === "cargo" && b) return `cargo ${b}`;
-  return a;
+  const prog = basename(a).replace(/\.(exe|cmd|bat|sh)$/i, "");
+  if (prog === "flutter" || toks.includes("flutter")) return "flutter run";
+  if ((prog === "npm" || prog === "pnpm" || prog === "yarn" || prog === "bun") && b === "run" && c) return c;
+  if ((prog === "yarn" || prog === "pnpm" || prog === "bun" || prog === "npx") && b) return b;
+  if (prog === "cargo" && b) return `cargo ${b}`;
+  return toks.length === 1 ? prog : `${prog} ${b}`;
+}
+
+const MAX_DISPLAY_NAME = 38;
+
+// Display name for a proc: keeps short clean stored names as-is, re-derives
+// from the command for long or path-like stored names, then truncates.
+export function displayName(spec: { name: string; cmd: string }): string {
+  const n = spec.name;
+  if (n.length <= MAX_DISPLAY_NAME && !/[/\\]/.test(n)) return n;
+  const d = deriveName(spec.cmd);
+  return d.length <= MAX_DISPLAY_NAME ? d : d.slice(0, MAX_DISPLAY_NAME - 1) + "…";
 }

@@ -7,7 +7,7 @@ import "./dashboard.css";
 import * as ipc from "../../shared/ipc";
 import type { Project } from "../../types/ipc.generated";
 import { ui, setDraw, refresh, act } from "./state";
-import { formatBytes } from "./helpers";
+import { formatBytes, displayName } from "./helpers";
 import { modalView, startAddCommand } from "./modals";
 import { startAddProject } from "./add-project";
 import { renderAnsi } from "../../shared/ansi";
@@ -55,7 +55,7 @@ function commandRow(project: Project, cmd: Project["commands"][number]): Templat
       <div class="info">
         <div class="head">
           ${dot(id)}
-          <span class="name">${cmd.name}</span>
+          <span class="name" title=${cmd.name}>${displayName(cmd)}</span>
         </div>
         <div class="meta">
           <span class="pid">${pid != null ? `pid ${pid}` : ui.statusById[id]?.status ?? "stopped"}</span>
