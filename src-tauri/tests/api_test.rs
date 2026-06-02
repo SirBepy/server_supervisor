@@ -17,7 +17,7 @@ fn write_procs(dir: &std::path::Path) {
 async fn spawn_api(token: &str, dir: &std::path::Path) -> String {
     let ports = Arc::new(PortRegistry::new(dir.to_path_buf()));
     let sup = Arc::new(Supervisor::new(dir.to_path_buf(), ports.clone()));
-    let app = api::router(sup, ports, token.to_string());
+    let app = api::router(sup, ports, token.to_string(), None);
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     tokio::spawn(async move {

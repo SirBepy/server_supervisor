@@ -30,11 +30,18 @@ const PORT_FILE: &str = "api_port.txt";
 /// OS-assigned ephemeral port.
 const PORT_PROBE_TRIES: u16 = 20;
 
+/// Reads current AI permission flags: (ai_can_add_projects, ai_can_add_commands).
+/// Stored as a trait object so `api.rs` stays free of Tauri types in its structs,
+/// keeping integration tests runnable without Tauri DLL dependencies.
+type PermissionFlags = Arc<dyn Fn() -> (bool, bool) + Send + Sync>;
+
 #[derive(Clone)]
 struct ApiState {
     sup: Arc<Supervisor>,
     ports: Arc<PortRegistry>,
     token: String,
+    /// None in tests (all AI operations allowed); Some in production (reads live settings).
+    ai_flags: Option<PermissionFlags>,
 }
 
 #[derive(Deserialize)]
@@ -105,9 +112,19 @@ pub fn ensure_token(data_dir: &FsPath) -> String {
     token
 }
 
+/// Returns a 403 response when an AI permission flag is disabled, None when allowed.
+fn ai_forbidden(allowed: bool, action: &str) -> Option<Response> {
+    if !allowed {
+        Some((StatusCode::FORBIDDEN, format!("{action} is disabled in Settings")).into_response())
+    } else {
+        None
+    }
+}
+
 /// Build the router. Exposed for tests so the API can be exercised without Tauri.
-pub fn router(sup: Arc<Supervisor>, ports: Arc<PortRegistry>, token: String) -> Router {
-    let state = ApiState { sup, ports, token };
+/// Pass `None` for `ai_flags` in tests; permission checks are skipped when `None`.
+pub fn router(sup: Arc<Supervisor>, ports: Arc<PortRegistry>, token: String, ai_flags: Option<PermissionFlags>) -> Router {
+    let state = ApiState { sup, ports, token, ai_flags };
     Router::new()
         .route("/procs", get(list_procs))
         .route("/procs/:id/start", post(start_proc))
@@ -151,8 +168,13 @@ pub async fn serve(
     port: u16,
     token: String,
     data_dir: std::path::PathBuf,
+    app_handle: tauri::AppHandle,
 ) {
-    let app = router(sup, ports, token);
+    let flags: PermissionFlags = Arc::new(move || {
+        let cfg = crate::settings::load(&app_handle);
+        (cfg.ai_can_add_projects, cfg.ai_can_add_commands)
+    });
+    let app = router(sup, ports, token, Some(flags));
     let listener = match bind_probe(port).await {
         Ok(l) => l,
         Err(e) => {
@@ -211,6 +233,15 @@ async fn reserve_port(State(s): State<ApiState>, Json(body): Json<ReserveBody>) 
 }
 
 async fn run(State(s): State<ApiState>, Json(b): Json<RunBody>) -> Response {
+    if let Some(flags) = &s.ai_flags {
+        let (can_add_projects, can_add_commands) = flags();
+        if let Some(r) = ai_forbidden(can_add_projects, "AI project creation") {
+            return r;
+        }
+        if let Some(r) = ai_forbidden(can_add_commands, "AI command creation") {
+            return r;
+        }
+    }
     match s.sup.ensure_and_run(
         &b.root,
         &b.cmd,
@@ -239,6 +270,12 @@ async fn add_command(
     Path(project_id): Path<String>,
     Json(b): Json<AddCommandBody>,
 ) -> Response {
+    if let Some(flags) = &s.ai_flags {
+        let (_, can_add_commands) = flags();
+        if let Some(r) = ai_forbidden(can_add_commands, "AI command creation") {
+            return r;
+        }
+    }
     command_result(s.sup.add_command(
         &project_id,
         b.name,
