@@ -162,7 +162,7 @@
 }
 
 .group h2 {
-  font-size: 13px;
+  font-size: 15px;
   font-weight: 600;
   color: var(--fg);
   margin: 0;
@@ -206,6 +206,7 @@
 }
 
 .name {
+  font-size: 13px;
   font-weight: 600;
   overflow: hidden;
   text-overflow: ellipsis;
