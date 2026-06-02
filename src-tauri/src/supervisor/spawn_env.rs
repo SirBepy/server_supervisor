@@ -81,6 +81,81 @@ pub(super) fn strip_verbatim(p: std::path::PathBuf) -> std::path::PathBuf {
     }
 }
 
+/// Read the persisted machine + user `Path` from the registry and merge them
+/// (machine first, then user) the way Windows composes a logon session's PATH.
+/// This lets spawned children resolve per-user toolchains (node via nvm,
+/// cargo/rustup under `~/.cargo/bin`) even when the supervisor process itself was
+/// started with a reduced env, e.g. autostarted at logon before the user profile
+/// env materialized. Children otherwise inherit only the supervisor's own PATH,
+/// so a logon-autostarted supervisor silently breaks every per-user toolchain.
+/// `%VAR%` references (REG_EXPAND_SZ values) are expanded against the current
+/// env. Returns `None` if neither key could be read, so the caller can fall back
+/// to the inherited PATH.
+#[cfg(windows)]
+pub(super) fn registry_merged_path() -> Option<String> {
+    let machine =
+        query_reg_path(r"HKLM\SYSTEM\CurrentControlSet\Control\Session Manager\Environment");
+    let user = query_reg_path(r"HKCU\Environment");
+    if machine.is_none() && user.is_none() {
+        return None;
+    }
+    let parts: Vec<String> = [machine, user]
+        .into_iter()
+        .flatten()
+        .map(|s| expand_vars(&s))
+        .filter(|s| !s.is_empty())
+        .collect();
+    Some(parts.join(";"))
+}
+
+/// Query a single registry key's `Path` value via `reg.exe`. Uses the absolute
+/// `%SystemRoot%\System32\reg.exe` so it resolves even under a reduced PATH (the
+/// exact failure mode this whole module guards against), and `CREATE_NO_WINDOW`
+/// so the query never flashes a console. Returns `None` if the key/value is
+/// absent (a machine with no user `Path` is normal) or the command fails.
+#[cfg(windows)]
+fn query_reg_path(key: &str) -> Option<String> {
+    use std::os::windows::process::CommandExt;
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    let reg_exe = std::env::var("SystemRoot")
+        .map(|r| format!(r"{r}\System32\reg.exe"))
+        .unwrap_or_else(|_| "reg.exe".to_string());
+    let out = std::process::Command::new(reg_exe)
+        .args(["query", key, "/v", "Path"])
+        .creation_flags(CREATE_NO_WINDOW)
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    parse_reg_path(&String::from_utf8_lossy(&out.stdout))
+}
+
+/// Extract the `Path` data out of `reg query <key> /v Path` output, which looks
+/// like:
+/// ```text
+///
+/// HKEY_CURRENT_USER\Environment
+///     Path    REG_EXPAND_SZ    C:\Users\me\.cargo\bin;%USERPROFILE%\bin
+/// ```
+/// The value-type token (`REG_SZ` / `REG_EXPAND_SZ`) is not localized by Windows,
+/// so we split on it and take the trailing data. PATH data never spans newlines,
+/// so a single line carries the whole value.
+#[cfg(windows)]
+fn parse_reg_path(output: &str) -> Option<String> {
+    for line in output.lines() {
+        for tok in ["REG_EXPAND_SZ", "REG_SZ"] {
+            if let Some(idx) = line.find(tok) {
+                let data = line[idx + tok.len()..].trim();
+                if !data.is_empty() {
+                    return Some(data.to_string());
+                }
+            }
+        }
+    }
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use super::parse_env;
@@ -149,5 +224,39 @@ mod tests {
         let out = super::resolve_path_dirs(&link.display().to_string());
         let want = super::strip_verbatim(std::fs::canonicalize(&real).unwrap());
         assert_eq!(out, want.display().to_string(), "symlink must resolve to real target");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn parse_reg_path_extracts_data_after_type_token() {
+        let out = "\r\nHKEY_CURRENT_USER\\Environment\r\n    Path    REG_EXPAND_SZ    C:\\Users\\me\\.cargo\\bin;%USERPROFILE%\\bin\r\n";
+        assert_eq!(
+            super::parse_reg_path(out).as_deref(),
+            Some(r"C:\Users\me\.cargo\bin;%USERPROFILE%\bin")
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn parse_reg_path_handles_plain_reg_sz_and_missing() {
+        let sz = "    Path    REG_SZ    C:\\sys32;C:\\Windows";
+        assert_eq!(super::parse_reg_path(sz).as_deref(), Some(r"C:\sys32;C:\Windows"));
+        // No value line -> None (e.g. the key has no Path).
+        assert_eq!(super::parse_reg_path("HKEY_CURRENT_USER\\Environment\r\n"), None);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn registry_merged_path_includes_real_machine_path() {
+        // The machine `Path` always exists, so a merge must return Some and
+        // contain System32 (always on the machine PATH). Proves the reg query +
+        // parse round-trips against the live registry on this box.
+        let merged = super::registry_merged_path().expect("machine Path must read");
+        assert!(
+            merged.to_lowercase().contains("system32"),
+            "merged registry PATH should contain System32: {merged}"
+        );
+        // %VAR% references must be expanded, never left literal.
+        assert!(!merged.contains('%'), "expanded PATH should have no %VAR%: {merged}");
     }
 }

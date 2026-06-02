@@ -111,14 +111,24 @@ impl ManagedProc {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
 
-        // Resolve symlinked PATH directories to their real targets so a toolchain
-        // installed behind a junction (notably nvm-windows: `C:\nvm4w\nodejs` ->
-        // `...\nvm\v<ver>`) launches without the "untrusted mount point" traversal
-        // failure. Done before the per-command env overrides so an explicit
-        // `PATH=` override still wins.
+        // Build the child PATH from the persisted machine+user registry PATH so
+        // per-user toolchains (node via nvm, cargo/rustup) resolve regardless of
+        // how the supervisor itself was launched: a logon-autostarted supervisor
+        // may inherit only a reduced PATH that lacks the user entries, and
+        // children would otherwise inherit that stripped PATH. Fall back to our
+        // own inherited PATH if the registry read fails. Then resolve symlinked
+        // PATH directories to their real targets so a toolchain installed behind
+        // a junction (notably nvm-windows: `C:\nvm4w\nodejs` -> `...\nvm\v<ver>`)
+        // launches without the "untrusted mount point" traversal failure. Done
+        // before the per-command env overrides so an explicit `PATH=` override
+        // still wins.
         #[cfg(windows)]
-        if let Some(path) = std::env::var_os("PATH") {
-            command.env("PATH", super::spawn_env::resolve_path_dirs(&path.to_string_lossy()));
+        {
+            let base = super::spawn_env::registry_merged_path()
+                .or_else(|| std::env::var("PATH").ok());
+            if let Some(path) = base {
+                command.env("PATH", super::spawn_env::resolve_path_dirs(&path));
+            }
         }
 
         // Per-command env overrides (applied before PORT so a dynamic port still
