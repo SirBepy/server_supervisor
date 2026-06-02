@@ -73,7 +73,11 @@ function commandRow(project: Project, cmd: Project["commands"][number]): Templat
           <span class="name" title=${cmd.name}>${displayName(cmd)}</span>
         </div>
         <div class="meta">
-          <span class="pid">${pid != null ? `pid ${pid}` : ui.statusById[id]?.status ?? "stopped"}</span>
+          ${pid != null
+            ? html`<span class="pid">pid ${pid}</span>`
+            : ui.statusById[id]?.status && ui.statusById[id].status !== "stopped"
+              ? html`<span class="pid">${ui.statusById[id].status}</span>`
+              : nothing}
           ${port != null ? html`<span class="port">port ${port}</span>` : nothing}
           ${running && mem != null
             ? html`<span class="ram" title="resident memory (whole process tree)">${formatBytes(mem)}</span>`
