@@ -18,6 +18,4 @@ permissions:
 jobs:
   release:
     uses: SirBepy/sirbepy_tauri_kit/.github/workflows/tauri-windows-release.yml@main
-    with:
-      asset-name: Server-Supervisor
     secrets: inherit
