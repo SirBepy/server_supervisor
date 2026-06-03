@@ -8,7 +8,7 @@
 
 `server_supervisor` is a Tauri 2 desktop app that acts as a single headless owner for all your local dev servers - Flutter, Node, or anything else. Close the window and it hides to the system tray; servers keep running. Quit from the tray and every child process is killed cleanly before exit. No orphans, ever.
 
-A webview dashboard lets you see, start, stop, and restart processes at a glance, with live log streaming. A localhost HTTP + WebSocket API (bearer-token protected, `127.0.0.1` only) lets an AI agent drive the same controls programmatically, making it a useful companion to tools like Claude Code or Cursor.
+A webview dashboard lets you see, start, stop, and restart processes at a glance, with live log streaming. A localhost HTTP API (bearer-token protected, `127.0.0.1` only) lets an AI agent drive the same controls programmatically, making it a useful companion to tools like Claude Code or Cursor.
 
 Flutter processes are managed via `flutter run --machine` with proper daemon JSON protocol for hot reload and restart. Flutter web hot reload is upstream-broken; web targets use full restart only.
 
@@ -40,14 +40,180 @@ npm run tauri build
 
 ## API
 
-The supervisor exposes a local HTTP + WebSocket API on `127.0.0.1` only. Bearer token is read from a `0600` config file on each request. Endpoints:
+The supervisor exposes a local HTTP API on `127.0.0.1` only. Port is written to `api_port.txt` in the app data directory on startup (it probes upward from the configured preferred port if that port is occupied). The bearer token is written to `api_token.txt` in the same directory on first run.
 
-- `GET /processes` - list all supervised processes
-- `POST /processes/:id/start` - start a process
-- `POST /processes/:id/stop` - stop a process
-- `POST /processes/:id/restart` - restart a process
-- `GET /processes/:id/logs` - fetch captured logs
-- `WS /processes/:id/logs/stream` - live log stream
+All endpoints except `/health` require `Authorization: Bearer <token>`.
+
+### Discovery
+
+```
+GET /health
+```
+Returns `ok`. No auth required. Use to confirm the supervisor is running.
+
+### Processes
+
+```
+GET /procs
+```
+Returns an array of all supervised processes.
+
+```json
+[
+  {
+    "id": "my-project:server",
+    "project": "my-project",
+    "name": "server",
+    "kind": "generic",
+    "status": "running",
+    "pid": 12345,
+    "port": 3000,
+    "mem_bytes": 52428800
+  }
+]
+```
+
+`kind`: `"generic"` or `"flutter"`. `status`: `"stopped"`, `"starting"`, `"running"`, or `"crashed"`. `pid`, `port`, `mem_bytes` are `null` when the process is stopped.
+
+Process `id` is always `"<project_id>:<command_id>"` - use this exact string in all `:id` path segments below.
+
+---
+
+```
+POST /procs/:id/start
+POST /procs/:id/stop
+POST /procs/:id/restart
+POST /procs/:id/reload
+```
+No request body. Returns `200 OK` on success, `400` with an error string on failure.
+
+`reload` triggers a hot reload (Flutter: `app.restart` daemon message; generic and Flutter web: full restart, since web hot reload is upstream-broken).
+
+---
+
+```
+GET /procs/:id/logs
+```
+Returns an array of captured log lines, oldest first.
+
+```json
+[
+  { "ts": 1717430000000, "stream": "stdout", "text": "Server listening on :3000" }
+]
+```
+
+`ts` is Unix epoch milliseconds. `stream` is `"stdout"` or `"stderr"`. Returns `404` if the process id is unknown.
+
+---
+
+### Ports
+
+```
+GET /ports
+```
+Returns the list of reserved ports.
+
+---
+
+```
+POST /ports/reserve
+```
+Reserves and returns the next free port for the given owner.
+
+```json
+{ "owner": "my-project:server" }
+```
+
+Returns the reserved port number as a bare integer.
+
+---
+
+### Run (register + start in one call)
+
+```
+POST /run
+```
+Registers a command under the matching project (by `root` path) and starts it immediately. If the project does not exist it is created. If a command with the same normalized name already exists its existing process is returned rather than duplicating it.
+
+Requires both `ai_can_add_projects` and `ai_can_add_commands` to be enabled in Settings, otherwise returns `403`.
+
+```json
+{
+  "root": "/absolute/path/to/project",
+  "cmd": "npm run dev",
+  "name": "dev server",
+  "kind": "generic",
+  "use_dynamic_port": true,
+  "env": "NODE_ENV=development\nPORT=3000"
+}
+```
+
+`name`, `kind`, `use_dynamic_port`, and `env` are optional. `kind` defaults to inferred from `cmd` (any command containing `"flutter"` is `"flutter"`, everything else is `"generic"`). `use_dynamic_port` defaults to `true`. `env` is one `KEY=VALUE` per line; values may reference existing env vars via `${NAME}` or `%NAME%`.
+
+Returns the `ProcInfo` object (same shape as `GET /procs` entries) on success, `400` on error.
+
+---
+
+### Commands (register without starting)
+
+```
+POST /projects/:project_id/commands
+```
+Registers a command under an existing project without starting it. Requires `ai_can_add_commands` in Settings, otherwise returns `403`.
+
+```json
+{
+  "name": "dev server",
+  "cmd": "npm run dev",
+  "kind": "generic",
+  "autostart": false,
+  "use_dynamic_port": true,
+  "env": ""
+}
+```
+
+`kind`, `autostart`, `use_dynamic_port`, and `env` are optional (same defaults as `/run`). Returns the created `Command` object on success, `400` on error.
+
+---
+
+```
+PATCH /projects/:project_id/commands/:command_id
+```
+Full-replace update of an existing command. Rejected with `400` if the command is currently running - stop it first. Send the complete desired state; omitted optional fields revert to their defaults.
+
+```json
+{
+  "name": "dev server",
+  "cmd": "npm run dev:fast",
+  "autostart": true,
+  "use_dynamic_port": true,
+  "env": ""
+}
+```
+
+Returns the updated `Command` object on success, `400` on error.
+
+---
+
+```
+DELETE /projects/:project_id/commands/:command_id
+```
+Removes a command from the project. Returns `200 OK` on success, `400` on error.
+
+---
+
+### Permission flags
+
+Two toggles in Settings control what the API is allowed to do:
+
+| Flag | Gates |
+|---|---|
+| `ai_can_add_projects` | `POST /run` |
+| `ai_can_add_commands` | `POST /run`, `POST /projects/:project_id/commands` |
+
+Both default to enabled. A `403` response body names the disabled flag.
+
+---
 
 ## Project structure
 
