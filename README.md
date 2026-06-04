@@ -6,7 +6,7 @@
 
 ## About
 
-`server_supervisor` is a Tauri 2 desktop app that acts as a single headless owner for all your local dev servers - Flutter, Node, or anything else. Close the window and it hides to the system tray; servers keep running. Quit from the tray and every child process is killed cleanly before exit. No orphans, ever.
+`server_supervisor` is a Tauri 2 desktop app that owns all your local dev servers - Flutter, Node, or anything else. Close the window and it hides to the system tray; servers keep running. Quitting (and self-updating) leaves your servers running by default so an update never nukes them - on the next launch the app re-adopts the still-alive processes (they show as running, with logs paused until you restart them). The tray's "Close Processes" stops everything, and Quit asks whether to stop or leave. (Tradeoff: a force-kill or a lost PID file while servers are detached can leak them until found manually.)
 
 A webview dashboard lets you see, start, stop, and restart processes at a glance, with live log streaming. A localhost HTTP API (bearer-token protected, `127.0.0.1` only) lets an AI agent drive the same controls programmatically, making it a useful companion to tools like Claude Code or Cursor.
 
