@@ -72,7 +72,7 @@ impl Supervisor {
         env: String,
     ) -> Result<Command, String> {
         let name = name.trim().to_string();
-        let cmd = cmd.trim().to_string();
+        let cmd = normalize_cmd(&cmd);
         if name.is_empty() || cmd.is_empty() {
             return Err("command name and cmd are required".to_string());
         }
@@ -138,12 +138,59 @@ impl Supervisor {
             use_dynamic_port,
             env,
         )?;
+        // The incoming command is now registered, so pruning its failed siblings
+        // can never empty the project. Clears the dead-on-arrival variant pile.
+        self.prune_failed_siblings(&project.id, &command.cmd);
         let id = unit_id(&project.id, &command.id);
         self.start(&id)?;
         self.list()
             .into_iter()
             .find(|p| p.id == id)
             .ok_or_else(|| format!("started but not found in list: {id}"))
+    }
+
+    /// After a successful `/run`, drop this project's *other* commands that are
+    /// dead-on-arrival crashes - failed launch variants the AI left behind (the
+    /// classic `flutter run` x3 pile). `keep_cmd` is the just-registered command
+    /// (already normalized); never prune it, so a same-cmd retry keeps its logs.
+    /// A real server that ran a long time and then crashed is NOT dead-on-arrival
+    /// (see `ManagedProc::is_dead_on_arrival`), so it survives.
+    ///
+    /// Safe against emptying the project because `add_command` is idempotent:
+    /// `keep_cmd` is always present in `project.commands`, so the
+    /// `c.cmd == keep_cmd` skip below guarantees at least that command survives
+    /// the prune (the auto-delete-empty-project path in `remove_command` can
+    /// never fire mid-run).
+    fn prune_failed_siblings(&self, project_id: &str, keep_cmd: &str) {
+        let victims: Vec<String> = {
+            // Lock order: projects THEN procs. No other Supervisor path nests both
+            // simultaneously (add_command/remove_command release `projects` before
+            // locking `procs`), so this is the sole nesting site. Keep this order
+            // to avoid a deadlock regression.
+            let projects = self.projects.lock().unwrap();
+            let mut map = self.procs.lock().unwrap();
+            let Some(project) = projects.iter().find(|p| p.id == project_id) else {
+                return;
+            };
+            let mut v = Vec::new();
+            for c in &project.commands {
+                if c.cmd == keep_cmd {
+                    continue;
+                }
+                if let Some(proc) = map.get_mut(&unit_id(project_id, &c.id)) {
+                    proc.refresh();
+                    if proc.is_dead_on_arrival() {
+                        v.push(c.id.clone());
+                    }
+                }
+            }
+            v
+        };
+        for cid in victims {
+            if let Err(e) = self.remove_command(project_id, &cid) {
+                log::warn!("prune_failed_siblings: could not remove {project_id}:{cid}: {e}");
+            }
+        }
     }
 
     /// Edit an existing command in place. The command `id` is a stable handle
@@ -288,6 +335,14 @@ fn norm_path(p: &str) -> String {
     p.trim_end_matches(['\\', '/']).to_lowercase()
 }
 
+/// Collapse a command string to its canonical dedup form: trim ends and reduce
+/// every run of internal whitespace to a single space. Keeps case (flags are
+/// case-sensitive). `flutter  run` and ` flutter run ` both become `flutter run`,
+/// so trivial whitespace variants reuse one command entry instead of forking.
+fn normalize_cmd(cmd: &str) -> String {
+    cmd.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
 fn unique_id(base: &str, taken: &dyn Fn(&str) -> bool) -> String {
     let b = config::slug(base);
     if !taken(&b) {
@@ -341,7 +396,15 @@ fn derive_name(cmd: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::derive_name;
+    use super::{derive_name, normalize_cmd};
+
+    #[test]
+    fn normalize_cmd_collapses_and_trims_whitespace() {
+        assert_eq!(normalize_cmd("flutter  run"), "flutter run");
+        assert_eq!(normalize_cmd("  flutter run  "), "flutter run");
+        assert_eq!(normalize_cmd("npm\trun   dev"), "npm run dev");
+        assert_eq!(normalize_cmd("flutter run"), "flutter run");
+    }
 
     #[test]
     fn derive_name_handles_runners_and_fallback() {

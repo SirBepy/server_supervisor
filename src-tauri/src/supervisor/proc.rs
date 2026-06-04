@@ -8,6 +8,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 /// Max log lines retained per process (ring buffer).
 const LOG_CAP: usize = 2000;
 
+/// A crash within this window of start counts as dead-on-arrival (never came up).
+const DOA_WINDOW_MS: u64 = 8_000;
+
 pub fn now_ms() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -21,6 +24,10 @@ pub struct ManagedProc {
     pub status: ProcStatus,
     pub pid: Option<u32>,
     pub started_at: Option<u64>,
+    /// When the process last transitioned Running -> Crashed (unix ms). Paired
+    /// with `started_at` to measure crash uptime: a tiny uptime means the launch
+    /// never really came up (dead-on-arrival), e.g. a port-conflict variant.
+    pub crashed_at: Option<u64>,
     child: Option<Child>,
     stdin: Option<ChildStdin>,
     logs: Arc<Mutex<VecDeque<LogLine>>>,
@@ -38,6 +45,7 @@ impl ManagedProc {
             status: ProcStatus::Stopped,
             pid: None,
             started_at: None,
+            crashed_at: None,
             child: None,
             stdin: None,
             logs: Arc::new(Mutex::new(VecDeque::with_capacity(LOG_CAP))),
@@ -49,6 +57,17 @@ impl ManagedProc {
     /// The dynamic port currently held for this run, if any.
     pub fn acquired_port(&self) -> Option<u16> {
         self.acquired_port
+    }
+
+    /// Dead-on-arrival: crashed within `DOA_WINDOW_MS` of starting, i.e. the
+    /// launch never really came up. Used to auto-prune failed `/run` attempts
+    /// while sparing a real server that ran a long time and then crashed.
+    pub fn is_dead_on_arrival(&self) -> bool {
+        matches!(self.status, ProcStatus::Crashed)
+            && match (self.started_at, self.crashed_at) {
+                (Some(s), Some(c)) => c.saturating_sub(s) < DOA_WINDOW_MS,
+                _ => false,
+            }
     }
 
     pub fn info(&self) -> ProcInfo {
@@ -78,6 +97,7 @@ impl ManagedProc {
                 self.status = if status.success() {
                     ProcStatus::Stopped
                 } else {
+                    self.crashed_at = Some(now_ms());
                     ProcStatus::Crashed
                 };
                 self.pid = None;
@@ -170,6 +190,7 @@ impl ManagedProc {
         self.child = Some(child);
         self.pid = Some(pid);
         self.started_at = Some(now_ms());
+        self.crashed_at = None;
         self.status = ProcStatus::Running;
         Ok(pid)
     }
@@ -283,6 +304,53 @@ fn spawn_reader<R: Read + Send + 'static>(
 #[cfg(test)]
 mod tests {
     use super::parse_flutter_app_id;
+    use super::ManagedProc;
+    use crate::types::{ProcKind, ProcSpec, ProcStatus};
+
+    fn test_spec() -> ProcSpec {
+        ProcSpec {
+            id: "proj:cmd".to_string(),
+            project: "proj".to_string(),
+            name: "cmd".to_string(),
+            cmd: "flutter run".to_string(),
+            cwd: ".".to_string(),
+            kind: ProcKind::Flutter,
+            autostart: false,
+            use_dynamic_port: true,
+            env: String::new(),
+        }
+    }
+
+    #[test]
+    fn dead_on_arrival_only_for_young_crashes() {
+        let mut p = ManagedProc::new(test_spec());
+
+        // Never started: not DOA.
+        assert!(!p.is_dead_on_arrival());
+
+        // Crashed 3s after start: DOA.
+        p.status = ProcStatus::Crashed;
+        p.started_at = Some(1_000);
+        p.crashed_at = Some(4_000);
+        assert!(p.is_dead_on_arrival());
+
+        // Crashed 20min after start: a real crash, NOT DOA.
+        p.crashed_at = Some(1_000 + 20 * 60 * 1_000);
+        assert!(!p.is_dead_on_arrival());
+
+        // Running (not crashed): not DOA regardless of timestamps.
+        p.status = ProcStatus::Running;
+        p.crashed_at = Some(4_000);
+        assert!(!p.is_dead_on_arrival());
+
+        // Exactly at the window edge (started_at + DOA_WINDOW_MS): NOT DOA - the
+        // predicate uses strict `<`. Pins the off-by-one so the constant and the
+        // comparison can never silently drift apart.
+        p.status = ProcStatus::Crashed;
+        p.started_at = Some(1_000);
+        p.crashed_at = Some(1_000 + 8_000);
+        assert!(!p.is_dead_on_arrival());
+    }
 
     #[test]
     fn parses_app_started_event() {
