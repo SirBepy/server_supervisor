@@ -16,6 +16,26 @@ pub fn stop_all_procs(sup: State<Arc<Supervisor>>) {
     sup.stop_all();
 }
 
+/// Open a project's root folder in the OS file manager (Windows Explorer).
+#[tauri::command]
+pub fn open_in_explorer(path: String) -> Result<(), String> {
+    #[cfg(windows)]
+    {
+        // explorer.exe opens the folder; it returns quickly and sometimes exits
+        // non-zero even on success, so spawn-and-forget without checking status.
+        std::process::Command::new("explorer")
+            .arg(&path)
+            .spawn()
+            .map(|_| ())
+            .map_err(|e| e.to_string())
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = path;
+        Err("open_in_explorer is only implemented on Windows".to_string())
+    }
+}
+
 #[tauri::command]
 pub fn get_settings(app: AppHandle) -> Settings {
     settings::load(&app)

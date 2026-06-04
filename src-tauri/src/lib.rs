@@ -38,6 +38,7 @@ pub fn run() {
             ipc::commands::start_proc,
             ipc::commands::stop_proc,
             ipc::commands::stop_all_procs,
+            ipc::commands::open_in_explorer,
             ipc::commands::restart_proc,
             ipc::commands::reload_proc,
             ipc::commands::get_proc_logs,

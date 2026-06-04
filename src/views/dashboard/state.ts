@@ -101,6 +101,8 @@ export const ui = {
   filterRunning: false,
   // Project IDs that are currently collapsed.
   collapsed: new Set<string>(),
+  // Project ID whose per-project "more options" (kebab) menu is open, or null.
+  openMenuFor: null as string | null,
 };
 
 // draw() indirection: dashboard.ts owns the top-level render and registers it

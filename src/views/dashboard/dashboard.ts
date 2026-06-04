@@ -23,7 +23,30 @@ export function mountDashboard(el: HTMLElement): () => void {
   // throwing lit-html "ChildPart has no parentNode" every tick and corrupting
   // whatever view replaced it.
   const timer = window.setInterval(() => void refresh(), POLL_MS);
-  return () => window.clearInterval(timer);
+
+  // Close the per-project "more options" menu on any outside click or Escape.
+  // The button + menu both stopPropagation, so any click reaching the document
+  // is outside the open menu.
+  const onDocClick = () => {
+    if (ui.openMenuFor !== null) {
+      ui.openMenuFor = null;
+      draw();
+    }
+  };
+  const onKey = (e: KeyboardEvent) => {
+    if (e.key === "Escape" && ui.openMenuFor !== null) {
+      ui.openMenuFor = null;
+      draw();
+    }
+  };
+  document.addEventListener("click", onDocClick);
+  document.addEventListener("keydown", onKey);
+
+  return () => {
+    window.clearInterval(timer);
+    document.removeEventListener("click", onDocClick);
+    document.removeEventListener("keydown", onKey);
+  };
 }
 
 async function toggleLogs(id: string) {
@@ -162,6 +185,51 @@ function commandRow(project: Project, cmd: Project["commands"][number]): Templat
   `;
 }
 
+// Per-project "more options" (kebab) button + its popover menu. Replaces the
+// old per-project + button: hover-reveals with .group-actions, and on click
+// opens a small anchored menu (Add command / Open in file explorer).
+function moreMenu(project: Project): TemplateResult {
+  const open = ui.openMenuFor === project.id;
+  return html`
+    <div class="group-actions ${open ? "menu-open" : ""}">
+      <button
+        class="more-btn ${open ? "active" : ""}"
+        title="More options"
+        @click=${(e: Event) => {
+          e.stopPropagation();
+          ui.openMenuFor = open ? null : project.id;
+          draw();
+        }}
+      >
+        <i class="ph ph-dots-three-vertical"></i>
+      </button>
+      ${open
+        ? html`
+            <div class="more-menu" @click=${(e: Event) => e.stopPropagation()}>
+              <button
+                @click=${() => {
+                  ui.openMenuFor = null;
+                  void startAddCommand(project.id, project.root);
+                }}
+              >
+                <i class="ph ph-plus"></i> Add command
+              </button>
+              <button
+                @click=${() => {
+                  ui.openMenuFor = null;
+                  void ipc.openInExplorer(project.root);
+                  draw();
+                }}
+              >
+                <i class="ph ph-folder-open"></i> Open in file explorer
+              </button>
+            </div>
+          `
+        : nothing}
+    </div>
+  `;
+}
+
 function projectSection(project: Project): TemplateResult | typeof nothing {
   const count = runningCount(project);
   if (ui.filterRunning && count === 0) return nothing;
@@ -179,26 +247,11 @@ function projectSection(project: Project): TemplateResult | typeof nothing {
         <i class="ph ph-caret-right group-chevron ${collapsed ? "" : "open"}"></i>
         <div class="titles">
           <h2>${project.name}</h2>
-          <span class="root">${project.root}</span>
         </div>
         ${count > 0
           ? html`<span class="run-count"><span class="run-dot"></span>${count}</span>`
           : nothing}
-        ${!ui.filterRunning
-          ? html`
-              <div class="group-actions">
-                <button
-                  title="Add command"
-                  @click=${(e: Event) => {
-                    e.stopPropagation();
-                    void startAddCommand(project.id, project.root);
-                  }}
-                >
-                  <i class="ph ph-plus"></i>
-                </button>
-              </div>
-            `
-          : nothing}
+        ${!ui.filterRunning ? moreMenu(project) : nothing}
       </div>
       ${collapsed
         ? nothing
