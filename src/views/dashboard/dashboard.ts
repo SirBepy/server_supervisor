@@ -33,6 +33,8 @@ async function toggleLogs(id: string) {
   } else {
     ui.openLogsFor = id;
     ui.logText = (await ipc.getProcLogs(id)).map((l) => l.text).join("\n");
+    // Newly opened: start at the newest line.
+    ui.scrollLogsToBottom = true;
   }
   draw();
 }
@@ -244,4 +246,14 @@ function draw() {
     `,
     ui.root,
   );
+
+  // Post-render: if this draw was flagged to pin the log pane (open, or new
+  // lines while already at the bottom), scroll it to the newest line. lit-html
+  // reuses the <pre> node across renders, so a scrolled-up reader's position is
+  // preserved on the draws that do NOT set this flag.
+  if (ui.scrollLogsToBottom) {
+    const logsEl = ui.root.querySelector<HTMLElement>(".logs");
+    if (logsEl) logsEl.scrollTop = logsEl.scrollHeight;
+    ui.scrollLogsToBottom = false;
+  }
 }
