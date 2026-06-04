@@ -1,19 +1,19 @@
 use crate::ports::{PortEntry, PortRegistry};
 use crate::settings::{self, Settings};
-use crate::state::AppState;
 use crate::supervisor::validate::CommandCheck;
 use crate::supervisor::{detect, validate, Supervisor};
 use crate::types::{Command, DetectedCommand, LogLine, ProcInfo, Project};
-use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use tauri::{AppHandle, Manager, State};
 
 #[tauri::command]
 pub fn quit_app(app: AppHandle) {
-    if let Some(s) = app.try_state::<AppState>() {
-        s.should_quit.store(true, Ordering::SeqCst);
-    }
-    app.exit(0);
+    crate::tray::request_quit(&app);
+}
+
+#[tauri::command]
+pub fn stop_all_procs(sup: State<Arc<Supervisor>>) {
+    sup.stop_all();
 }
 
 #[tauri::command]
