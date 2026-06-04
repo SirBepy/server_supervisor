@@ -36,6 +36,11 @@ pub struct ManagedProc {
     /// Dynamic port handed out by the registry for the current run, if any.
     /// The Supervisor reads this on stop to release it back to the registry.
     acquired_port: Option<u16>,
+    /// True when this proc was re-adopted from a prior app instance: it has a
+    /// live PID but no Child handle and no stdio pipes (logs are frozen until
+    /// the user restarts it). `refresh` polls the OS for its liveness instead
+    /// of `try_wait`.
+    adopted: bool,
 }
 
 impl ManagedProc {
@@ -51,6 +56,7 @@ impl ManagedProc {
             logs: Arc::new(Mutex::new(VecDeque::with_capacity(LOG_CAP))),
             app_id: Arc::new(Mutex::new(None)),
             acquired_port: None,
+            adopted: false,
         }
     }
 
@@ -68,6 +74,26 @@ impl ManagedProc {
                 (Some(s), Some(c)) => c.saturating_sub(s) < DOA_WINDOW_MS,
                 _ => false,
             }
+    }
+
+    pub fn is_adopted(&self) -> bool {
+        self.adopted
+    }
+
+    /// Re-attach to a process from a prior app instance. We have only its PID
+    /// (no Child, no pipes), so mark it Running+adopted, restore start time and
+    /// port, and push one line explaining the frozen log pane.
+    pub fn adopt(&mut self, pid: u32, started_at: u64, port: Option<u16>) {
+        self.status = ProcStatus::Running;
+        self.pid = Some(pid);
+        self.started_at = Some(started_at);
+        self.crashed_at = None;
+        self.acquired_port = port;
+        self.adopted = true;
+        self.push_log(
+            "stdout",
+            "[supervisor] re-adopted after restart - live logs paused until you restart this process".to_string(),
+        );
     }
 
     pub fn info(&self) -> ProcInfo {
@@ -103,6 +129,20 @@ impl ManagedProc {
                 self.pid = None;
                 self.child = None;
                 self.stdin = None;
+            }
+            return;
+        }
+        // Adopted: no Child to wait on. Poll the OS - if the wrapper PID is gone,
+        // the process ended on its own; we can't know the exit code, so mark it
+        // Stopped (neutral) and drop adoption.
+        if self.adopted {
+            if let Some(pid) = self.pid {
+                if !super::reaper::pid_is_our_wrapper(pid) {
+                    self.status = ProcStatus::Stopped;
+                    self.pid = None;
+                    self.adopted = false;
+                    self.push_log("stdout", "[supervisor] re-adopted process exited".to_string());
+                }
             }
         }
     }
@@ -185,6 +225,7 @@ impl ManagedProc {
         }
         self.stdin = child.stdin.take();
         self.acquired_port = dynamic_port;
+        self.adopted = false; // a real Child supersedes any prior adoption
 
         self.push_log("stdout", format!("[supervisor] started: {cmd_str}"));
         self.child = Some(child);
@@ -350,6 +391,35 @@ mod tests {
         p.started_at = Some(1_000);
         p.crashed_at = Some(1_000 + 8_000);
         assert!(!p.is_dead_on_arrival());
+    }
+
+    #[test]
+    fn adopt_marks_running_without_a_child() {
+        let mut p = ManagedProc::new(test_spec());
+        p.adopt(4321, 1_000, Some(42013));
+        assert_eq!(p.status, ProcStatus::Running);
+        assert_eq!(p.pid, Some(4321));
+        assert_eq!(p.started_at, Some(1_000));
+        assert_eq!(p.acquired_port(), Some(42013));
+        assert!(p.is_adopted());
+        // Adopted with no child handle: is_dead_on_arrival must stay false
+        // (it only fires on a Crashed status, which adopt never sets).
+        assert!(!p.is_dead_on_arrival());
+    }
+
+    #[test]
+    fn restart_clears_adoption() {
+        // A re-adopted proc that is later restarted owns a real Child, so the
+        // adopted flag must clear. start() spawns `cmd`, so drive it through a
+        // command that exits immediately and assert the flag flipped.
+        let mut spec = test_spec();
+        spec.cmd = "cmd /C exit 0".to_string(); // trivial, exits instantly
+        spec.kind = ProcKind::Generic;
+        let mut p = ManagedProc::new(spec);
+        p.adopt(4321, 1_000, None);
+        assert!(p.is_adopted());
+        let _ = p.start(None); // real spawn -> sets a Child, must clear adopted
+        assert!(!p.is_adopted(), "start() must supersede adoption");
     }
 
     #[test]

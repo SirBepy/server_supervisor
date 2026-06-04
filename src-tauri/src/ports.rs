@@ -99,6 +99,12 @@ impl PortRegistry {
         self.acquired.lock().unwrap().remove(&port);
     }
 
+    /// Mark a port as in-use without going through `acquire` - used to restore a
+    /// re-adopted process's dynamic port so it is not handed out again.
+    pub fn mark_acquired(&self, port: u16) {
+        self.acquired.lock().unwrap().insert(port);
+    }
+
     fn taken_set(&self) -> std::collections::HashSet<u16> {
         let mut set: std::collections::HashSet<u16> =
             self.reserved.lock().unwrap().iter().map(|e| e.port).collect();
@@ -207,6 +213,17 @@ mod tests {
         // survives reload
         let reg2 = PortRegistry::new(dir.path().to_path_buf());
         assert!(reg2.list().iter().any(|e| e.owner == "always-on-app"));
+    }
+
+    #[test]
+    fn mark_acquired_makes_port_taken() {
+        let dir = tempfile::tempdir().unwrap();
+        let reg = PortRegistry::new(dir.path().to_path_buf());
+        // BASE (42000) is what acquire() would normally hand out first. Mark it,
+        // then acquire MUST skip it - proving the mark actually took effect.
+        reg.mark_acquired(BASE);
+        let got = reg.acquire().unwrap();
+        assert_ne!(got, BASE, "acquire must skip a marked port");
     }
 
     #[test]

@@ -1,5 +1,8 @@
-//! Windows orphan-reaping: persist running PIDs to `pids.json`, kill process
-//! trees on stop/quit, and reconcile leftover PIDs from a prior crash on startup.
+//! Windows process tracking: persist running PIDs to `pids.json` and kill
+//! process trees on stop / explicit stop-and-quit. Leftover PIDs from a prior
+//! session are NOT reaped on startup - the Supervisor re-adopts the still-alive
+//! ones instead (see `Supervisor::readopt_orphans`); this module just provides
+//! the PID read/write + liveness helpers it uses.
 
 use serde::{Deserialize, Serialize};
 use std::path::Path;
@@ -11,6 +14,10 @@ pub struct PidEntry {
     pub id: String,
     pub pid: u32,
     pub started_at: u64,
+    /// Dynamic port held by this run, restored on re-adopt. `None` for commands
+    /// without a dynamic port. `#[serde(default)]` keeps pre-port files loadable.
+    #[serde(default)]
+    pub port: Option<u16>,
 }
 
 fn pids_path(data_dir: &Path) -> std::path::PathBuf {
@@ -23,25 +30,11 @@ pub fn write_pids(data_dir: &Path, entries: &[PidEntry]) {
     }
 }
 
-fn read_pids(data_dir: &Path) -> Vec<PidEntry> {
+pub(super) fn read_pids(data_dir: &Path) -> Vec<PidEntry> {
     std::fs::read_to_string(pids_path(data_dir))
         .ok()
         .and_then(|t| serde_json::from_str(&t).ok())
         .unwrap_or_default()
-}
-
-/// On startup, kill any tracked PID that survived a prior crash. Guards against
-/// PID reuse by confirming the PID is still a `cmd.exe` (our wrapper) before killing.
-pub fn reconcile(data_dir: &Path) {
-    let entries = read_pids(data_dir);
-    for e in &entries {
-        if pid_is_our_wrapper(e.pid) {
-            log::warn!("supervisor: reaping orphan from prior session id={} pid={}", e.id, e.pid);
-            kill_tree(e.pid);
-        }
-    }
-    // Clear the file; the current session re-populates it as it starts processes.
-    let _ = std::fs::remove_file(pids_path(data_dir));
 }
 
 #[cfg(windows)]
@@ -63,7 +56,7 @@ pub fn kill_tree(pid: u32) {
 }
 
 #[cfg(windows)]
-fn pid_is_our_wrapper(pid: u32) -> bool {
+pub(super) fn pid_is_our_wrapper(pid: u32) -> bool {
     use std::os::windows::process::CommandExt;
     const CREATE_NO_WINDOW: u32 = 0x0800_0000;
     let out = std::process::Command::new("tasklist")
@@ -83,7 +76,7 @@ fn pid_is_our_wrapper(pid: u32) -> bool {
 }
 
 #[cfg(not(windows))]
-fn pid_is_our_wrapper(_pid: u32) -> bool {
+pub(super) fn pid_is_our_wrapper(_pid: u32) -> bool {
     false
 }
 
@@ -118,4 +111,23 @@ pub fn port_holder(port: u16) -> Option<String> {
 #[cfg(not(windows))]
 pub fn port_holder(_port: u16) -> Option<String> {
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::PidEntry;
+
+    #[test]
+    fn pid_entry_round_trips_with_optional_port() {
+        let e = PidEntry { id: "p:c".into(), pid: 1234, started_at: 99, port: Some(42013) };
+        let json = serde_json::to_string(&e).unwrap();
+        let back: PidEntry = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.port, Some(42013));
+        assert_eq!(back.id, "p:c");
+
+        // Legacy file (pre-port) must still deserialize - port defaults to None.
+        let legacy = r#"{"id":"p:c","pid":1234,"started_at":99}"#;
+        let back: PidEntry = serde_json::from_str(legacy).unwrap();
+        assert_eq!(back.port, None);
+    }
 }

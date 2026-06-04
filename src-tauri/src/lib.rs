@@ -70,7 +70,7 @@ pub fn run() {
             let ports = std::sync::Arc::new(ports::PortRegistry::new(data_dir.clone()));
             let supervisor =
                 std::sync::Arc::new(supervisor::Supervisor::new(data_dir.clone(), ports.clone()));
-            supervisor.reconcile_orphans();
+            supervisor.readopt_orphans();
             supervisor.start_autostart();
 
             // Localhost API for programmatic (AI agent) control.
@@ -113,9 +113,18 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(|app, event| {
-            // Single-owner guarantee: on real exit, kill every child we started.
+            // Single-owner doctrine (revised): on real exit, kill children ONLY
+            // if an explicit "stop all & quit" set kill_on_exit. Otherwise leave
+            // them running to be re-adopted next launch (survives self-update).
+            // pids.json is already current (persist_pids runs on every start/stop).
             if let tauri::RunEvent::ExitRequested { .. } = event {
-                supervisor::shutdown_all(app);
+                let kill = app
+                    .try_state::<AppState>()
+                    .map(|s| s.kill_on_exit.load(Ordering::SeqCst))
+                    .unwrap_or(false);
+                if kill {
+                    supervisor::shutdown_all(app);
+                }
             }
         });
 }

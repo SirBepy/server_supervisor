@@ -37,8 +37,46 @@ impl Supervisor {
         }
     }
 
-    pub fn reconcile_orphans(&self) {
-        reaper::reconcile(&self.data_dir);
+    /// On startup, re-adopt processes that survived a prior app instance instead
+    /// of killing them. For each persisted PID still alive as our `cmd.exe`
+    /// wrapper whose command still exists in config, mark its ManagedProc Running
+    /// (adopted) and restore its port. Dead or unknown PIDs are skipped (left
+    /// Stopped). Then rewrite pids.json to reflect what we actually adopted.
+    pub fn readopt_orphans(&self) {
+        let entries = reaper::read_pids(&self.data_dir);
+        {
+            let mut map = self.procs.lock().unwrap();
+            for e in &entries {
+                if !reaper::pid_is_our_wrapper(e.pid) {
+                    continue; // dead, or PID reused by something else
+                }
+                if let Some(proc) = map.get_mut(&e.id) {
+                    proc.adopt(e.pid, e.started_at, e.port);
+                    if let Some(port) = e.port {
+                        self.ports.mark_acquired(port);
+                    }
+                    log::info!("supervisor: re-adopted {} pid={}", e.id, e.pid);
+                }
+            }
+        }
+        // Rewrite pids.json from the live (now-adopted) set.
+        self.persist_pids();
+    }
+
+    /// Stop every running process but keep the app alive (tray "Close Processes").
+    /// Distinct from `shutdown_all`, which is the kill-then-exit path.
+    pub fn stop_all(&self) {
+        let ids: Vec<String> = {
+            let guard = self.procs.lock().unwrap();
+            guard
+                .iter()
+                .filter(|(_, p)| p.pid.is_some())
+                .map(|(id, _)| id.clone())
+                .collect()
+        };
+        for id in ids {
+            let _ = self.stop(&id);
+        }
     }
 
     pub fn start_autostart(&self) {
@@ -219,6 +257,7 @@ impl Supervisor {
                         id: p.spec.id.clone(),
                         pid,
                         started_at: p.started_at.unwrap_or(0),
+                        port: p.acquired_port(),
                     })
                 })
                 .collect()
