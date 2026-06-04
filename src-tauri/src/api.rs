@@ -16,7 +16,7 @@ use axum::{
     http::{header, HeaderMap, StatusCode},
     middleware::{self, Next},
     response::{IntoResponse, Response},
-    routing::{get, patch, post},
+    routing::{delete, get, patch, post},
     Json, Router,
 };
 use serde::Deserialize;
@@ -132,6 +132,7 @@ pub fn router(sup: Arc<Supervisor>, ports: Arc<PortRegistry>, token: String, ai_
         .route("/procs/:id/restart", post(restart_proc))
         .route("/procs/:id/reload", post(reload_proc))
         .route("/procs/:id/logs", get(get_logs))
+        .route("/procs/:id", delete(delete_proc))
         .route("/ports", get(list_ports))
         .route("/ports/reserve", post(reserve_port))
         .route("/run", post(run))
@@ -310,6 +311,21 @@ async fn remove_command(
     unit_result(s.sup.remove_command(&project_id, &command_id))
 }
 
+/// Split a composite proc id (`project:command`) into its parts. `slug` never
+/// emits `:`, so the first `:` is the project/command boundary. None if absent.
+fn split_proc_id(id: &str) -> Option<(&str, &str)> {
+    id.split_once(':')
+}
+
+async fn delete_proc(State(s): State<ApiState>, Path(id): Path<String>) -> Response {
+    match split_proc_id(&id) {
+        Some((project_id, command_id)) => {
+            unit_result(s.sup.remove_command(project_id, command_id))
+        }
+        None => (StatusCode::BAD_REQUEST, format!("malformed process id: {id}")).into_response(),
+    }
+}
+
 fn unit_result(r: Result<(), String>) -> Response {
     match r {
         Ok(()) => StatusCode::OK.into_response(),
@@ -359,5 +375,16 @@ mod tests {
             probed_port, occupied_port,
             "bind_probe must probe past an occupied preferred port"
         );
+    }
+
+    #[test]
+    fn split_proc_id_splits_on_first_colon() {
+        assert_eq!(super::split_proc_id("proj:cmd"), Some(("proj", "cmd")));
+        // Command slugs never contain ':', but be explicit: split on the FIRST.
+        assert_eq!(
+            super::split_proc_id("proj:cmd:weird"),
+            Some(("proj", "cmd:weird"))
+        );
+        assert_eq!(super::split_proc_id("nocolon"), None);
     }
 }
