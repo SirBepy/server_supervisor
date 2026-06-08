@@ -6,7 +6,7 @@ import { html, render, nothing, type TemplateResult } from "lit-html";
 import "./dashboard.css";
 import * as ipc from "../../shared/ipc";
 import type { Project } from "../../types/ipc.generated";
-import { ui, setDraw, refresh, act } from "./state";
+import { ui, setDraw, refresh, act, draw } from "./state";
 import { formatBytes, displayName } from "./helpers";
 import { modalView, startAddCommand } from "./modals";
 import { startAddProject } from "./add-project";
@@ -101,6 +101,21 @@ function dot(id: string): TemplateResult {
   return html`<span class="dot ${status}" title=${status}></span>`;
 }
 
+// Copy the local URL for a running command's port to the clipboard, with a
+// brief "copied" flash on the badge. Always http: these are localhost dev
+// servers (and the flutter reload proxy), never https.
+function copyPortUrl(id: string, port: number) {
+  void navigator.clipboard?.writeText(`http://localhost:${port}`);
+  ui.copiedPortId = id;
+  draw();
+  window.setTimeout(() => {
+    if (ui.copiedPortId === id) {
+      ui.copiedPortId = null;
+      draw();
+    }
+  }, 1200);
+}
+
 function commandRow(project: Project, cmd: Project["commands"][number]): TemplateResult {
   const id = `${project.id}:${cmd.id}`;
   const running = ui.statusById[id]?.status === "running";
@@ -120,7 +135,15 @@ function commandRow(project: Project, cmd: Project["commands"][number]): Templat
             : ui.statusById[id]?.status && ui.statusById[id].status !== "stopped"
               ? html`<span class="pid">${ui.statusById[id].status}</span>`
               : nothing}
-          ${port != null ? html`<span class="port">port ${port}</span>` : nothing}
+          ${port != null
+            ? html`<button
+                class="port ${ui.copiedPortId === id ? "copied" : ""}"
+                title="Copy http://localhost:${port}"
+                @click=${() => copyPortUrl(id, port)}
+              >
+                ${ui.copiedPortId === id ? "copied!" : html`port ${port}`}
+              </button>`
+            : nothing}
           ${running && mem != null
             ? html`<span class="ram" title="resident memory (whole process tree)">${formatBytes(mem)}</span>`
             : nothing}

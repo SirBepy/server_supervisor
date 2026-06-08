@@ -107,6 +107,9 @@ export const ui = {
   collapsed: new Set<string>(),
   // Project ID whose per-project "more options" (kebab) menu is open, or null.
   openMenuFor: null as string | null,
+  // Command id whose port badge was just click-copied, for transient "copied"
+  // feedback; cleared on a short timer. Null when no badge is flashing.
+  copiedPortId: null as string | null,
 };
 
 // draw() indirection: dashboard.ts owns the top-level render and registers it

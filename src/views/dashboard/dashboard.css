@@ -273,6 +273,26 @@
   font-size: 12px;
 }
 
+/* The port badge is a button (click to copy its localhost URL) but should read
+   as the same inline muted text as its sibling badges: strip the button chrome,
+   add only a pointer + a hover hint that it is actionable. */
+button.port {
+  font-family: inherit;
+  border: 0;
+  background: none;
+  padding: 0;
+  cursor: pointer;
+}
+
+button.port:hover {
+  color: var(--fg);
+  text-decoration: underline;
+}
+
+button.port.copied {
+  color: var(--accent);
+}
+
 /* RAM badge: tabular figures so the value doesn't jitter width as it updates. */
 .ram {
   font-variant-numeric: tabular-nums;
