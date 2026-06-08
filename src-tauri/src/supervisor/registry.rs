@@ -79,6 +79,38 @@ impl Supervisor {
         }
     }
 
+    /// Backend reconcile pass, meant to run on a timer rather than only when
+    /// `list()` is called from the UI/API. When the window is hidden to the tray
+    /// and nothing polls, nothing else refreshes the procs - so a crashed child
+    /// would keep a stale Running status, its dynamic port would leak in the
+    /// registry, and pids.json would name a dead PID the next launch might wrongly
+    /// re-adopt. This refreshes every proc, releases the port of any that just
+    /// transitioned out of running on its own, and rewrites pids.json.
+    pub fn reap_tick(&self) {
+        let released: Vec<u16> = {
+            let mut guard = self.procs.lock().unwrap();
+            let mut released = Vec::new();
+            for p in guard.values_mut() {
+                // Holding a pid before refresh but not after means the child
+                // ended on its own (crash or self-exit). A user-initiated stop
+                // already cleared the pid earlier, so it won't be seen here -
+                // its port was released on the stop path.
+                let had_pid = p.pid.is_some();
+                p.refresh();
+                if had_pid && p.pid.is_none() {
+                    if let Some(port) = p.acquired_port() {
+                        released.push(port);
+                    }
+                }
+            }
+            released
+        };
+        for port in released {
+            self.ports.release(port);
+        }
+        self.persist_pids();
+    }
+
     pub fn start_autostart(&self) {
         let ids: Vec<String> = {
             let guard = self.procs.lock().unwrap();
@@ -263,6 +295,57 @@ impl Supervisor {
                 .collect()
         };
         reaper::write_pids(&self.data_dir, &entries);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::types::{ProcKind, ProcSpec};
+
+    fn fast_exit_spec(id: &str) -> ProcSpec {
+        ProcSpec {
+            id: id.to_string(),
+            project: "p".to_string(),
+            name: "c".to_string(),
+            cmd: "cmd /C exit 0".to_string(), // trivial child, exits instantly
+            cwd: ".".to_string(),
+            kind: ProcKind::Generic,
+            autostart: false,
+            use_dynamic_port: false,
+            env: String::new(),
+        }
+    }
+
+    #[test]
+    fn reap_tick_notices_self_exited_child_without_a_list_call() {
+        let dir = tempfile::tempdir().unwrap();
+        let ports = Arc::new(PortRegistry::new(dir.path().to_path_buf()));
+        let sup = Supervisor::new(dir.path().to_path_buf(), ports);
+
+        // Start a process that exits on its own, bypassing list()/the UI poll.
+        {
+            let mut map = sup.procs.lock().unwrap();
+            let mut p = ManagedProc::new(fast_exit_spec("p:c"));
+            p.start(None).unwrap();
+            assert!(p.pid.is_some(), "freshly started proc has a pid");
+            map.insert("p:c".to_string(), p);
+        }
+        std::thread::sleep(std::time::Duration::from_millis(400)); // let it exit
+
+        // reap_tick is the ONLY refresh here - nothing calls list().
+        sup.reap_tick();
+
+        {
+            let map = sup.procs.lock().unwrap();
+            assert!(
+                map.get("p:c").unwrap().pid.is_none(),
+                "reap_tick must notice the exit and clear the pid"
+            );
+        }
+        // pids.json must not keep the dead proc's PID around to be re-adopted.
+        let pids = std::fs::read_to_string(dir.path().join("pids.json")).unwrap_or_default();
+        assert!(!pids.contains("p:c"), "stale pid must be pruned from pids.json");
     }
 }
 

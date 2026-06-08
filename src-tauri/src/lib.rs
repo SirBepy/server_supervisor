@@ -76,6 +76,18 @@ pub fn run() {
             supervisor.readopt_orphans();
             supervisor.start_autostart();
 
+            // Backend crash-detection timer. list() is the only thing that
+            // refreshes proc state + releases ports, but it only runs on a UI/API
+            // poll - so with the window hidden to the tray and nothing polling, a
+            // crashed child goes unnoticed, its port leaks, and pids.json keeps a
+            // stale PID. A plain std thread (not the async runtime) keeps the
+            // blocking liveness probes off the tokio executor.
+            let reap_sup = supervisor.clone();
+            std::thread::spawn(move || loop {
+                std::thread::sleep(std::time::Duration::from_secs(3));
+                reap_sup.reap_tick();
+            });
+
             // Localhost API for programmatic (AI agent) control.
             let port = settings::load(&handle).api_port;
             let token = api::ensure_token(&data_dir);
