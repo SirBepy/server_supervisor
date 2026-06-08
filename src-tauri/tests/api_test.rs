@@ -15,6 +15,10 @@ fn write_procs(dir: &std::path::Path) {
 }
 
 async fn spawn_api(token: &str, dir: &std::path::Path) -> String {
+    // reqwest 0.13's Client::new() requires a rustls crypto provider be installed
+    // (the connector is compiled in via feature unification). Every test builds a
+    // client after this call, so installing here covers them all.
+    server_supervisor_lib::supervisor::proxy::ensure_crypto_provider();
     let ports = Arc::new(PortRegistry::new(dir.to_path_buf()));
     let sup = Arc::new(Supervisor::new(dir.to_path_buf(), ports.clone()));
     let app = api::router(sup, ports, token.to_string(), None);

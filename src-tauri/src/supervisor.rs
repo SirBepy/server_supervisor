@@ -3,6 +3,7 @@ pub mod crud;
 pub mod detect;
 pub mod mem;
 pub mod proc;
+pub mod proxy;
 pub mod reaper;
 pub mod registry;
 pub mod spawn_env;

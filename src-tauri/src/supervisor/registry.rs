@@ -96,9 +96,16 @@ impl Supervisor {
                 // already cleared the pid earlier, so it won't be seen here -
                 // its port was released on the stop path.
                 let had_pid = p.pid.is_some();
+                // Capture the internal port before refresh; a crash clears the
+                // child but refresh does NOT touch internal_port, so this is a
+                // belt-and-braces snapshot.
+                let internal = p.internal_port();
                 p.refresh();
                 if had_pid && p.pid.is_none() {
                     if let Some(port) = p.acquired_port() {
+                        released.push(port);
+                    }
+                    if let Some(port) = internal {
                         released.push(port);
                     }
                 }
@@ -153,29 +160,72 @@ impl Supervisor {
     }
 
     pub fn start(&self, id: &str) -> Result<(), String> {
+        // No-op guard: a start on an already Running/Starting proc must acquire
+        // NOTHING, mirroring ManagedProc::start's own early return. Without this,
+        // we would acquire ports below that ManagedProc::start then ignores (its
+        // guard returns before using them), and the cleanup path only releases on
+        // error - permanently leaking 1 port (generic) or 2 (proxied flutter) per
+        // redundant start. Check status under the same procs lock used for lookup,
+        // and return early BEFORE any acquire so the acquired set is unchanged.
+        let (want_dynamic, wants_proxy) = {
+            let mut guard = self.procs.lock().unwrap();
+            let p = guard
+                .get_mut(id)
+                .ok_or_else(|| format!("unknown process id: {id}"))?;
+            // Refresh first so a since-crashed proc is seen as not-Running (mirrors
+            // ManagedProc::start, which refreshes before its own Running guard).
+            p.refresh();
+            if matches!(
+                p.status,
+                crate::types::ProcStatus::Running | crate::types::ProcStatus::Starting
+            ) {
+                return Ok(()); // already up: zero net port acquires
+            }
+            (p.spec.use_dynamic_port, p.wants_proxy())
+        };
         // Acquire a probed, free port if this command opts in (before locking
         // procs, since acquire does OS work; reserve-before-spawn prevents races).
-        let want_dynamic = {
-            let guard = self.procs.lock().unwrap();
-            guard
-                .get(id)
-                .map(|p| p.spec.use_dynamic_port)
-                .unwrap_or(false)
-        };
+        // `port` is the port the child binds (`{PORT}`/PORT env). `public` is the
+        // port the dashboard advertises. For a normal proc they are the same. For
+        // a proxied flutter web-server, the child binds a fresh INTERNAL port and
+        // the live-reload proxy fronts it on the public dynamic port - so we keep
+        // the original dynamic port as the proxy's public port and acquire a
+        // second ephemeral port for flutter itself.
         let port = if want_dynamic {
             Some(self.acquire_free_port(id)?)
         } else {
             None
         };
+        let proxy_public = if wants_proxy && want_dynamic {
+            // Re-route: the originally-acquired `port` becomes the PUBLIC port; a
+            // fresh internal port is what the child binds.
+            let public = port;
+            let internal = match self.acquire_free_port(id) {
+                Ok(p) => p,
+                Err(e) => {
+                    if let Some(p) = public {
+                        self.ports.release(p);
+                    }
+                    return Err(e);
+                }
+            };
+            (public, Some(internal)) // (public_for_proxy, internal_for_child)
+        } else {
+            (None, port) // no proxy: child binds `port`, nothing fronts it
+        };
+        let (public_port, child_port) = proxy_public;
         let res = {
             let mut guard = self.procs.lock().unwrap();
             let p = guard
                 .get_mut(id)
                 .ok_or_else(|| format!("unknown process id: {id}"))?;
-            p.start(port).map_err(|e| e.to_string())
+            p.start(child_port, public_port).map_err(|e| e.to_string())
         };
         if res.is_err() {
-            if let Some(p) = port {
+            if let Some(p) = child_port {
+                self.ports.release(p);
+            }
+            if let Some(p) = public_port {
                 self.ports.release(p);
             }
         }
@@ -187,7 +237,7 @@ impl Supervisor {
         // EADDRINUSE in its logs, release that port and respawn once on a fresh
         // acquire. This blocks `start` ~1500ms for dynamic-port commands only;
         // start is user/AI-initiated (not a hot path), so that's acceptable.
-        if let Some(p_port) = port {
+        if let Some(p_port) = child_port {
             std::thread::sleep(std::time::Duration::from_millis(1500));
             let crashed_addrinuse = {
                 let mut guard = self.procs.lock().unwrap();
@@ -203,19 +253,25 @@ impl Supervisor {
                 }
             };
             if crashed_addrinuse {
+                // Only the child (internal) port conflicted; the public proxy port
+                // is kept and reused. Release the dead child port, acquire a fresh
+                // one, and respawn with the same public port.
                 self.ports.release(p_port);
                 log::warn!("supervisor: {id} hit EADDRINUSE on {p_port}, retrying once");
                 let retry = self.acquire_free_port(id)?;
                 let retry_res = {
                     let mut guard = self.procs.lock().unwrap();
                     if let Some(proc) = guard.get_mut(id) {
-                        proc.start(Some(retry)).map_err(|e| e.to_string())
+                        proc.start(Some(retry), public_port).map_err(|e| e.to_string())
                     } else {
                         Ok(0)
                     }
                 };
                 if retry_res.is_err() {
                     self.ports.release(retry);
+                    if let Some(pp) = public_port {
+                        self.ports.release(pp);
+                    }
                 }
                 retry_res?;
             }
@@ -227,15 +283,25 @@ impl Supervisor {
 
     pub fn stop(&self, id: &str) -> Result<(), String> {
         let released;
+        let released_internal;
         {
             let mut guard = self.procs.lock().unwrap();
             let p = guard
                 .get_mut(id)
                 .ok_or_else(|| format!("unknown process id: {id}"))?;
+            // Capture both ports BEFORE stop() clears them. `acquired_port` is the
+            // public port (proxy port when proxied); `internal_port` is the extra
+            // ephemeral port the child bound behind the proxy, Some only then.
             released = p.acquired_port();
+            released_internal = p.internal_port();
             p.stop();
         }
         if let Some(port) = released {
+            self.ports.release(port);
+        }
+        // Release the internal port too. It is always distinct from the public
+        // port (separate acquire), so no double-release risk.
+        if let Some(port) = released_internal {
             self.ports.release(port);
         }
         self.persist_pids();
@@ -340,6 +406,49 @@ mod tests {
     }
 
     #[test]
+    fn redundant_start_on_running_proc_acquires_no_port() {
+        // Fix 1: a start() on an already-Running, dynamic-port proc must acquire
+        // ZERO ports. Previously start() acquired (and for a proxy, double-
+        // acquired) before ManagedProc::start's own Running guard returned without
+        // using them, and cleanup only released on error - leaking the port(s).
+        let dir = tempfile::tempdir().unwrap();
+        let ports = Arc::new(PortRegistry::new(dir.path().to_path_buf()));
+        let sup = Supervisor::new(dir.path().to_path_buf(), Arc::clone(&ports));
+
+        // Insert a proc whose status is Running but that owns no Child and is not
+        // adopted: refresh() is a no-op on such a proc (the Child branch is skipped
+        // and the adopted branch is skipped), so it stays Running through the
+        // guard's refresh - standing in for a genuinely-running proc without
+        // spawning a long-lived child. use_dynamic_port=true so the OLD code would
+        // have acquired (and leaked) a port on each redundant start.
+        {
+            let mut map = sup.procs.lock().unwrap();
+            let mut spec = fast_exit_spec("p:c");
+            spec.use_dynamic_port = true;
+            let mut p = ManagedProc::new(spec);
+            p.status = crate::types::ProcStatus::Running;
+            map.insert("p:c".to_string(), p);
+        }
+
+        // Probe the next port acquire() would hand out, then release it: this is
+        // the canary. If start() leaks a port, this canary will no longer be free.
+        let canary = ports.acquire().unwrap();
+        ports.release(canary);
+
+        // Redundant starts on the already-Running proc.
+        sup.start("p:c").unwrap();
+        sup.start("p:c").unwrap();
+
+        // The same canary port must still be the next one handed out: zero net
+        // acquires happened across both redundant starts.
+        let after = ports.acquire().unwrap();
+        assert_eq!(
+            after, canary,
+            "redundant start on a Running proc must acquire no port"
+        );
+    }
+
+    #[test]
     fn reap_tick_notices_self_exited_child_without_a_list_call() {
         let dir = tempfile::tempdir().unwrap();
         let ports = Arc::new(PortRegistry::new(dir.path().to_path_buf()));
@@ -349,7 +458,7 @@ mod tests {
         {
             let mut map = sup.procs.lock().unwrap();
             let mut p = ManagedProc::new(fast_exit_spec("p:c"));
-            p.start(None).unwrap();
+            p.start(None, None).unwrap();
             assert!(p.pid.is_some(), "freshly started proc has a pid");
             map.insert("p:c".to_string(), p);
         }

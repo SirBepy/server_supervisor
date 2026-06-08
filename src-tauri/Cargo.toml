@@ -21,7 +21,16 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 log = "0.4"
 tokio = { version = "1", features = ["full"] }
+tokio-stream = { version = "0.1", features = ["sync"] }
 axum = "0.7"
+# Reverse-proxy client for the per-flutter-web live-reload proxy. The target is
+# plain http://127.0.0.1 only; bodies are buffered (no `stream`). We request no
+# TLS, but feature unification with tauri-plugin-updater (which also pulls
+# reqwest 0.13) compiles the rustls connector in regardless, so reqwest 0.13's
+# `Client::new()` panics unless a rustls crypto provider is installed first - we
+# install the ring provider once in proxy::spawn before building the client.
+reqwest = { version = "0.13.4", default-features = false }
+rustls = { version = "0.23", default-features = false, features = ["ring"] }
 uuid = { version = "1", features = ["v4"] }
 ts-rs = "10"
 # Per-process memory + parent/child tree walk for the dashboard RAM column.
@@ -33,7 +42,10 @@ tauri_kit_updater = { path = "../vendor/tauri_kit/tauri/updater" }
 
 [dev-dependencies]
 tempfile = "3"
-reqwest = { version = "0.12", default-features = false, features = ["json"] }
+# Same major.minor as the runtime dep so the test build links ONE reqwest (a
+# second version triggers E0464 ambiguity on `reqwest::` paths). Plain http only
+# (tests hit 127.0.0.1), so no TLS feature is needed - the connector is built-in.
+reqwest = { version = "0.13.4", default-features = false, features = ["json"] }
 axum = "0.7"
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "net"] }
 serde_json = "1"

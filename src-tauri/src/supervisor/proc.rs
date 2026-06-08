@@ -1,3 +1,4 @@
+use super::proxy;
 use crate::types::{LogLine, ProcInfo, ProcKind, ProcSpec, ProcStatus};
 use std::collections::VecDeque;
 use std::io::{BufRead, BufReader, Read, Write};
@@ -42,6 +43,16 @@ pub struct ManagedProc {
     /// the user restarts it). `refresh` polls the OS for its liveness instead
     /// of `try_wait`.
     adopted: bool,
+    /// Live-reload reverse proxy in front of a flutter web-server run, if any.
+    /// Dropping it triggers a graceful shutdown + thread join.
+    proxy: Option<proxy::ProxyTask>,
+    /// Broadcast sender the stdout reader fires on a finished (re)start; the
+    /// proxy's SSE endpoint forwards it to open browser tabs. Some only while a
+    /// proxy is live.
+    reload_tx: Option<tokio::sync::broadcast::Sender<()>>,
+    /// The internal ephemeral port flutter binds when proxied (the proxy fronts
+    /// it on the public port). The registry releases this on stop.
+    internal_port: Option<u16>,
 }
 
 impl ManagedProc {
@@ -58,7 +69,26 @@ impl ManagedProc {
             app_id: Arc::new(Mutex::new(None)),
             acquired_port: None,
             adopted: false,
+            proxy: None,
+            reload_tx: None,
+            internal_port: None,
         }
+    }
+
+    /// True when this proc is a flutter web-server launch with a `{PORT}`
+    /// placeholder we can redirect: only these can sit behind a live-reload
+    /// proxy (we move flutter onto an internal port and front it on the public
+    /// one). Anything else runs unproxied.
+    pub fn wants_proxy(&self) -> bool {
+        self.spec.kind == ProcKind::Flutter
+            && self.spec.cmd.contains("web-server")
+            && self.spec.cmd.contains("{PORT}")
+    }
+
+    /// The internal port flutter binds behind the proxy, if proxied. The registry
+    /// releases it on stop (it is acquired separately from the public port).
+    pub fn internal_port(&self) -> Option<u16> {
+        self.internal_port
     }
 
     /// The dynamic port currently held for this run, if any.
@@ -130,6 +160,15 @@ impl ManagedProc {
                 self.pid = None;
                 self.child = None;
                 self.stdin = None;
+                // The child died on its own. Drop the proxy so its TcpListener on
+                // the public port is freed immediately (otherwise it keeps serving
+                // 502s until an explicit stop/restart); dropping ProxyTask runs its
+                // graceful stop + thread join. Also drop the reload sender. Do NOT
+                // clear internal_port: reap_tick reads internal_port() to release
+                // the registry entry, and clearing it here would leak that
+                // bookkeeping.
+                self.proxy = None;
+                self.reload_tx = None;
             }
             return;
         }
@@ -150,11 +189,28 @@ impl ManagedProc {
 
     /// Spawn the process via `cmd /C <cmd>` in its own process group so the whole
     /// tree can be killed later. Returns the spawned PID.
-    pub fn start(&mut self, dynamic_port: Option<u16>) -> std::io::Result<u32> {
+    ///
+    /// `dynamic_port` is the port the child actually binds (the `{PORT}`
+    /// substitution + PORT env), exactly as before. `proxy_public_port` is
+    /// `Some(P)` only when this proc should sit behind a live-reload proxy: the
+    /// child then binds `dynamic_port` (an internal ephemeral port) and the proxy
+    /// fronts it on `P`, the port the dashboard advertises. `None` => no proxy.
+    pub fn start(
+        &mut self,
+        dynamic_port: Option<u16>,
+        proxy_public_port: Option<u16>,
+    ) -> std::io::Result<u32> {
         self.refresh();
         if matches!(self.status, ProcStatus::Running | ProcStatus::Starting) {
             return Ok(self.pid.unwrap_or(0));
         }
+
+        // Tear down any proxy left over from a prior (crashed) run before we
+        // re-spawn, so the new proxy can re-bind the same public port. Dropping
+        // it signals graceful shutdown + joins its thread.
+        self.proxy = None;
+        self.reload_tx = None;
+        self.internal_port = None;
 
         // Apply the port override (no project files touched): substitute any
         // `{PORT}` placeholder in the command, and set the PORT env var below.
@@ -230,17 +286,63 @@ impl ManagedProc {
         let mut child = command.spawn()?;
         let pid = child.id();
 
+        // When proxied we want the reader to fire reload signals into the proxy's
+        // broadcast channel. Create it up front so the stdout reader can clone it.
+        let reload_tx = match (proxy_public_port, dynamic_port) {
+            (Some(_), Some(_)) => {
+                let (tx, _rx) = tokio::sync::broadcast::channel(16);
+                Some(tx)
+            }
+            _ => None,
+        };
+        self.reload_tx = reload_tx.clone();
+
         // Reset appId for the new run; stdout reader re-captures it.
         *self.app_id.lock().unwrap() = None;
         if let Some(out) = child.stdout.take() {
-            spawn_reader(out, "stdout", self.logs.clone(), Some(self.app_id.clone()), None);
+            spawn_reader(
+                out,
+                "stdout",
+                self.logs.clone(),
+                Some(self.app_id.clone()),
+                self.reload_tx.clone(),
+            );
         }
         if let Some(err) = child.stderr.take() {
             spawn_reader(err, "stderr", self.logs.clone(), None, None);
         }
         self.stdin = child.stdin.take();
-        self.acquired_port = dynamic_port;
+        // The dashboard advertises the public port: when proxied that is the
+        // proxy's port, not the internal port the child actually bound.
+        self.acquired_port = proxy_public_port.or(dynamic_port);
         self.adopted = false; // a real Child supersedes any prior adoption
+
+        // Spawn the live-reload proxy in front of the internal flutter port. If
+        // it fails to bind we log and degrade to plain flutter on the internal
+        // port (nothing then listens on the public port; accepted for v1).
+        if let (Some(public), Some(internal), Some(tx)) =
+            (proxy_public_port, dynamic_port, reload_tx)
+        {
+            self.internal_port = Some(internal);
+            match proxy::spawn(public, internal, tx) {
+                Ok(task) => {
+                    self.proxy = Some(task);
+                    self.push_log(
+                        "stdout",
+                        format!(
+                            "[supervisor] live-reload proxy on 127.0.0.1:{public} -> flutter :{internal}"
+                        ),
+                    );
+                }
+                Err(e) => {
+                    self.reload_tx = None;
+                    self.push_log(
+                        "stderr",
+                        format!("[supervisor] live-reload proxy failed to bind {public}: {e}"),
+                    );
+                }
+            }
+        }
 
         self.push_log("stdout", format!("[supervisor] started: {cmd_str}"));
         self.child = Some(child);
@@ -259,6 +361,11 @@ impl ManagedProc {
         if let Some(mut child) = self.child.take() {
             let _ = child.wait();
         }
+        // Drop the proxy first: this signals its graceful shutdown and joins
+        // its thread, freeing the public port before we report stopped.
+        self.proxy = None;
+        self.reload_tx = None;
+        self.internal_port = None;
         self.stdin = None;
         self.status = ProcStatus::Stopped;
         self.pid = None;
@@ -555,8 +662,35 @@ mod tests {
         let mut p = ManagedProc::new(spec);
         p.adopt(4321, 1_000, None);
         assert!(p.is_adopted());
-        let _ = p.start(None); // real spawn -> sets a Child, must clear adopted
+        let _ = p.start(None, None); // real spawn -> sets a Child, must clear adopted
         assert!(!p.is_adopted(), "start() must supersede adoption");
+    }
+
+    #[test]
+    fn wants_proxy_gates_flutter_web_server_with_port_placeholder() {
+        // flutter + web-server + {PORT}: proxiable.
+        let mut spec = test_spec();
+        spec.kind = ProcKind::Flutter;
+        spec.cmd = "flutter run -d web-server --web-port {PORT}".to_string();
+        assert!(ManagedProc::new(spec).wants_proxy());
+
+        // flutter but no web-server (e.g. chrome device): not proxiable.
+        let mut spec = test_spec();
+        spec.kind = ProcKind::Flutter;
+        spec.cmd = "flutter run -d chrome --web-port {PORT}".to_string();
+        assert!(!ManagedProc::new(spec).wants_proxy());
+
+        // flutter web-server but no {PORT} placeholder to redirect: not proxiable.
+        let mut spec = test_spec();
+        spec.kind = ProcKind::Flutter;
+        spec.cmd = "flutter run -d web-server".to_string();
+        assert!(!ManagedProc::new(spec).wants_proxy());
+
+        // generic command: never proxiable.
+        let mut spec = test_spec();
+        spec.kind = ProcKind::Generic;
+        spec.cmd = "npm run dev -- --port {PORT}".to_string();
+        assert!(!ManagedProc::new(spec).wants_proxy());
     }
 
     #[test]
