@@ -231,6 +231,21 @@ impl Supervisor {
         }
         res?;
 
+        // Proxy-fallback cleanup: when this proc was meant to be proxied (both
+        // public_port and the internal child_port were acquired) but the proxy
+        // could not bind, flutter fell back to the public port and the internal
+        // port went unused. Detect that via the proc no longer reporting an
+        // internal port, and release the orphaned internal acquisition.
+        if let (Some(_public), Some(internal)) = (public_port, child_port) {
+            let proxied = {
+                let guard = self.procs.lock().unwrap();
+                guard.get(id).and_then(|p| p.internal_port()).is_some()
+            };
+            if !proxied {
+                self.ports.release(internal);
+            }
+        }
+
         // EADDRINUSE retry-once (dynamic-port only). The registry bind-probes
         // before handing out a port, but a TOCTOU race can let another process
         // grab it between probe and spawn. If the child dies within ~1500ms with

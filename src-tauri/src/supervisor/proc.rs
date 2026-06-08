@@ -212,9 +212,46 @@ impl ManagedProc {
         self.reload_tx = None;
         self.internal_port = None;
 
+        // Stand up the live-reload proxy BEFORE spawning flutter so a bind failure
+        // degrades cleanly. When the proxy binds, flutter binds an internal port
+        // and the proxy fronts it on the public port. When it cannot bind, we run
+        // flutter straight on the public port (no auto-reload) rather than leaving
+        // an advertised-but-dead port. `child_port` is the port flutter ends up
+        // binding either way.
+        let mut proxy_task: Option<proxy::ProxyTask> = None;
+        let mut reload_tx: Option<tokio::sync::broadcast::Sender<()>> = None;
+        let mut internal_for_proxy: Option<u16> = None;
+        let child_port = match (proxy_public_port, dynamic_port) {
+            (Some(public), Some(internal)) => {
+                let (tx, _rx) = tokio::sync::broadcast::channel(16);
+                match proxy::spawn(public, internal, tx.clone()) {
+                    Ok(task) => {
+                        proxy_task = Some(task);
+                        reload_tx = Some(tx);
+                        internal_for_proxy = Some(internal);
+                        self.push_log(
+                            "stdout",
+                            format!(
+                                "[supervisor] live-reload proxy on 127.0.0.1:{public} -> flutter :{internal}"
+                            ),
+                        );
+                        Some(internal)
+                    }
+                    Err(e) => {
+                        self.push_log(
+                            "stderr",
+                            format!("[supervisor] live-reload proxy failed to bind {public}: {e}; serving flutter directly on {public}, auto-reload off"),
+                        );
+                        Some(public)
+                    }
+                }
+            }
+            _ => dynamic_port,
+        };
+
         // Apply the port override (no project files touched): substitute any
         // `{PORT}` placeholder in the command, and set the PORT env var below.
-        let mut cmd_str = match dynamic_port {
+        let mut cmd_str = match child_port {
             Some(p) => self.spec.cmd.replace("{PORT}", &p.to_string()),
             None => self.spec.cmd.clone(),
         };
@@ -269,7 +306,7 @@ impl ManagedProc {
             command.env(k, v);
         }
 
-        if let Some(p) = dynamic_port {
+        if let Some(p) = child_port {
             command.env("PORT", p.to_string()); // env channel for process.env.PORT tools
         }
 
@@ -286,15 +323,7 @@ impl ManagedProc {
         let mut child = command.spawn()?;
         let pid = child.id();
 
-        // When proxied we want the reader to fire reload signals into the proxy's
-        // broadcast channel. Create it up front so the stdout reader can clone it.
-        let reload_tx = match (proxy_public_port, dynamic_port) {
-            (Some(_), Some(_)) => {
-                let (tx, _rx) = tokio::sync::broadcast::channel(16);
-                Some(tx)
-            }
-            _ => None,
-        };
+        // reload_tx was decided above (Some only when the proxy actually bound).
         self.reload_tx = reload_tx.clone();
 
         // Reset appId for the new run; stdout reader re-captures it.
@@ -317,32 +346,11 @@ impl ManagedProc {
         self.acquired_port = proxy_public_port.or(dynamic_port);
         self.adopted = false; // a real Child supersedes any prior adoption
 
-        // Spawn the live-reload proxy in front of the internal flutter port. If
-        // it fails to bind we log and degrade to plain flutter on the internal
-        // port (nothing then listens on the public port; accepted for v1).
-        if let (Some(public), Some(internal), Some(tx)) =
-            (proxy_public_port, dynamic_port, reload_tx)
-        {
-            self.internal_port = Some(internal);
-            match proxy::spawn(public, internal, tx) {
-                Ok(task) => {
-                    self.proxy = Some(task);
-                    self.push_log(
-                        "stdout",
-                        format!(
-                            "[supervisor] live-reload proxy on 127.0.0.1:{public} -> flutter :{internal}"
-                        ),
-                    );
-                }
-                Err(e) => {
-                    self.reload_tx = None;
-                    self.push_log(
-                        "stderr",
-                        format!("[supervisor] live-reload proxy failed to bind {public}: {e}"),
-                    );
-                }
-            }
-        }
+        // Store the proxy decided + spawned above. `internal_for_proxy` is Some
+        // only when the proxy bound (flutter on the internal port); on a bind
+        // failure flutter took the public port and there is no proxy to track.
+        self.internal_port = internal_for_proxy;
+        self.proxy = proxy_task;
 
         self.push_log("stdout", format!("[supervisor] started: {cmd_str}"));
         self.child = Some(child);
