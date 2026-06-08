@@ -75,6 +75,10 @@ export type Modal =
       commandId: string;
       cmdName: string;
       lastOne: boolean;
+    }
+  | {
+      t: "confirmStopAll";
+      count: number;
     };
 
 // Single mutable view-state object. An object (not module-level `let`s) so that

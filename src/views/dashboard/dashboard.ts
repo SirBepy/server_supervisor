@@ -70,6 +70,23 @@ function runningCount(project: Project): number {
   ).length;
 }
 
+function totalRunning(): number {
+  return ui.projects.reduce((sum, p) => sum + runningCount(p), 0);
+}
+
+// Stop-all entry point: one running proc stops immediately; 2+ asks for an
+// inline confirm first (mass-stop is easy to fat-finger).
+function stopAll() {
+  const n = totalRunning();
+  if (n === 0) return;
+  if (n === 1) {
+    void act(ipc.stopAllProcs());
+    return;
+  }
+  ui.modal = { t: "confirmStopAll", count: n };
+  draw();
+}
+
 function toggleCollapse(projectId: string) {
   if (ui.collapsed.has(projectId)) {
     ui.collapsed.delete(projectId);
@@ -290,6 +307,11 @@ function draw() {
             class="filter-chip ${ui.filterRunning ? "active" : ""}"
             @click=${() => { ui.filterRunning = true; draw(); }}
           >Running</button>
+          ${totalRunning() > 0
+            ? html`<button class="stop-all-chip" title="Stop all running processes" @click=${stopAll}>
+                <i class="ph ph-stop"></i> Stop all
+              </button>`
+            : nothing}
         </div>
       </div>
       ${ui.error ? html`<div class="error">${ui.error}</div>` : nothing}

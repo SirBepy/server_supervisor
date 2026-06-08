@@ -299,6 +299,33 @@ function confirmDeleteCommandModal(
   `;
 }
 
+function confirmStopAllModal(
+  m: Extract<Modal, { t: "confirmStopAll" }>,
+): TemplateResult {
+  return html`
+    <div class="overlay">
+      <div class="dialog">
+        <h3>Stop all processes</h3>
+        <p class="muted note">
+          Stop all <code>${m.count}</code> running processes? The app stays open.
+        </p>
+        <div class="dialog-actions">
+          <button @click=${closeModal}>Cancel</button>
+          <button
+            class="danger"
+            @click=${async () => {
+              ui.modal = null;
+              await act(ipc.stopAllProcs());
+            }}
+          >
+            Stop all
+          </button>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
 export function modalView(): TemplateResult | typeof nothing {
   const m = ui.modal;
   if (!m) return nothing;
@@ -311,5 +338,7 @@ export function modalView(): TemplateResult | typeof nothing {
       return editCommandModal(m);
     case "confirmDeleteCommand":
       return confirmDeleteCommandModal(m);
+    case "confirmStopAll":
+      return confirmStopAllModal(m);
   }
 }
