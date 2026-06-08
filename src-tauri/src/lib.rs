@@ -1,4 +1,5 @@
 pub mod api;
+pub mod fsutil;
 pub mod ipc;
 pub mod ports;
 pub mod settings;

@@ -26,7 +26,9 @@ fn pids_path(data_dir: &Path) -> std::path::PathBuf {
 
 pub fn write_pids(data_dir: &Path, entries: &[PidEntry]) {
     if let Ok(text) = serde_json::to_string_pretty(entries) {
-        let _ = std::fs::write(pids_path(data_dir), text);
+        if let Err(e) = crate::fsutil::write_atomic(&pids_path(data_dir), text.as_bytes()) {
+            log::error!("supervisor: failed to write {PIDS_FILE}: {e}");
+        }
     }
 }
 

@@ -183,7 +183,9 @@ fn load(data_dir: &Path) -> Vec<PortEntry> {
 
 fn save(data_dir: &Path, entries: &[PortEntry]) {
     if let Ok(text) = serde_json::to_string_pretty(entries) {
-        let _ = std::fs::write(data_dir.join(FILE), text);
+        if let Err(e) = crate::fsutil::write_atomic(&data_dir.join(FILE), text.as_bytes()) {
+            log::error!("ports: failed to write {FILE}: {e}");
+        }
     }
 }
 
