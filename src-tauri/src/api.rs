@@ -346,7 +346,7 @@ async fn restart_proc(State(s): State<ApiState>, Path(id): Path<String>) -> Resp
 }
 
 async fn reload_proc(State(s): State<ApiState>, Path(id): Path<String>) -> Response {
-    // Web hot reload is upstream-broken, so we always fullRestart.
+    // Try the flutter daemon hot restart; registry falls back to a full restart if the daemon is not ready.
     unit_result(s.sup.reload(&id, true))
 }
 

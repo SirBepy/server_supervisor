@@ -247,12 +247,34 @@ impl Supervisor {
         self.start(id)
     }
 
+    /// Try a fast hot restart via the Flutter daemon. If the daemon is not ready
+    /// (no appId / no stdin seen yet), transparently fall back to a full process
+    /// restart so the caller always gets a working reload. The proc lock MUST be
+    /// released before calling restart() to avoid a self-deadlock.
     pub fn reload(&self, id: &str, full: bool) -> Result<(), String> {
-        let mut guard = self.procs.lock().unwrap();
-        let p = guard
-            .get_mut(id)
-            .ok_or_else(|| format!("unknown process id: {id}"))?;
-        p.reload(full)
+        let res = {
+            let mut guard = self.procs.lock().unwrap();
+            let p = guard
+                .get_mut(id)
+                .ok_or_else(|| format!("unknown process id: {id}"))?;
+            p.reload(full)
+            // guard dropped here, before any restart below.
+        };
+        match res {
+            Ok(()) => {
+                log::info!("supervisor: {id} fast reload via daemon");
+                Ok(())
+            }
+            Err(e)
+                if e.contains("daemon not ready")
+                    || e.contains("no appId")
+                    || e.contains("no stdin") =>
+            {
+                log::info!("supervisor: {id} daemon not ready, falling back to full restart");
+                self.restart(id)
+            }
+            Err(e) => Err(e),
+        }
     }
 
     pub fn shutdown_all(&self) {
