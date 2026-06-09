@@ -279,8 +279,8 @@ function projectSection(project: Project): TemplateResult | typeof nothing {
         <i class="ph ph-caret-right group-chevron ${collapsed ? "" : "open"}"></i>
         <div class="titles">
           <h2>${project.name}</h2>
-          ${count > 1
-            ? html`<span class="run-count"><span class="run-dot"></span>${count}</span>`
+          ${count > 0
+            ? html`<span class="run-count"><span class="run-dot"></span>${count > 1 ? count : nothing}</span>`
             : nothing}
         </div>
         ${!ui.filterRunning ? moreMenu(project) : nothing}
