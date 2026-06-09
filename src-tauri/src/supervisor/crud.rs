@@ -39,6 +39,25 @@ impl Supervisor {
         Ok(project)
     }
 
+    /// Rename a project's display name. The `id` is the stable handle (keys the
+    /// runtime procs map, logs, and API paths), so it never changes here - only
+    /// the mutable `name`. Returns the updated project.
+    pub fn rename_project(&self, project_id: &str, new_name: String) -> Result<Project, String> {
+        let new_name = new_name.trim().to_string();
+        if new_name.is_empty() {
+            return Err("project name is required".to_string());
+        }
+        let mut projects = self.projects.lock().unwrap();
+        let project = projects
+            .iter_mut()
+            .find(|p| p.id == project_id)
+            .ok_or_else(|| format!("unknown project: {project_id}"))?;
+        project.name = new_name;
+        let updated = project.clone();
+        config::save(&self.data_dir, &projects);
+        Ok(updated)
+    }
+
     pub fn remove_project(&self, project_id: &str) -> Result<(), String> {
         let mut projects = self.projects.lock().unwrap();
         let idx = projects
@@ -122,11 +141,7 @@ impl Supervisor {
         use_dynamic_port: bool,
         env: String,
     ) -> Result<ProcInfo, String> {
-        let project_name = std::path::Path::new(root)
-            .file_name()
-            .and_then(|s| s.to_str())
-            .unwrap_or(root)
-            .to_string();
+        let project_name = smart_project_name(root);
         let project = self.add_project(project_name, root.to_string())?;
         let command_name = name.unwrap_or_else(|| derive_name(cmd));
         let command = self.add_command(
@@ -343,6 +358,28 @@ fn normalize_cmd(cmd: &str) -> String {
     cmd.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
+/// Default display name for a project folder. A folder literally named "app" or
+/// "src" is a useless label, so prefix it with the parent folder name:
+/// `.../myproject/app` -> "myproject-app". Any other folder uses its own name.
+fn smart_project_name(root: &str) -> String {
+    let path = std::path::Path::new(root);
+    let folder = path
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or(root)
+        .to_string();
+    if folder.eq_ignore_ascii_case("app") || folder.eq_ignore_ascii_case("src") {
+        if let Some(parent) = path
+            .parent()
+            .and_then(|p| p.file_name())
+            .and_then(|s| s.to_str())
+        {
+            return format!("{parent}-{folder}");
+        }
+    }
+    folder
+}
+
 fn unique_id(base: &str, taken: &dyn Fn(&str) -> bool) -> String {
     let b = config::slug(base);
     if !taken(&b) {
@@ -396,7 +433,19 @@ fn derive_name(cmd: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{derive_name, normalize_cmd};
+    use super::{derive_name, normalize_cmd, smart_project_name};
+
+    #[test]
+    fn smart_project_name_prefixes_app_and_src_folders() {
+        assert_eq!(smart_project_name(r"C:\Projects\myproject\app"), "myproject-app");
+        assert_eq!(smart_project_name(r"C:\Projects\myproject\src"), "myproject-src");
+        // Case-insensitive on the folder, preserves the folder's own casing.
+        assert_eq!(smart_project_name(r"C:\Projects\myproject\App"), "myproject-App");
+        // A normal folder keeps its own name.
+        assert_eq!(smart_project_name(r"C:\Projects\myproject"), "myproject");
+        // Unix-style separators work too.
+        assert_eq!(smart_project_name("/home/joe/myproject/src"), "myproject-src");
+    }
 
     #[test]
     fn normalize_cmd_collapses_and_trims_whitespace() {

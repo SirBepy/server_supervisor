@@ -14,9 +14,6 @@ export const listProcs = () => invoke<ProcInfo[]>("list_procs");
 export const startProc = (id: string) => invoke<void>("start_proc", { id });
 export const stopProc = (id: string) => invoke<void>("stop_proc", { id });
 export const restartProc = (id: string) => invoke<void>("restart_proc", { id });
-// Stop every running process, leaving the app open (mirrors the tray's
-// "Close Processes"). Takes no args.
-export const stopAllProcs = () => invoke<void>("stop_all_procs");
 export const reloadProc = (id: string, full = true) =>
   invoke<void>("reload_proc", { id, full });
 export const getProcLogs = (id: string) => invoke<LogLine[]>("get_proc_logs", { id });
@@ -27,6 +24,8 @@ export const addProject = (name: string, root: string) =>
   invoke<Project>("add_project", { name, root });
 export const removeProject = (projectId: string) =>
   invoke<void>("remove_project", { projectId });
+export const renameProject = (projectId: string, name: string) =>
+  invoke<Project>("rename_project", { projectId, name });
 export const addCommand = (
   projectId: string,
   name: string,

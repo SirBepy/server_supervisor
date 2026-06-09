@@ -96,6 +96,15 @@ pub fn remove_project(sup: State<Arc<Supervisor>>, project_id: String) -> Result
 }
 
 #[tauri::command]
+pub fn rename_project(
+    sup: State<Arc<Supervisor>>,
+    project_id: String,
+    name: String,
+) -> Result<Project, String> {
+    sup.rename_project(&project_id, name)
+}
+
+#[tauri::command]
 pub fn add_command(
     sup: State<Arc<Supervisor>>,
     project_id: String,

@@ -44,26 +44,6 @@
   color: var(--accent);
 }
 
-/* Stop-all sits at the far right of the filterbar, only shown when something
-   is running. Danger-tinted so it reads as a destructive bulk action. */
-.stop-all-chip {
-  margin-left: auto;
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  background: transparent;
-  color: #e0564b;
-  border: 1px solid #e0564b;
-  border-radius: 20px;
-  padding: 3px 11px;
-  font-size: 11px;
-  cursor: pointer;
-}
-.stop-all-chip:hover {
-  background: #e0564b;
-  color: #0a0c10;
-}
-
 .icon-btn {
   background: transparent;
   color: var(--fg);

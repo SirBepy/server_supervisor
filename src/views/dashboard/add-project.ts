@@ -10,7 +10,7 @@ import { open } from "@tauri-apps/plugin-dialog";
 import * as ipc from "../../shared/ipc";
 import type { DetectedCommand } from "../../types/ipc.generated";
 import { ui, draw, refresh, closeModal, type Modal, type PickedCommand } from "./state";
-import { basename, normPath, deriveName } from "./helpers";
+import { normPath, deriveName, smartProjectName } from "./helpers";
 import { comboBox, filterDetected } from "./combobox";
 
 // Find an existing project whose root matches the picked folder; return its name.
@@ -91,8 +91,8 @@ async function confirmAddProject() {
     draw();
     return;
   }
-  // Empty name falls back to the folder name (shown as the input's placeholder).
-  const name = m.name.trim() || basename(m.root);
+  // Empty name falls back to the smart default (shown as the input's placeholder).
+  const name = m.name.trim() || smartProjectName(m.root);
   try {
     const project = await ipc.addProject(name, m.root);
     for (const p of m.picked) {
@@ -148,7 +148,7 @@ export function addProjectModal(m: Extract<Modal, { t: "addProject" }>): Templat
         <div class="field-row">
           <label>Name</label>
           <input
-            placeholder=${basename(m.root)}
+            placeholder=${smartProjectName(m.root)}
             .value=${m.name}
             @input=${(e: Event) => (m.name = (e.target as HTMLInputElement).value)}
           />

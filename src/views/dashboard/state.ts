@@ -77,8 +77,9 @@ export type Modal =
       lastOne: boolean;
     }
   | {
-      t: "confirmStopAll";
-      count: number;
+      t: "renameProject";
+      projectId: string;
+      name: string;
     };
 
 // Single mutable view-state object. An object (not module-level `let`s) so that
@@ -103,8 +104,12 @@ export const ui = {
   validateTimer: undefined as number | undefined,
   // Show only processes that are currently running.
   filterRunning: false,
-  // Project IDs that are currently collapsed.
+  // Project IDs that are currently collapsed. Projects start collapsed by
+  // default (see refresh): you open a project to reveal its commands.
   collapsed: new Set<string>(),
+  // Project IDs we've already applied the default-collapse to, so a poll
+  // refresh never re-collapses a project the user has since expanded.
+  seenProjectIds: new Set<string>(),
   // Project ID whose per-project "more options" (kebab) menu is open, or null.
   openMenuFor: null as string | null,
   // Command id whose port badge was just click-copied, for transient "copied"
@@ -125,6 +130,18 @@ export function draw() {
 export async function refresh() {
   try {
     const [projs, procs] = await Promise.all([ipc.listProjects(), ipc.listProcs()]);
+    // Alphabetical by display name (case-insensitive) so the list order is
+    // stable and predictable regardless of add order.
+    projs.sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" }));
+    // First time we see a project, collapse it: the default is closed, and the
+    // user expands the one they want. seenProjectIds guards against re-collapsing
+    // a project the user later opened (this poll runs every few seconds).
+    for (const p of projs) {
+      if (!ui.seenProjectIds.has(p.id)) {
+        ui.seenProjectIds.add(p.id);
+        ui.collapsed.add(p.id);
+      }
+    }
     ui.projects = projs;
     ui.statusById = Object.fromEntries(procs.map((p) => [p.id, p]));
     ui.error = null;

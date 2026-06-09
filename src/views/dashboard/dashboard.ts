@@ -6,7 +6,7 @@ import { html, render, nothing, type TemplateResult } from "lit-html";
 import "./dashboard.css";
 import * as ipc from "../../shared/ipc";
 import type { Project } from "../../types/ipc.generated";
-import { ui, setDraw, refresh, act, draw } from "./state";
+import { ui, setDraw, refresh, act } from "./state";
 import { formatBytes, displayName } from "./helpers";
 import { modalView, startAddCommand } from "./modals";
 import { startAddProject } from "./add-project";
@@ -68,23 +68,6 @@ function runningCount(project: Project): number {
   return project.commands.filter(
     (c) => ui.statusById[`${project.id}:${c.id}`]?.status === "running",
   ).length;
-}
-
-function totalRunning(): number {
-  return ui.projects.reduce((sum, p) => sum + runningCount(p), 0);
-}
-
-// Stop-all entry point: one running proc stops immediately; 2+ asks for an
-// inline confirm first (mass-stop is easy to fat-finger).
-function stopAll() {
-  const n = totalRunning();
-  if (n === 0) return;
-  if (n === 1) {
-    void act(ipc.stopAllProcs());
-    return;
-  }
-  ui.modal = { t: "confirmStopAll", count: n };
-  draw();
 }
 
 function toggleCollapse(projectId: string) {
@@ -257,6 +240,15 @@ function moreMenu(project: Project): TemplateResult {
               <button
                 @click=${() => {
                   ui.openMenuFor = null;
+                  ui.modal = { t: "renameProject", projectId: project.id, name: project.name };
+                  draw();
+                }}
+              >
+                <i class="ph ph-pencil-simple"></i> Rename project
+              </button>
+              <button
+                @click=${() => {
+                  ui.openMenuFor = null;
                   void ipc.openInExplorer(project.root);
                   draw();
                 }}
@@ -287,10 +279,10 @@ function projectSection(project: Project): TemplateResult | typeof nothing {
         <i class="ph ph-caret-right group-chevron ${collapsed ? "" : "open"}"></i>
         <div class="titles">
           <h2>${project.name}</h2>
+          ${count > 1
+            ? html`<span class="run-count"><span class="run-dot"></span>${count}</span>`
+            : nothing}
         </div>
-        ${count > 0
-          ? html`<span class="run-count"><span class="run-dot"></span>${count}</span>`
-          : nothing}
         ${!ui.filterRunning ? moreMenu(project) : nothing}
       </div>
       ${collapsed
@@ -330,11 +322,6 @@ function draw() {
             class="filter-chip ${ui.filterRunning ? "active" : ""}"
             @click=${() => { ui.filterRunning = true; draw(); }}
           >Running</button>
-          ${totalRunning() > 0
-            ? html`<button class="stop-all-chip" title="Stop all running processes" @click=${stopAll}>
-                <i class="ph ph-stop"></i> Stop all
-              </button>`
-            : nothing}
         </div>
       </div>
       ${ui.error ? html`<div class="error">${ui.error}</div>` : nothing}

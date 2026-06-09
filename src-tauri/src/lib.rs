@@ -46,6 +46,7 @@ pub fn run() {
             ipc::commands::list_projects,
             ipc::commands::add_project,
             ipc::commands::remove_project,
+            ipc::commands::rename_project,
             ipc::commands::add_command,
             ipc::commands::update_command,
             ipc::commands::remove_command,

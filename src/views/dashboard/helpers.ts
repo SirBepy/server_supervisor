@@ -5,6 +5,20 @@ export function basename(p: string): string {
   return p.replace(/[\\/]+$/, "").split(/[\\/]/).pop() ?? p;
 }
 
+// Default display name for a project folder (mirrors the backend
+// `smart_project_name`). A folder literally named "app" or "src" is a useless
+// label, so prefix it with its parent folder: ".../myproject/app" -> "myproject-app".
+// Any other folder just uses its own basename.
+export function smartProjectName(p: string): string {
+  const segs = p.replace(/[\\/]+$/, "").split(/[\\/]/).filter(Boolean);
+  const folder = segs[segs.length - 1] ?? p;
+  const low = folder.toLowerCase();
+  if ((low === "app" || low === "src") && segs.length >= 2) {
+    return `${segs[segs.length - 2]}-${folder}`;
+  }
+  return folder;
+}
+
 // Normalize a folder path for equality: lowercase + strip trailing slash(es).
 export function normPath(p: string): string {
   return p.replace(/[\\/]+$/, "").toLowerCase();
