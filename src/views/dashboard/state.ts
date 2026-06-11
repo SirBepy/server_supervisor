@@ -112,6 +112,10 @@ export const ui = {
   seenProjectIds: new Set<string>(),
   // Project ID whose per-project "more options" (kebab) menu is open, or null.
   openMenuFor: null as string | null,
+  // Command id (`project:command`) whose per-command "more options" (kebab) menu
+  // is open, or null. Holds the secondary actions (stop/restart, edit/remove);
+  // the primary action stays a bare button on the card.
+  openCmdMenuFor: null as string | null,
   // Command id whose port badge was just click-copied, for transient "copied"
   // feedback; cleared on a short timer. Null when no badge is flashing.
   copiedPortId: null as string | null,

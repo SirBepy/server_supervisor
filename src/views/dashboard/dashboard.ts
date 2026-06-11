@@ -28,14 +28,16 @@ export function mountDashboard(el: HTMLElement): () => void {
   // The button + menu both stopPropagation, so any click reaching the document
   // is outside the open menu.
   const onDocClick = () => {
-    if (ui.openMenuFor !== null) {
+    if (ui.openMenuFor !== null || ui.openCmdMenuFor !== null) {
       ui.openMenuFor = null;
+      ui.openCmdMenuFor = null;
       draw();
     }
   };
   const onKey = (e: KeyboardEvent) => {
-    if (e.key === "Escape" && ui.openMenuFor !== null) {
+    if (e.key === "Escape" && (ui.openMenuFor !== null || ui.openCmdMenuFor !== null)) {
       ui.openMenuFor = null;
+      ui.openCmdMenuFor = null;
       draw();
     }
   };
@@ -99,18 +101,109 @@ function copyPortUrl(id: string, port: number) {
   }, 1200);
 }
 
+// Per-command "more options" (kebab) menu: the secondary actions live here so
+// only the primary action (Start when stopped, Hot restart for a running
+// flutter app) stays a bare button on the card. Stop/Restart when running;
+// Edit/Remove when stopped (a running command can't be edited or removed).
+function cmdMenu(
+  project: Project,
+  cmd: Project["commands"][number],
+  id: string,
+  running: boolean,
+): TemplateResult {
+  const open = ui.openCmdMenuFor === id;
+  const close = () => {
+    ui.openCmdMenuFor = null;
+  };
+  return html`
+    <div class="cmd-more">
+      <button
+        class=${open ? "active" : ""}
+        title="More options"
+        @click=${(e: Event) => {
+          e.stopPropagation();
+          ui.openCmdMenuFor = open ? null : id;
+          draw();
+        }}
+      >
+        <i class="ph ph-dots-three-vertical"></i>
+      </button>
+      ${open
+        ? html`
+            <div class="more-menu" @click=${(e: Event) => e.stopPropagation()}>
+              ${running
+                ? html`
+                    <button @click=${() => { close(); void act(ipc.stopProc(id)); }}>
+                      <i class="ph ph-stop"></i> Stop
+                    </button>
+                    <button @click=${() => { close(); void act(ipc.restartProc(id)); }}>
+                      <i class="ph ph-arrow-clockwise"></i> Restart
+                    </button>
+                  `
+                : html`
+                    <button
+                      @click=${() => {
+                        close();
+                        ui.modal = {
+                          t: "editCommand",
+                          projectId: project.id,
+                          commandId: cmd.id,
+                          root: project.root,
+                          name: cmd.name,
+                          cmd: cmd.cmd,
+                          autostart: cmd.autostart,
+                          useDynamicPort: cmd.use_dynamic_port,
+                          env: cmd.env,
+                          check: null,
+                        };
+                        ui.comboOpen = false;
+                        draw();
+                      }}
+                    >
+                      <i class="ph ph-pencil-simple"></i> Edit command
+                    </button>
+                    <button
+                      @click=${() => {
+                        close();
+                        ui.modal = {
+                          t: "confirmDeleteCommand",
+                          projectId: project.id,
+                          commandId: cmd.id,
+                          cmdName: cmd.name,
+                          lastOne: project.commands.length === 1,
+                        };
+                        draw();
+                      }}
+                    >
+                      <i class="ph ph-trash"></i> Remove command
+                    </button>
+                  `}
+            </div>
+          `
+        : nothing}
+    </div>
+  `;
+}
+
 function commandRow(project: Project, cmd: Project["commands"][number]): TemplateResult {
   const id = `${project.id}:${cmd.id}`;
   const running = ui.statusById[id]?.status === "running";
   const pid = ui.statusById[id]?.pid;
   const port = ui.statusById[id]?.port;
   const mem = ui.statusById[id]?.mem_bytes;
+  const logsOpen = ui.openLogsFor === id;
   return html`
-    <div class="card">
-      <div class="info">
+    <div class="card ${logsOpen ? "logs-open" : ""}">
+      <div
+        class="info"
+        role="button"
+        title="Click to ${logsOpen ? "hide" : "show"} logs"
+        @click=${() => toggleLogs(id)}
+      >
         <div class="head">
           ${dot(id)}
           <span class="name" title=${cmd.name}>${displayName(cmd)}</span>
+          <i class="ph ph-terminal-window logs-hint ${logsOpen ? "on" : ""}"></i>
         </div>
         <div class="meta">
           ${pid != null
@@ -122,7 +215,7 @@ function commandRow(project: Project, cmd: Project["commands"][number]): Templat
             ? html`<button
                 class="port ${ui.copiedPortId === id ? "copied" : ""}"
                 title="Copy http://localhost:${port}"
-                @click=${() => copyPortUrl(id, port)}
+                @click=${(e: Event) => { e.stopPropagation(); copyPortUrl(id, port); }}
               >
                 ${ui.copiedPortId === id ? "copied!" : html`port ${port}`}
               </button>`
@@ -136,12 +229,6 @@ function commandRow(project: Project, cmd: Project["commands"][number]): Templat
       <div class="actions">
         ${running
           ? html`
-              <button title="Stop" @click=${() => act(ipc.stopProc(id))}>
-                <i class="ph ph-stop"></i>
-              </button>
-              <button title="Restart" @click=${() => act(ipc.restartProc(id))}>
-                <i class="ph ph-arrow-clockwise"></i>
-              </button>
               ${cmd.kind === "flutter"
                 ? html`<button title="Hot restart" @click=${() => act(ipc.reloadProc(id))}>
                     <i class="ph ph-arrows-clockwise"></i>
@@ -153,56 +240,10 @@ function commandRow(project: Project, cmd: Project["commands"][number]): Templat
                 <i class="ph ph-play"></i>
               </button>
             `}
-        <button
-          title="Logs"
-          class=${ui.openLogsFor === id ? "active" : ""}
-          @click=${() => toggleLogs(id)}
-        >
-          <i class="ph ph-terminal-window"></i>
-        </button>
-        ${running
-          ? nothing
-          : html`
-              <button
-                title="Edit command"
-                @click=${() => {
-                  ui.modal = {
-                    t: "editCommand",
-                    projectId: project.id,
-                    commandId: cmd.id,
-                    root: project.root,
-                    name: cmd.name,
-                    cmd: cmd.cmd,
-                    autostart: cmd.autostart,
-                    useDynamicPort: cmd.use_dynamic_port,
-                    env: cmd.env,
-                    check: null,
-                  };
-                  ui.comboOpen = false;
-                  draw();
-                }}
-              >
-                <i class="ph ph-pencil-simple"></i>
-              </button>
-              <button
-                title="Remove command"
-                @click=${() => {
-                  ui.modal = {
-                    t: "confirmDeleteCommand",
-                    projectId: project.id,
-                    commandId: cmd.id,
-                    cmdName: cmd.name,
-                    lastOne: project.commands.length === 1,
-                  };
-                  draw();
-                }}
-              >
-                <i class="ph ph-trash"></i>
-              </button>
-            `}
+        ${cmdMenu(project, cmd, id, running)}
       </div>
     </div>
-    ${ui.openLogsFor === id
+    ${logsOpen
       ? html`<pre class="logs">${ui.logText ? renderAnsi(ui.logText) : "(no output yet)"}</pre>`
       : nothing}
   `;

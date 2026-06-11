@@ -102,16 +102,23 @@
   transform: rotate(90deg);
 }
 
+/* Fixed footprint whether it shows just the dot (1 running) or the dot + count
+   (2+): a min-width + centered content keeps the pill the same size so it never
+   grows when the number appears. */
 .run-count {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: 4px;
+  box-sizing: border-box;
+  min-width: 26px;
+  height: 18px;
   font-size: 11px;
   color: #46d369;
   background: rgba(70, 211, 105, 0.1);
   border: 1px solid rgba(70, 211, 105, 0.25);
   border-radius: 20px;
-  padding: 1px 7px;
+  padding: 0 7px;
   flex-shrink: 0;
 }
 
@@ -220,6 +227,35 @@
   min-width: 0;
 }
 
+/* The command's info block is the click target that toggles the log pane (the
+   old terminal button is gone). Make it read as clickable: pointer cursor, the
+   name brightens on hover and while the pane is open. */
+.card .info {
+  cursor: pointer;
+}
+.card .info:hover .name,
+.card.logs-open .name {
+  color: var(--accent);
+}
+
+/* Small terminal glyph beside the name: the affordance that the row reveals
+   logs. Muted by default, brighter on hover, accent while the pane is open. */
+.logs-hint {
+  font-size: 13px;
+  color: var(--muted);
+  opacity: 0.55;
+  flex: 0 0 auto;
+  transition: opacity 0.12s ease, color 0.12s ease;
+}
+.card .info:hover .logs-hint {
+  opacity: 1;
+  color: var(--fg);
+}
+.logs-hint.on {
+  opacity: 1;
+  color: var(--accent);
+}
+
 .meta {
   display: flex;
   flex-wrap: wrap;
@@ -302,6 +338,13 @@ button.port.copied {
   display: flex;
   gap: 6px;
   flex: 0 0 auto;
+}
+
+/* Anchor for the per-command "more options" popover (.more-menu opens absolutely
+   positioned against this). */
+.cmd-more {
+  position: relative;
+  display: inline-flex;
 }
 
 .actions button {
