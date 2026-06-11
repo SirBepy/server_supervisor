@@ -148,6 +148,10 @@ impl Supervisor {
         out.sort_by(|a, b| (&a.project, &a.name).cmp(&(&b.project, &b.name)));
         // One shared System refresh pass fills per-subtree RAM for running procs.
         super::mem::fill_memory(&mut out);
+        // Then override `port` with the real OS-detected listening port where it
+        // differs from (or is missing from) the forced value, so the dashboard
+        // always shows the port the process actually bound.
+        super::ports_detect::fill_ports(&mut out);
         out
     }
 

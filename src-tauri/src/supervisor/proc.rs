@@ -250,9 +250,13 @@ impl ManagedProc {
         };
 
         // Apply the port override (no project files touched): substitute any
-        // `{PORT}` placeholder in the command, and set the PORT env var below.
+        // `{PORT}` placeholder, and for a recognized framework that did not
+        // express its own port, append the right CLI port flag (best-effort
+        // force - a flag beats a hardcoded config port). The PORT env var is also
+        // set below. `ports_detect` reports whatever it actually bound, so this is
+        // a convenience, not load-bearing.
         let mut cmd_str = match child_port {
-            Some(p) => self.spec.cmd.replace("{PORT}", &p.to_string()),
+            Some(p) => super::port_inject::resolve_port(&self.spec.cmd, &self.spec.kind, p),
             None => self.spec.cmd.clone(),
         };
 

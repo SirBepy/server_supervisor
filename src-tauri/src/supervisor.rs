@@ -2,6 +2,8 @@ pub mod config;
 pub mod crud;
 pub mod detect;
 pub mod mem;
+pub mod port_inject;
+pub mod ports_detect;
 pub mod proc;
 pub mod proxy;
 pub mod reaper;
