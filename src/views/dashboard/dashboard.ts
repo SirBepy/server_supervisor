@@ -86,9 +86,24 @@ function dot(id: string): TemplateResult {
   return html`<span class="dot ${status}" title=${status}></span>`;
 }
 
-// Copy the local URL for a running command's port to the clipboard, with a
-// brief "copied" flash on the badge. Always http: these are localhost dev
-// servers (and the flutter reload proxy), never https.
+// Open a running command's port in a browser, with a brief "opened!" flash on
+// the badge. Flutter-web ports go to the dedicated CORS-disabled dev browser
+// (new tab in the same window); everything else opens in the default browser.
+// Always http: these are localhost dev servers (and the flutter reload proxy).
+function openPort(id: string, port: number, flutter: boolean) {
+  void ipc.openPortUrl(`http://localhost:${port}`, flutter);
+  ui.openedPortId = id;
+  draw();
+  window.setTimeout(() => {
+    if (ui.openedPortId === id) {
+      ui.openedPortId = null;
+      draw();
+    }
+  }, 1200);
+}
+
+// Copy the local URL for a running command's port to the clipboard (from the
+// per-command kebab menu), with a brief "copied!" flash on the badge.
 function copyPortUrl(id: string, port: number) {
   void navigator.clipboard?.writeText(`http://localhost:${port}`);
   ui.copiedPortId = id;
@@ -112,6 +127,7 @@ function cmdMenu(
   running: boolean,
 ): TemplateResult {
   const open = ui.openCmdMenuFor === id;
+  const port = ui.statusById[id]?.port;
   const close = () => {
     ui.openCmdMenuFor = null;
   };
@@ -133,6 +149,11 @@ function cmdMenu(
             <div class="more-menu" @click=${(e: Event) => e.stopPropagation()}>
               ${running
                 ? html`
+                    ${port != null
+                      ? html`<button @click=${() => { close(); copyPortUrl(id, port); }}>
+                          <i class="ph ph-copy"></i> Copy URL
+                        </button>`
+                      : nothing}
                     <button @click=${() => { close(); void act(ipc.stopProc(id)); }}>
                       <i class="ph ph-stop"></i> Stop
                     </button>
@@ -213,11 +234,18 @@ function commandRow(project: Project, cmd: Project["commands"][number]): Templat
               : nothing}
           ${port != null
             ? html`<button
-                class="port ${ui.copiedPortId === id ? "copied" : ""}"
-                title="Copy http://localhost:${port}"
-                @click=${(e: Event) => { e.stopPropagation(); copyPortUrl(id, port); }}
+                class="port ${ui.copiedPortId === id || ui.openedPortId === id ? "copied" : ""}"
+                title="Open http://localhost:${port}${cmd.kind === "flutter" ? " (CORS-disabled dev browser)" : ""}"
+                @click=${(e: Event) => {
+                  e.stopPropagation();
+                  openPort(id, port, cmd.kind === "flutter");
+                }}
               >
-                ${ui.copiedPortId === id ? "copied!" : html`port ${port}`}
+                ${ui.openedPortId === id
+                  ? "opened!"
+                  : ui.copiedPortId === id
+                    ? "copied!"
+                    : html`port ${port}`}
               </button>`
             : nothing}
           ${running && mem != null

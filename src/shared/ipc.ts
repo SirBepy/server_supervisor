@@ -17,6 +17,10 @@ export const restartProc = (id: string) => invoke<void>("restart_proc", { id });
 export const reloadProc = (id: string, full = true) =>
   invoke<void>("reload_proc", { id, full });
 export const getProcLogs = (id: string) => invoke<LogLine[]>("get_proc_logs", { id });
+// Open a command's port in a browser. flutter=true routes it to the dedicated
+// CORS-disabled dev browser (new tab in the same window); else the default browser.
+export const openPortUrl = (url: string, flutter: boolean) =>
+  invoke<void>("open_port_url", { url, flutter });
 
 // Project / command config CRUD.
 export const listProjects = () => invoke<Project[]>("list_projects");

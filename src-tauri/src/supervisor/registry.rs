@@ -181,6 +181,13 @@ impl Supervisor {
         }
     }
 
+    /// Stable per-machine profile dir for the dedicated flutter-web dev browser
+    /// (Chromium launched with `--disable-web-security`). Reused across sessions
+    /// so clicked ports keep opening as tabs in the same window.
+    pub fn dev_browser_profile_dir(&self) -> PathBuf {
+        self.data_dir.join("dev-browser-profile")
+    }
+
     pub fn logs(&self, id: &str) -> Result<Vec<LogLine>, String> {
         let guard = self.procs.lock().unwrap();
         guard

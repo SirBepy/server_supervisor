@@ -55,6 +55,23 @@ pub fn list_procs(sup: State<Arc<Supervisor>>) -> Vec<ProcInfo> {
     sup.list()
 }
 
+/// Open a running command's port in a browser. Flutter-web ports open in the
+/// dedicated CORS-disabled dev browser (a Chromium instance pinned to one
+/// profile, so repeat clicks become tabs in the same window); everything else
+/// opens in the OS default browser.
+#[tauri::command(async)]
+pub fn open_port_url(
+    sup: State<Arc<Supervisor>>,
+    url: String,
+    flutter: bool,
+) -> Result<(), String> {
+    if flutter {
+        crate::supervisor::dev_browser::open_flutter_web(&url, &sup.dev_browser_profile_dir())
+    } else {
+        crate::supervisor::dev_browser::open_default(&url)
+    }
+}
+
 #[tauri::command]
 pub fn start_proc(sup: State<Arc<Supervisor>>, id: String) -> Result<(), String> {
     sup.start(&id)

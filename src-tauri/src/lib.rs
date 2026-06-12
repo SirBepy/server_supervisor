@@ -36,6 +36,7 @@ pub fn run() {
             ipc::commands::get_settings,
             ipc::commands::save_settings,
             ipc::commands::list_procs,
+            ipc::commands::open_port_url,
             ipc::commands::start_proc,
             ipc::commands::stop_proc,
             ipc::commands::stop_all_procs,

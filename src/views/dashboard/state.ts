@@ -116,9 +116,12 @@ export const ui = {
   // is open, or null. Holds the secondary actions (stop/restart, edit/remove);
   // the primary action stays a bare button on the card.
   openCmdMenuFor: null as string | null,
-  // Command id whose port badge was just click-copied, for transient "copied"
-  // feedback; cleared on a short timer. Null when no badge is flashing.
+  // Command id whose port URL was just copied from the kebab menu, for transient
+  // "copied!" feedback; cleared on a short timer. Null when no badge is flashing.
   copiedPortId: null as string | null,
+  // Command id whose port badge was just clicked to open in a browser, for
+  // transient "opened!" feedback; cleared on a short timer.
+  openedPortId: null as string | null,
 };
 
 // draw() indirection: dashboard.ts owns the top-level render and registers it
