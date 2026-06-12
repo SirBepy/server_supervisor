@@ -60,89 +60,117 @@
   border-color: var(--accent);
 }
 
-.group-actions button {
-  background: transparent;
-  color: var(--fg);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  padding: 6px 10px;
-  cursor: pointer;
-  font-size: 13px;
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-}
-.group-actions button:hover {
-  border-color: var(--accent);
-}
-
-.group-head {
+/* Project row: status dot + icon + name, with a hover swap zone on the right
+   (quiet at rest, reveals start-all + more-options on hover) - mirrors the
+   command card's right-side swap. The whole row toggles collapse on click. */
+.prow {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
+  padding: 9px 10px;
+  border-radius: 8px;
   cursor: pointer;
   user-select: none;
-  padding: 4px 0 2px;
 }
-.group-head .titles {
+.prow:hover {
+  background: var(--surface);
+}
+
+.pdot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #33485a;
+  flex: 0 0 auto;
+}
+.pdot.on {
+  background: #46d369;
+  box-shadow: 0 0 7px rgba(70, 211, 105, 0.8);
+}
+
+.picon {
+  width: 24px;
+  height: 24px;
   display: flex;
-  align-items: baseline;
-  gap: 10px;
-  min-width: 0;
-  flex: 1;
-}
-
-.group-chevron {
-  font-size: 12px;
-  color: var(--muted);
-  transition: transform 0.15s ease;
-  flex-shrink: 0;
-}
-.group-chevron.open {
-  transform: rotate(90deg);
-}
-
-/* Fixed footprint whether it shows just the dot (1 running) or the dot + count
-   (2+): a min-width + centered content keeps the pill the same size so it never
-   grows when the number appears. */
-.run-count {
-  display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 4px;
-  box-sizing: border-box;
-  min-width: 26px;
-  height: 18px;
-  font-size: 11px;
-  color: #46d369;
-  background: rgba(70, 211, 105, 0.1);
-  border: 1px solid rgba(70, 211, 105, 0.25);
-  border-radius: 20px;
-  padding: 0 7px;
-  flex-shrink: 0;
+  font-size: 19px;
+  flex: 0 0 auto;
+}
+/* Rust has no colored Devicon variant - tint it so it's not a flat grey. */
+.picon .devicon-rust-plain {
+  color: #e0a884;
+}
+/* Phase 2 real project icons render as an <img> in this slot. */
+.picon img {
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  object-fit: cover;
 }
 
-.run-dot {
-  width: 5px;
-  height: 5px;
-  border-radius: 50%;
-  background: #46d369;
-  flex-shrink: 0;
+.pname {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--fg);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
 }
-.group-actions {
+
+/* Right swap zone. The count sits at rest; actions overlay it on hover. */
+.prow-right {
+  position: relative;
+  margin-left: auto;
   display: flex;
+  align-items: center;
+  min-height: 26px;
+  flex: 0 0 auto;
+}
+.pcount {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--muted);
+  opacity: 0.75;
+  transition: opacity 0.12s ease;
+}
+.pcount i {
+  font-size: 12px;
+}
+.prow-actions {
+  position: absolute;
+  right: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  display: flex;
+  align-items: center;
   gap: 6px;
   opacity: 0;
-  transition: opacity 0.15s ease;
-  position: relative; /* anchors the .more-menu popover */
+  pointer-events: none;
+  transition: opacity 0.12s ease;
 }
-.group-head:hover .group-actions {
+/* Reveal actions (and hide the count) on row hover, or while this project's
+   kebab menu is open (so the menu anchor never vanishes). */
+.prow:hover .prow-actions,
+.prow:has(.proj-more.menu-open) .prow-actions {
   opacity: 1;
+  pointer-events: auto;
 }
-/* Keep the actions visible while the menu is open, even if the pointer leaves
-   the row (e.g. moving down to click a menu item). */
-.group-actions.menu-open {
-  opacity: 1;
+.prow:hover .pcount,
+.prow:has(.proj-more.menu-open) .pcount {
+  opacity: 0;
+}
+.proj-more {
+  position: relative;
+  display: inline-flex;
+}
+/* Active (menu-open) kebab gets the accent treatment, matching the command kebab. */
+.proj-more > button.active {
+  border-color: var(--accent);
+  color: var(--accent);
 }
 
 /* "More options" popover menu, anchored under the kebab button. */

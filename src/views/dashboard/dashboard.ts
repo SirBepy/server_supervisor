@@ -7,7 +7,7 @@ import "./dashboard.css";
 import * as ipc from "../../shared/ipc";
 import type { Project } from "../../types/ipc.generated";
 import { ui, setDraw, refresh, act } from "./state";
-import { formatBytes, displayName, formatUptime } from "./helpers";
+import { formatBytes, displayName, formatUptime, projectTech, deviconClass } from "./helpers";
 import { modalView, startAddCommand } from "./modals";
 import { startAddProject } from "./add-project";
 import { renderAnsi } from "../../shared/ansi";
@@ -270,10 +270,10 @@ function commandRow(project: Project, cmd: Project["commands"][number]): Templat
         ${status === "starting" ? html`<span class="statusword">starting</span>` : nothing}
         <div class="right">
           <div class="stats">
-            ${mem != null
+            ${ui.showRam && mem != null
               ? html`<span class="cell"><span class="k">RAM</span><span class="v">${formatBytes(mem)}</span></span>`
               : nothing}
-            ${port != null
+            ${ui.showPort && port != null
               ? html`<span class="cell"><span class="k">Port</span><span class="v">${port}</span></span>`
               : nothing}
           </div>
@@ -311,15 +311,43 @@ function commandRow(project: Project, cmd: Project["commands"][number]): Templat
   `;
 }
 
-// Per-project "more options" (kebab) button + its popover menu. Replaces the
-// old per-project + button: hover-reveals with .group-actions, and on click
-// opens a small anchored menu (Add command / Open in file explorer).
+// Start every command in the project that isn't already live. The row's play
+// button; analogous to the command card's per-command start.
+function startAll(project: Project) {
+  for (const c of project.commands) {
+    const id = `${project.id}:${c.id}`;
+    const st = ui.statusById[id]?.status;
+    if (st !== "running" && st !== "starting") void act(ipc.startProc(id));
+  }
+}
+
+// True if the project has at least one command that could be started.
+function hasStartable(project: Project): boolean {
+  return project.commands.some((c) => {
+    const st = ui.statusById[`${project.id}:${c.id}`]?.status;
+    return st !== "running" && st !== "starting";
+  });
+}
+
+// The project's icon slot. Phase 1: tech logo (Devicon) if detectable, else a
+// generic Phosphor terminal glyph. Phase 2 prepends a real project icon.
+function projectIconTemplate(project: Project): TemplateResult {
+  const tech = projectTech(project, ui.statusById);
+  if (tech) {
+    return html`<span class="picon"><i class="${deviconClass(tech)}"></i></span>`;
+  }
+  return html`<span class="picon"><i class="ph ph-terminal-window"></i></span>`;
+}
+
+// Per-project "more options" (kebab) button + its popover menu. The kebab trigger
+// lives in the row's hover swap zone (.prow-actions); this provides the button +
+// anchored menu (Add command / Rename project / Open in file explorer).
 function moreMenu(project: Project): TemplateResult {
   const open = ui.openMenuFor === project.id;
   return html`
-    <div class="group-actions ${open ? "menu-open" : ""}">
+    <div class="proj-more ${open ? "menu-open" : ""}">
       <button
-        class="more-btn ${open ? "active" : ""}"
+        class="abtn ${open ? "active" : ""}"
         title="More options"
         @click=${(e: Event) => {
           e.stopPropagation();
@@ -378,15 +406,23 @@ function projectSection(project: Project): TemplateResult | typeof nothing {
 
   return html`
     <section class="group">
-      <div class="group-head" @click=${() => toggleCollapse(project.id)}>
-        <i class="ph ph-caret-right group-chevron ${collapsed ? "" : "open"}"></i>
-        <div class="titles">
-          <h2>${project.name}</h2>
-          ${count > 0
-            ? html`<span class="run-count"><span class="run-dot"></span>${count > 1 ? count : nothing}</span>`
+      <div class="prow" @click=${() => toggleCollapse(project.id)}>
+        <span class="pdot ${count > 0 ? "on" : ""}"></span>
+        ${projectIconTemplate(project)}
+        <span class="pname" title=${project.name}>${project.name}</span>
+        <div class="prow-right" @click=${(e: Event) => e.stopPropagation()}>
+          ${ui.showCommandCount
+            ? html`<span class="pcount"><i class="ph ph-terminal-window"></i>${project.commands.length}</span>`
             : nothing}
+          <div class="prow-actions">
+            ${hasStartable(project)
+              ? html`<button class="abtn start" title="Start all" @click=${() => startAll(project)}>
+                  <i class="ph ph-play"></i>
+                </button>`
+              : nothing}
+            ${moreMenu(project)}
+          </div>
         </div>
-        ${!ui.filterRunning ? moreMenu(project) : nothing}
       </div>
       ${collapsed
         ? nothing
