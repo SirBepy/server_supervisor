@@ -9,57 +9,19 @@
 //! authoritative, which also keeps a flutter live-reload proxy showing its public
 //! port (bound by the supervisor itself, not by the child subtree).
 
-use crate::types::ProcInfo;
 use std::collections::{HashMap, HashSet};
-use sysinfo::{ProcessesToUpdate, System};
+use sysinfo::System;
 
-/// Fill `port` for every running entry with the port it is actually listening on
-/// when that differs from (or is missing from) the forced value. One shared
-/// `netstat` + `System` pass. No-ops when nothing is running or netstat is
-/// unavailable, leaving any forced port in place.
-pub fn fill_ports(infos: &mut [ProcInfo]) {
-    if infos.iter().all(|i| i.pid.is_none()) {
-        return;
-    }
-    let listeners = listeners();
-    if listeners.is_empty() {
-        return;
-    }
-    let global: HashSet<u16> = listeners.iter().map(|(port, _)| *port).collect();
-
-    let mut sys = System::new();
-    sys.refresh_processes(ProcessesToUpdate::All, true);
-    let children = children_map(&sys);
-
-    for info in infos.iter_mut() {
-        let Some(pid) = info.pid else { continue };
-        // A forced/public port that is actually listening is authoritative. This
-        // covers a working `--port` force AND a flutter proxy whose public port is
-        // bound by the supervisor (so it never appears in the child's subtree).
-        if let Some(forced) = info.port {
-            if global.contains(&forced) {
-                continue;
-            }
-        }
-        // Otherwise detect: the lowest port any process in the child's subtree is
-        // listening on. Covers a child that ignored our port and bound its own,
-        // and a command launched with no dynamic port at all.
-        let tree = subtree(pid, &children);
-        let detected = listeners
-            .iter()
-            .filter(|(_, owner)| tree.contains(owner))
-            .map(|(port, _)| *port)
-            .min();
-        if let Some(port) = detected {
-            info.port = Some(port);
-        }
-    }
-}
+// The port-resolution logic that used to live in `fill_ports` now lives in the
+// combined background sampler (`supervisor::sampler`), which owns the single
+// shared `System` refresh and reuses these pure helpers. Keeping the helpers
+// here (with their netstat parser + tests) keeps the OS-probe surface in one
+// place.
 
 /// `(port, owning pid)` for every TCP listener, read once from the OS via
 /// `netstat -ano`. Best-effort: empty on any failure (callers keep forced ports).
 #[cfg(windows)]
-fn listeners() -> Vec<(u16, u32)> {
+pub(crate) fn listeners() -> Vec<(u16, u32)> {
     use std::os::windows::process::CommandExt;
     const CREATE_NO_WINDOW: u32 = 0x0800_0000;
     let Ok(out) = std::process::Command::new("netstat")
@@ -73,7 +35,7 @@ fn listeners() -> Vec<(u16, u32)> {
 }
 
 #[cfg(not(windows))]
-fn listeners() -> Vec<(u16, u32)> {
+pub(crate) fn listeners() -> Vec<(u16, u32)> {
     Vec::new()
 }
 
@@ -99,7 +61,7 @@ fn port_of(local: &str) -> Option<u16> {
 }
 
 /// parent pid -> direct child pids, from a refreshed `System`.
-fn children_map(sys: &System) -> HashMap<u32, Vec<u32>> {
+pub(crate) fn children_map(sys: &System) -> HashMap<u32, Vec<u32>> {
     let mut children: HashMap<u32, Vec<u32>> = HashMap::new();
     for (pid, p) in sys.processes() {
         if let Some(parent) = p.parent() {
@@ -111,7 +73,7 @@ fn children_map(sys: &System) -> HashMap<u32, Vec<u32>> {
 
 /// All pids in the subtree rooted at `root` (inclusive). `seen` guards against a
 /// malformed (cyclic) pid graph looping forever, mirroring `mem::subtree_rss`.
-fn subtree(root: u32, children: &HashMap<u32, Vec<u32>>) -> HashSet<u32> {
+pub(crate) fn subtree(root: u32, children: &HashMap<u32, Vec<u32>>) -> HashSet<u32> {
     let mut seen = HashSet::new();
     let mut stack = vec![root];
     while let Some(pid) = stack.pop() {

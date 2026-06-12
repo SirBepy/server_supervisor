@@ -53,7 +53,7 @@ fn spawn_list_logs_stop() {
 }
 
 #[test]
-fn list_reports_subtree_memory_for_running_process() {
+fn sample_tick_fills_subtree_memory_read_by_list() {
     let dir = tempfile::tempdir().unwrap();
     write_project(dir.path(), "ping -n 30 127.0.0.1");
     let sup = new_sup(dir.path());
@@ -64,13 +64,24 @@ fn list_reports_subtree_memory_for_running_process() {
     sup.start(ID).unwrap();
     std::thread::sleep(Duration::from_millis(1500));
 
-    // Running: sysinfo sampled the spawned `cmd`/`ping` subtree, so the figure
-    // is present and nonzero (proves the end-to-end wiring, not just the pure
-    // tree-walk unit test in supervisor::mem).
+    // RAM is now sampled off the UI thread by the background sampler, NOT inline
+    // in list(). Before a tick, list() reports nothing.
+    assert_eq!(
+        sup.list()[0].mem_bytes,
+        None,
+        "list() must not sample RAM itself (that was the UI-thread lag)"
+    );
+
+    // After a sampler tick, sysinfo has summed the spawned `cmd`/`ping` subtree
+    // and cached it, so list() reports a present, nonzero figure (proves the
+    // end-to-end wiring, not just the pure tree-walk unit test in supervisor::mem).
+    sup.sample_tick();
     let mem = sup.list()[0].mem_bytes;
     assert!(matches!(mem, Some(b) if b > 0), "running process must report nonzero RAM, got {mem:?}");
 
     sup.stop(ID).unwrap();
+    // stop() clears the cache immediately, so list() reflects it without waiting
+    // for the next sampler tick.
     assert_eq!(sup.list()[0].mem_bytes, None, "stopped again reports no RAM");
 }
 

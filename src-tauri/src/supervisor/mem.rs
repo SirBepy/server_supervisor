@@ -5,19 +5,23 @@
 //! `cargo`/`npm` launch spawns the real memory hogs (linkers, bundlers) as
 //! grandchildren, so the top pid's own RSS reads near zero while RAM actually
 //! disappears into descendants. Summing the subtree is the load-bearing part.
+//!
+//! These are pure helpers over a `System` snapshot. The combined background
+//! sampler (`supervisor::sampler`) owns the single `refresh_processes` pass and
+//! drives both this and `ports_detect` off it, so the UI poll path never
+//! enumerates the process table.
 
-use crate::types::ProcInfo;
 use std::collections::{HashMap, HashSet};
-use sysinfo::{ProcessesToUpdate, System};
+use sysinfo::System;
 
 /// pid -> (parent pid, own resident bytes). The shape `subtree_rss` walks.
-type ProcMap = HashMap<u32, (Option<u32>, u64)>;
+pub(crate) type ProcMap = HashMap<u32, (Option<u32>, u64)>;
 
 /// Sum resident bytes of `root` plus every descendant, given the full process
 /// map. Pure and deterministic so the tree-walk is unit-testable without a real
 /// `System`. Cycles (which shouldn't occur in a pid graph) are guarded via
 /// `seen` so a malformed map can't loop forever.
-fn subtree_rss(root: u32, procs: &ProcMap) -> u64 {
+pub(crate) fn subtree_rss(root: u32, procs: &ProcMap) -> u64 {
     let mut children: HashMap<u32, Vec<u32>> = HashMap::new();
     for (&pid, &(parent, _)) in procs {
         if let Some(pp) = parent {
@@ -41,31 +45,14 @@ fn subtree_rss(root: u32, procs: &ProcMap) -> u64 {
     total
 }
 
-/// Snapshot a refreshed `System` into the pid map `subtree_rss` consumes.
-fn snapshot(sys: &System) -> ProcMap {
+/// Snapshot an already-refreshed `System` into the pid map `subtree_rss`
+/// consumes. The caller owns the `refresh_processes(All)` pass (the sampler does
+/// it once and shares it with `ports_detect`).
+pub(crate) fn snapshot(sys: &System) -> ProcMap {
     sys.processes()
         .iter()
         .map(|(pid, p)| (pid.as_u32(), (p.parent().map(|pp| pp.as_u32()), p.memory())))
         .collect()
-}
-
-/// Fill `mem_bytes` for every running entry (one with a pid) using a single
-/// shared `System` refresh pass. Stopped entries are left `None`. Does nothing
-/// (and skips the refresh entirely) when nothing is running.
-pub fn fill_memory(infos: &mut [ProcInfo]) {
-    if infos.iter().all(|i| i.pid.is_none()) {
-        return;
-    }
-    let mut sys = System::new();
-    // One pass over all processes; `subtree_rss` needs the full parent graph to
-    // attribute descendants, so we refresh All rather than just the tracked pids.
-    sys.refresh_processes(ProcessesToUpdate::All, true);
-    let procs = snapshot(&sys);
-    for info in infos.iter_mut() {
-        if let Some(pid) = info.pid {
-            info.mem_bytes = Some(subtree_rss(pid, &procs));
-        }
-    }
 }
 
 #[cfg(test)]

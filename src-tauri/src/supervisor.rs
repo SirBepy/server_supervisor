@@ -8,6 +8,7 @@ pub mod proc;
 pub mod proxy;
 pub mod reaper;
 pub mod registry;
+pub mod sampler;
 pub mod spawn_env;
 pub mod validate;
 

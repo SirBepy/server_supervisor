@@ -136,6 +136,11 @@ impl Supervisor {
 
     // ----- runtime control (by composite id) -----
 
+    /// Cheap, UI-poll-safe snapshot. Only does per-proc `try_wait` liveness +
+    /// field clones; RAM and detected-port are read from the cache that the
+    /// background `sample_tick` fills. This used to enumerate the whole process
+    /// table twice and shell out to netstat on the main thread every poll, which
+    /// was the source of the window-drag / click lag.
     pub fn list(&self) -> Vec<ProcInfo> {
         let mut guard = self.procs.lock().unwrap();
         let mut out: Vec<ProcInfo> = guard
@@ -146,13 +151,34 @@ impl Supervisor {
             })
             .collect();
         out.sort_by(|a, b| (&a.project, &a.name).cmp(&(&b.project, &b.name)));
-        // One shared System refresh pass fills per-subtree RAM for running procs.
-        super::mem::fill_memory(&mut out);
-        // Then override `port` with the real OS-detected listening port where it
-        // differs from (or is missing from) the forced value, so the dashboard
-        // always shows the port the process actually bound.
-        super::ports_detect::fill_ports(&mut out);
         out
+    }
+
+    /// Background sampler: refresh RAM + detected-port for every running proc and
+    /// cache it on each `ManagedProc`. Runs on the reaper thread (off the UI
+    /// thread). The one heavy enumeration + netstat happens here, NOT in `list()`.
+    ///
+    /// Snapshots the running pids under the lock, does the heavy compute with the
+    /// lock released, then writes the results back. A proc that started between
+    /// the snapshot and the write-back simply keeps its prior cache for one more
+    /// tick; a proc that stopped has its cache cleared.
+    pub fn sample_tick(&self) {
+        let running: Vec<(String, u32, Option<u16>)> = {
+            let guard = self.procs.lock().unwrap();
+            guard
+                .values()
+                .filter_map(|p| p.pid.map(|pid| (p.spec.id.clone(), pid, p.acquired_port())))
+                .collect()
+        };
+        let samples = super::sampler::sample(&running);
+        let mut guard = self.procs.lock().unwrap();
+        for p in guard.values_mut() {
+            if p.pid.is_none() {
+                p.set_sample(None, None);
+            } else if let Some(s) = samples.get(&p.spec.id) {
+                p.set_sample(Some(s.mem), s.port);
+            }
+        }
     }
 
     pub fn logs(&self, id: &str) -> Result<Vec<LogLine>, String> {

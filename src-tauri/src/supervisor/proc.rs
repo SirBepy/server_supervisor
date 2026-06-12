@@ -53,6 +53,14 @@ pub struct ManagedProc {
     /// The internal ephemeral port flutter binds when proxied (the proxy fronts
     /// it on the public port). The registry releases this on stop.
     internal_port: Option<u16>,
+    /// Subtree resident bytes, cached by the background sampler. Read by `info()`;
+    /// never computed on the UI poll path. `None` until the first sample after a
+    /// start, and cleared when the proc stops/crashes.
+    sampled_mem: Option<u64>,
+    /// OS-detected listening port, cached by the background sampler (same value
+    /// the old inline `fill_ports` computed). `info()` prefers this over the
+    /// forced `acquired_port` so the dashboard shows the port actually bound.
+    sampled_port: Option<u16>,
 }
 
 impl ManagedProc {
@@ -72,7 +80,16 @@ impl ManagedProc {
             proxy: None,
             reload_tx: None,
             internal_port: None,
+            sampled_mem: None,
+            sampled_port: None,
         }
+    }
+
+    /// Store the latest background-sampler reading (subtree RAM + detected port).
+    /// Called only from `Supervisor::sample_tick`, never on the UI poll path.
+    pub fn set_sample(&mut self, mem: Option<u64>, port: Option<u16>) {
+        self.sampled_mem = mem;
+        self.sampled_port = port;
     }
 
     /// True when this proc is a flutter web-server launch with a `{PORT}`
@@ -135,11 +152,12 @@ impl ManagedProc {
             kind: self.spec.kind.clone(),
             status: self.status.clone(),
             pid: self.pid,
-            port: self.acquired_port,
-            // Filled in a single shared refresh pass by `mem::fill_memory` after
-            // the list is built; per-proc sampling here would build one System
-            // per process, which the spec forbids.
-            mem_bytes: None,
+            // Prefer the sampler's OS-detected port; fall back to the forced
+            // port until the first sample lands (≤ one sampler tick after start).
+            port: self.sampled_port.or(self.acquired_port),
+            // Cached by the background sampler, never computed here: the UI poll
+            // path must not enumerate the process table (that was the lag).
+            mem_bytes: self.sampled_mem,
         }
     }
 
@@ -160,6 +178,10 @@ impl ManagedProc {
                 self.pid = None;
                 self.child = None;
                 self.stdin = None;
+                // No longer running: drop the cached RAM/port so the dashboard
+                // doesn't show a frozen figure until the next sampler tick.
+                self.sampled_mem = None;
+                self.sampled_port = None;
                 // The child died on its own. Drop the proxy so its TcpListener on
                 // the public port is freed immediately (otherwise it keeps serving
                 // 502s until an explicit stop/restart); dropping ProxyTask runs its
@@ -382,6 +404,8 @@ impl ManagedProc {
         self.status = ProcStatus::Stopped;
         self.pid = None;
         self.started_at = None;
+        self.sampled_mem = None;
+        self.sampled_port = None;
         *self.app_id.lock().unwrap() = None;
         self.push_log("stdout", "[supervisor] stopped".to_string());
     }

@@ -46,7 +46,11 @@ pub fn save_settings(app: AppHandle, settings: Settings) -> Result<(), String> {
     settings::save(&app, &settings)
 }
 
-#[tauri::command]
+// `async` so Tauri runs it on a worker thread, not the main/UI thread. The body
+// is sync (a quick lock + clone now that sampling is cached), but keeping it off
+// the main thread means even that brief lock never competes with window message
+// pumping.
+#[tauri::command(async)]
 pub fn list_procs(sup: State<Arc<Supervisor>>) -> Vec<ProcInfo> {
     sup.list()
 }

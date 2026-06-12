@@ -87,6 +87,10 @@ pub fn run() {
             std::thread::spawn(move || loop {
                 std::thread::sleep(std::time::Duration::from_secs(3));
                 reap_sup.reap_tick();
+                // Refresh the RAM + detected-port cache here, off the UI thread.
+                // list() (the UI poll) now only reads this cache, so the heavy
+                // process enumeration + netstat no longer block window drag/clicks.
+                reap_sup.sample_tick();
             });
 
             // Localhost API for programmatic (AI agent) control.
