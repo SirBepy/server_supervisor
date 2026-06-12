@@ -80,6 +80,10 @@ pub struct ProcInfo {
     /// `cargo`) lives in grandchildren, not the top pid.
     #[serde(default)]
     pub mem_bytes: Option<u64>,
+    /// Unix epoch millis when the current run started, for the dashboard's
+    /// "started N ago" uptime line. `None` when stopped.
+    #[serde(default)]
+    pub started_at: Option<u64>,
 }
 
 /// Composite runtime id for a (project, command) pair. Uses `:` (never emitted

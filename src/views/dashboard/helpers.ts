@@ -36,6 +36,20 @@ export function formatBytes(bytes: number | bigint | null | undefined): string {
   return `${(mb / 1024).toFixed(2)} GB`;
 }
 
+// Human uptime for the expanded-card "started N ago" line, from a unix-ms start
+// timestamp. Returns "" for null so the caller can omit the clause entirely.
+export function formatUptime(startedAtMs: number | bigint | null | undefined): string {
+  if (startedAtMs == null) return "";
+  const sec = Math.floor((Date.now() - Number(startedAtMs)) / 1000);
+  if (sec < 60) return "just now";
+  const min = Math.floor(sec / 60);
+  if (min < 60) return `${min} minute${min === 1 ? "" : "s"} ago`;
+  const hr = Math.floor(min / 60);
+  if (hr < 24) return `${hr} hour${hr === 1 ? "" : "s"} ago`;
+  const day = Math.floor(hr / 24);
+  return `${day} day${day === 1 ? "" : "s"} ago`;
+}
+
 // Derive a short command name (mirrors the backend `derive_name`). Never returns
 // the whole command line: a long Flutter launch collapses to "flutter run", and
 // any unrecognized command falls back to its program basename (no path, no ext).

@@ -7,7 +7,7 @@ import "./dashboard.css";
 import * as ipc from "../../shared/ipc";
 import type { Project } from "../../types/ipc.generated";
 import { ui, setDraw, refresh, act } from "./state";
-import { formatBytes, displayName } from "./helpers";
+import { formatBytes, displayName, formatUptime } from "./helpers";
 import { modalView, startAddCommand } from "./modals";
 import { startAddProject } from "./add-project";
 import { renderAnsi } from "../../shared/ansi";
@@ -81,53 +81,64 @@ function toggleCollapse(projectId: string) {
   draw();
 }
 
-function dot(id: string): TemplateResult {
-  const status = ui.statusById[id]?.status ?? "stopped";
-  return html`<span class="dot ${status}" title=${status}></span>`;
+// Map a process status to the card's status class (drives the colored left
+// edge). Unknown/absent reads as stopped.
+function statusClass(status: string | undefined): string {
+  switch (status) {
+    case "running":
+    case "starting":
+    case "crashed":
+      return status;
+    default:
+      return "stopped";
+  }
 }
 
-// Open a running command's port in a browser, with a brief "opened!" flash on
-// the badge. Flutter-web ports go to the dedicated CORS-disabled dev browser
-// (new tab in the same window); everything else opens in the default browser.
-// Always http: these are localhost dev servers (and the flutter reload proxy).
-function openPort(id: string, port: number, flutter: boolean) {
+// Open a running command's port in a browser (from the kebab menu). Flutter-web
+// ports go to the dedicated CORS-disabled dev browser (new tab in the same
+// window); everything else opens in the default browser. Always http: these are
+// localhost dev servers (and the flutter reload proxy), never https.
+function openInBrowser(port: number, flutter: boolean) {
   void ipc.openPortUrl(`http://localhost:${port}`, flutter);
-  ui.openedPortId = id;
-  draw();
-  window.setTimeout(() => {
-    if (ui.openedPortId === id) {
-      ui.openedPortId = null;
-      draw();
-    }
-  }, 1200);
 }
 
-// Copy the local URL for a running command's port to the clipboard (from the
-// per-command kebab menu), with a brief "copied!" flash on the badge.
-function copyPortUrl(id: string, port: number) {
+// Copy a command's localhost URL to the clipboard (from the kebab menu).
+function copyPortUrl(port: number) {
   void navigator.clipboard?.writeText(`http://localhost:${port}`);
-  ui.copiedPortId = id;
-  draw();
-  window.setTimeout(() => {
-    if (ui.copiedPortId === id) {
-      ui.copiedPortId = null;
-      draw();
-    }
-  }, 1200);
 }
 
-// Per-command "more options" (kebab) menu: the secondary actions live here so
-// only the primary action (Start when stopped, Hot restart for a running
-// flutter app) stays a bare button on the card. Stop/Restart when running;
-// Edit/Remove when stopped (a running command can't be edited or removed).
+// The expanded-card header: pid + RAM + port + uptime, in one muted line. These
+// move here from the resting row so the row stays clean; when the card is open
+// the right-side stats are hidden, so this is where they remain visible.
+function drawerHeader(
+  pid: number | null | undefined,
+  mem: bigint | number | null | undefined,
+  port: number | null | undefined,
+  startedAt: bigint | number | null | undefined,
+): string {
+  const parts: string[] = [];
+  if (pid != null) parts.push(`pid ${pid}`);
+  if (mem != null) parts.push(formatBytes(mem));
+  if (port != null) parts.push(`port ${port}`);
+  const up = formatUptime(startedAt);
+  if (up) parts.push(`started ${up}`);
+  return parts.length ? parts.join(" · ") : "no run info";
+}
+
+// Per-command "more options" (kebab) menu. For a live process (running or
+// starting): Open-in-browser + Copy URL for its port (the port is no longer a
+// bare clickable badge - opening it lives here), then Restart / Stop. For a
+// stopped or crashed process: Edit / Remove (you can't edit a live command).
 function cmdMenu(
   project: Project,
   cmd: Project["commands"][number],
   id: string,
-  running: boolean,
+  status: string,
 ): TemplateResult {
   const open = ui.openCmdMenuFor === id;
+  const live = status === "running" || status === "starting";
   const port = ui.statusById[id]?.port;
+  const isFlutter = cmd.kind === "flutter";
   const close = () => {
     ui.openCmdMenuFor = null;
   };
@@ -147,18 +158,24 @@ function cmdMenu(
       ${open
         ? html`
             <div class="more-menu" @click=${(e: Event) => e.stopPropagation()}>
-              ${running
+              ${live
                 ? html`
                     ${port != null
-                      ? html`<button @click=${() => { close(); copyPortUrl(id, port); }}>
-                          <i class="ph ph-copy"></i> Copy URL
-                        </button>`
+                      ? html`
+                          <button class="accent" @click=${() => { close(); openInBrowser(port, isFlutter); }}>
+                            <i class="ph ph-globe-simple"></i> Open :${port} in browser
+                          </button>
+                          <button @click=${() => { close(); copyPortUrl(port); }}>
+                            <i class="ph ph-copy"></i> Copy URL
+                          </button>
+                          <div class="menu-div"></div>
+                        `
                       : nothing}
-                    <button @click=${() => { close(); void act(ipc.stopProc(id)); }}>
-                      <i class="ph ph-stop"></i> Stop
-                    </button>
                     <button @click=${() => { close(); void act(ipc.restartProc(id)); }}>
                       <i class="ph ph-arrow-clockwise"></i> Restart
+                    </button>
+                    <button @click=${() => { close(); void act(ipc.stopProc(id)); }}>
+                      <i class="ph ph-stop"></i> Stop
                     </button>
                   `
                 : html`
@@ -208,72 +225,73 @@ function cmdMenu(
 
 function commandRow(project: Project, cmd: Project["commands"][number]): TemplateResult {
   const id = `${project.id}:${cmd.id}`;
-  const running = ui.statusById[id]?.status === "running";
-  const pid = ui.statusById[id]?.pid;
-  const port = ui.statusById[id]?.port;
-  const mem = ui.statusById[id]?.mem_bytes;
+  const info = ui.statusById[id];
+  const status = info?.status ?? "stopped";
+  const running = status === "running";
+  const pid = info?.pid;
+  const port = info?.port;
+  const mem = info?.mem_bytes;
+  const startedAt = info?.started_at;
+  const isFlutter = cmd.kind === "flutter";
   const logsOpen = ui.openLogsFor === id;
+  // Only live/crashed processes have logs worth expanding; stopped ones are inert.
+  const expandable = status !== "stopped";
+  const menuOpen = ui.openCmdMenuFor === id;
+
   return html`
-    <div class="card ${logsOpen ? "logs-open" : ""}">
+    <div
+      class="card ${statusClass(status)} ${expandable ? "expandable" : ""} ${logsOpen ? "logs-open" : ""} ${menuOpen ? "cmd-menu-open" : ""}"
+    >
       <div
-        class="info"
-        role="button"
-        title="Click to ${logsOpen ? "hide" : "show"} logs"
-        @click=${() => toggleLogs(id)}
+        class="row"
+        role=${expandable ? "button" : nothing}
+        title=${expandable ? `Click to ${logsOpen ? "hide" : "show"} logs` : nothing}
+        @click=${expandable ? () => toggleLogs(id) : nothing}
       >
-        <div class="head">
-          ${dot(id)}
-          <span class="name" title=${cmd.name}>${displayName(cmd)}</span>
-          <i class="ph ph-terminal-window logs-hint ${logsOpen ? "on" : ""}"></i>
-        </div>
-        <div class="meta">
-          ${pid != null
-            ? html`<span class="pid">pid ${pid}</span>`
-            : ui.statusById[id]?.status && ui.statusById[id].status !== "stopped"
-              ? html`<span class="pid">${ui.statusById[id].status}</span>`
+        <span class="name" title=${cmd.name}>${displayName(cmd)}</span>
+        ${isFlutter ? html`<span class="ftag">flutter</span>` : nothing}
+        ${status === "crashed" ? html`<span class="statusword">crashed</span>` : nothing}
+        ${status === "starting" ? html`<span class="statusword">starting</span>` : nothing}
+        <div class="right">
+          <div class="stats">
+            ${mem != null
+              ? html`<span class="cell"><span class="k">RAM</span><span class="v">${formatBytes(mem)}</span></span>`
               : nothing}
-          ${port != null
-            ? html`<button
-                class="port ${ui.copiedPortId === id || ui.openedPortId === id ? "copied" : ""}"
-                title="Open http://localhost:${port}${cmd.kind === "flutter" ? " (CORS-disabled dev browser)" : ""}"
-                @click=${(e: Event) => {
-                  e.stopPropagation();
-                  openPort(id, port, cmd.kind === "flutter");
-                }}
-              >
-                ${ui.openedPortId === id
-                  ? "opened!"
-                  : ui.copiedPortId === id
-                    ? "copied!"
-                    : html`port ${port}`}
-              </button>`
-            : nothing}
-          ${running && mem != null
-            ? html`<span class="ram" title="resident memory (whole process tree)">${formatBytes(mem)}</span>`
-            : nothing}
-          ${cmd.kind === "flutter" ? html`<span class="tag">flutter</span>` : nothing}
+            ${port != null
+              ? html`<span class="cell"><span class="k">Port</span><span class="v">${port}</span></span>`
+              : nothing}
+          </div>
+          <div class="controls" @click=${(e: Event) => e.stopPropagation()}>
+            ${running && isFlutter
+              ? html`<button class="abtn" title="Hot restart" @click=${() => act(ipc.reloadProc(id))}>
+                  <i class="ph ph-arrows-clockwise"></i>
+                </button>`
+              : nothing}
+            ${status === "stopped" || status === "crashed"
+              ? html`<button class="abtn start" title="Start" @click=${() => act(ipc.startProc(id))}>
+                  <i class="ph ph-play"></i>
+                </button>`
+              : nothing}
+            ${cmdMenu(project, cmd, id, status)}
+            ${expandable
+              ? html`<i
+                  class="ph ${logsOpen ? "ph-caret-up" : "ph-caret-down"} chev"
+                  title="${logsOpen ? "Hide" : "Show"} logs"
+                  @click=${() => toggleLogs(id)}
+                ></i>`
+              : nothing}
+          </div>
         </div>
       </div>
-      <div class="actions">
-        ${running
-          ? html`
-              ${cmd.kind === "flutter"
-                ? html`<button title="Hot restart" @click=${() => act(ipc.reloadProc(id))}>
-                    <i class="ph ph-arrows-clockwise"></i>
-                  </button>`
-                : nothing}
-            `
-          : html`
-              <button title="Start" class="primary" @click=${() => act(ipc.startProc(id))}>
-                <i class="ph ph-play"></i>
-              </button>
-            `}
-        ${cmdMenu(project, cmd, id, running)}
-      </div>
+      ${logsOpen
+        ? html`
+            <div class="drawer">
+              <div class="pidline">${drawerHeader(pid, mem, port, startedAt)}</div>
+              <pre class="logs">${ui.logText ? renderAnsi(ui.logText) : "(no output yet)"}</pre>
+            </div>
+          `
+        : nothing}
     </div>
-    ${logsOpen
-      ? html`<pre class="logs">${ui.logText ? renderAnsi(ui.logText) : "(no output yet)"}</pre>`
-      : nothing}
   `;
 }
 

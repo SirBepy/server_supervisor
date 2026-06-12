@@ -198,81 +198,66 @@
   margin: 0;
 }
 
+/* Per-command card. State is carried by the colored, rounded LEFT EDGE + a faint
+   tint (no status dot). The right side is a "swap zone": labeled RAM/Port stats
+   at rest, action controls on hover or while expanded. */
 .card {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 12px;
+  position: relative;
   background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 10px 12px;
-  margin-bottom: 8px;
+  border-left: 3px solid var(--border);
+  border-radius: 10px;
+  padding: 11px 14px;
+  margin-bottom: 9px;
+  transition: transform 0.12s ease, box-shadow 0.12s ease, border-color 0.12s ease;
 }
 
-/* Name (with status dot) on the first line; the status/pid/port/tag badges wrap
-   onto a second line below, so a long command name never shoves them sideways. */
-.info {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  min-width: 0;
-  flex: 1 1 auto;
+.card.running {
+  border-left-color: var(--success, #34d399);
+  background: linear-gradient(90deg, rgba(52, 211, 153, 0.1), rgba(52, 211, 153, 0) 55%), var(--surface);
+}
+.card.starting {
+  border-left-color: #e0b341;
+  background: linear-gradient(90deg, rgba(224, 179, 65, 0.1), rgba(224, 179, 65, 0) 55%), var(--surface);
+}
+.card.crashed {
+  border-left-color: var(--danger, #f87171);
+  background: linear-gradient(90deg, rgba(248, 113, 113, 0.12), rgba(248, 113, 113, 0) 55%), var(--surface);
+}
+.card.stopped {
+  opacity: 0.62;
+  border-left-color: #3a4756;
 }
 
-.head {
+/* Active cards (anything but stopped) expand into the log drawer: lift + pointer
+   on hover, and stay lifted while open. */
+.card.expandable:hover,
+.card.expandable.logs-open {
+  transform: translateY(-1px);
+  box-shadow: 0 7px 20px rgba(0, 0, 0, 0.4);
+  border-color: rgba(56, 189, 248, 0.45);
+}
+
+.row {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 9px;
   min-width: 0;
 }
-
-/* The command's info block is the click target that toggles the log pane (the
-   old terminal button is gone). Make it read as clickable: pointer cursor, the
-   name brightens on hover and while the pane is open. */
-.card .info {
+.card.expandable .row {
   cursor: pointer;
-}
-.card .info:hover .name,
-.card.logs-open .name {
-  color: var(--accent);
-}
-
-/* Small terminal glyph beside the name: the affordance that the row reveals
-   logs. Muted by default, brighter on hover, accent while the pane is open. */
-.logs-hint {
-  font-size: 13px;
-  color: var(--muted);
-  opacity: 0.55;
-  flex: 0 0 auto;
-  transition: opacity 0.12s ease, color 0.12s ease;
-}
-.card .info:hover .logs-hint {
-  opacity: 1;
-  color: var(--fg);
-}
-.logs-hint.on {
-  opacity: 1;
-  color: var(--accent);
-}
-
-.meta {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
 }
 
 .name {
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 600;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  min-width: 0;
 }
 
-.tag {
+.ftag {
   font-size: 10px;
   text-transform: uppercase;
   letter-spacing: 0.05em;
@@ -280,92 +265,130 @@
   border: 1px solid var(--border);
   border-radius: 4px;
   padding: 1px 5px;
+  flex: 0 0 auto;
 }
 
-.pid,
-.port,
-.ram {
+.statusword {
+  font-size: 11px;
   color: var(--muted);
-  font-size: 12px;
+  font-variant: small-caps;
+  letter-spacing: 0.04em;
+  flex: 0 0 auto;
+}
+.card.crashed .statusword {
+  color: var(--danger, #f87171);
 }
 
-/* The port badge is a button (click to copy its localhost URL) but should read
-   as the same inline muted text as its sibling badges: strip the button chrome,
-   add only a pointer + a hover hint that it is actionable. */
-button.port {
-  font-family: inherit;
-  border: 0;
-  background: none;
-  padding: 0;
-  cursor: pointer;
+/* The swap zone. */
+.right {
+  position: relative;
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  min-height: 30px;
+  flex: 0 0 auto;
 }
 
-button.port:hover {
+.stats {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  transition: opacity 0.12s ease;
+}
+.cell {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.25;
+  gap: 1px;
+}
+.cell .k {
+  font-size: 8.5px;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.cell .v {
+  font-size: 13px;
   color: var(--fg);
-  text-decoration: underline;
-}
-
-button.port.copied {
-  color: var(--accent);
-}
-
-/* RAM badge: tabular figures so the value doesn't jitter width as it updates. */
-.ram {
   font-variant-numeric: tabular-nums;
 }
 
-.dot {
-  width: 9px;
-  height: 9px;
-  border-radius: 50%;
-  background: var(--muted);
-  flex: 0 0 auto;
-}
-.dot.running {
-  background: #46d369;
-}
-.dot.stopped {
-  background: #5a616e;
-}
-.dot.starting {
-  background: #e0b341;
-}
-.dot.crashed {
-  background: #e0564b;
-}
-
-.actions {
+.controls {
+  position: absolute;
+  right: 0;
+  top: 50%;
+  transform: translateY(-50%);
   display: flex;
+  align-items: center;
   gap: 6px;
-  flex: 0 0 auto;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.12s ease;
+}
+/* Reveal controls (and hide the stats) on hover, while the card is expanded, or
+   while this card's own kebab menu is open (so the menu anchor never vanishes). */
+.card:hover .controls,
+.card.logs-open .controls,
+.card.cmd-menu-open .controls {
+  opacity: 1;
+  pointer-events: auto;
+}
+.card:hover .stats,
+.card.logs-open .stats,
+.card.cmd-menu-open .stats {
+  opacity: 0;
 }
 
-/* Anchor for the per-command "more options" popover (.more-menu opens absolutely
-   positioned against this). */
+/* Anchor for the per-command "more options" popover. */
 .cmd-more {
   position: relative;
   display: inline-flex;
 }
 
-.actions button {
-  background: transparent;
+.abtn,
+.controls .cmd-more > button {
+  background: var(--surface);
   color: var(--fg);
   border: 1px solid var(--border);
   border-radius: 6px;
-  padding: 6px 9px;
+  width: 28px;
+  height: 26px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   cursor: pointer;
   font-size: 14px;
   line-height: 1;
+  padding: 0;
 }
-.actions button:hover {
+.abtn:hover,
+.controls .cmd-more > button:hover {
   border-color: var(--accent);
 }
-.actions button.primary {
-  color: #46d369;
+.abtn.start {
+  color: var(--success, #34d399);
 }
-.actions button.active {
+.controls .cmd-more > button.active {
   border-color: var(--accent);
   color: var(--accent);
+}
+
+.chev {
+  color: var(--muted);
+  font-size: 13px;
+  margin-left: 2px;
+  flex: 0 0 auto;
+}
+
+/* Accent the primary "Open in browser" item in the kebab menu. */
+.more-menu button.accent,
+.more-menu button.accent i {
+  color: var(--accent);
+}
+.menu-div {
+  height: 1px;
+  background: var(--border);
+  margin: 4px 6px;
 }
 
 .error {
@@ -383,8 +406,23 @@ button.port.copied {
   line-height: 1.5;
 }
 
+/* Expanded log drawer: a thin rule, the pid/RAM/port/uptime header line, then
+   the scrolling log pane. pid + the run stats live here (not on the resting row)
+   so they stay visible while the card is open. */
+.drawer {
+  margin-top: 11px;
+  padding-top: 9px;
+  border-top: 1px solid var(--border);
+}
+.pidline {
+  font-size: 11.5px;
+  color: var(--muted);
+  font-family: "Cascadia Code", Consolas, monospace;
+  margin-bottom: 7px;
+}
+
 .logs {
-  margin: 0 4px 8px;
+  margin: 0;
   padding: 12px;
   background: #0a0c10;
   border: 1px solid var(--border);

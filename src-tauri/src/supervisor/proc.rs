@@ -158,6 +158,7 @@ impl ManagedProc {
             // Cached by the background sampler, never computed here: the UI poll
             // path must not enumerate the process table (that was the lag).
             mem_bytes: self.sampled_mem,
+            started_at: self.started_at,
         }
     }
 
