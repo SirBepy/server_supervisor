@@ -17,6 +17,76 @@ body {
   font-size: 14px;
 }
 
+/* #app sits above the fixed aurora layer; its own surfaces are opaque, so the
+   aurora only shows through the gaps between rows/cards for subtle depth. */
+#app {
+  position: relative;
+  z-index: 1;
+}
+
+/* Subtle drifting aurora: two large blurred blobs on slow loops. Pure CSS,
+   GPU-cheap (transform/opacity only), paused when the window is hidden. */
+.app-aurora {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+.app-aurora::before,
+.app-aurora::after {
+  content: "";
+  position: absolute;
+  width: 60vw;
+  height: 60vw;
+  border-radius: 50%;
+  filter: blur(72px);
+}
+.app-aurora::before {
+  background: var(--accent);
+  opacity: 0.16;
+  left: -20vw;
+  top: -18vw;
+  animation: aurora-drift-1 26s ease-in-out infinite;
+}
+.app-aurora::after {
+  background: #7c3aed;
+  opacity: 0.12;
+  right: -22vw;
+  bottom: -20vw;
+  animation: aurora-drift-2 32s ease-in-out infinite;
+}
+@keyframes aurora-drift-1 {
+  0%,
+  100% {
+    transform: translate(0, 0);
+  }
+  50% {
+    transform: translate(8vw, 7vw);
+  }
+}
+@keyframes aurora-drift-2 {
+  0%,
+  100% {
+    transform: translate(0, 0);
+  }
+  50% {
+    transform: translate(-7vw, -6vw);
+  }
+}
+/* Pause repainting while the window is hidden to tray. */
+body.bg-paused .app-aurora::before,
+body.bg-paused .app-aurora::after {
+  animation-play-state: paused;
+}
+/* Respect reduced-motion: hold the blobs still. */
+@media (prefers-reduced-motion: reduce) {
+  .app-aurora::before,
+  .app-aurora::after {
+    animation: none;
+  }
+}
+
 .shell {
   padding: 24px;
   max-width: 640px;

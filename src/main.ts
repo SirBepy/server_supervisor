@@ -34,6 +34,12 @@ window.addEventListener("hashchange", () => void route());
 void bootstrapTheme();
 void route();
 
+// Pause the background animation while the window is hidden (tray) so it never
+// repaints off-screen.
+document.addEventListener("visibilitychange", () => {
+  document.body.classList.toggle("bg-paused", document.hidden);
+});
+
 // On-startup auto-update check (reads the kit's __kit_auto_update setting;
 // default "onStartup" prompts before installing). Skipped under `vite dev`,
 // whose binary lags the released version and would falsely "find" an update.
