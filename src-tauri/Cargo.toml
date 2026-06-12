@@ -39,6 +39,7 @@ ts-rs = "10"
 sysinfo = { version = "0.39", default-features = false, features = ["system"] }
 tauri_kit_settings = { path = "../vendor/tauri_kit/tauri/settings" }
 tauri_kit_updater = { path = "../vendor/tauri_kit/tauri/updater" }
+base64 = "0.22.1"
 
 [dev-dependencies]
 tempfile = "3"
