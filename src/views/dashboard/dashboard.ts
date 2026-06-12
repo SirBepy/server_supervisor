@@ -18,6 +18,7 @@ export function mountDashboard(el: HTMLElement): () => void {
   ui.root = el;
   setDraw(draw);
   void refresh();
+  void loadPrefs();
   // Capture the poll handle and clear it on teardown. Without this the interval
   // outlives navigation and keeps calling draw() into the (now replaced) root,
   // throwing lit-html "ChildPart has no parentNode" every tick and corrupting
@@ -49,6 +50,21 @@ export function mountDashboard(el: HTMLElement): () => void {
     document.removeEventListener("click", onDocClick);
     document.removeEventListener("keydown", onKey);
   };
+}
+
+// Read the density prefs from settings into ui state, then redraw. Runs on every
+// dashboard mount - route() remounts the dashboard when returning from #settings,
+// so this also picks up changes the user just made without a separate subscription.
+async function loadPrefs() {
+  try {
+    const s = await ipc.getSettings();
+    ui.showCommandCount = s.show_command_count;
+    ui.showRam = s.show_ram;
+    ui.showPort = s.show_port;
+    draw();
+  } catch {
+    // Settings unavailable (e.g. IPC down): keep the defaults already in ui.
+  }
 }
 
 async function toggleLogs(id: string) {

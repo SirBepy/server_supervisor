@@ -116,6 +116,11 @@ export const ui = {
   // is open, or null. Holds the secondary actions (stop/restart, edit/remove);
   // the primary action stays a bare button on the card.
   openCmdMenuFor: null as string | null,
+  // Dashboard density prefs, loaded from settings on mount (see loadPrefs).
+  // Defaults mirror the Rust Settings defaults so first paint matches.
+  showCommandCount: false,
+  showRam: true,
+  showPort: true,
 };
 
 // draw() indirection: dashboard.ts owns the top-level render and registers it
