@@ -44,6 +44,29 @@ export function buildSettingsSchema(apiToken: string): SettingsSchema {
           makeTokenField(apiToken),
         ],
       },
+      {
+        title: "Dashboard",
+        fields: [
+          {
+            key: "show_command_count",
+            kind: "toggle",
+            label: "Show command count",
+            tooltip: "Show how many commands each project has on its row.",
+          },
+          {
+            key: "show_ram",
+            kind: "toggle",
+            label: "Show RAM",
+            tooltip: "Show the RAM stat on running command cards.",
+          },
+          {
+            key: "show_port",
+            kind: "toggle",
+            label: "Show port",
+            tooltip: "Show the port stat on running command cards.",
+          },
+        ],
+      },
     ],
   });
 }
