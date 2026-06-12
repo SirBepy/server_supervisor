@@ -1,5 +1,7 @@
 // Pure string helpers shared by the dashboard view modules. No state, no IPC.
 
+import type { Project, ProcInfo } from "../../types/ipc.generated";
+
 // Last path segment, ignoring trailing slashes.
 export function basename(p: string): string {
   return p.replace(/[\\/]+$/, "").split(/[\\/]/).pop() ?? p;
@@ -74,4 +76,71 @@ export function displayName(spec: { name: string; cmd: string }): string {
   if (n.length <= MAX_DISPLAY_NAME && !/[/\\]/.test(n)) return n;
   const d = deriveName(spec.cmd);
   return d.length <= MAX_DISPLAY_NAME ? d : d.slice(0, MAX_DISPLAY_NAME - 1) + "…";
+}
+
+// Tech identities we can draw a Devicon logo for.
+export type TechKey =
+  | "rust" | "flutter" | "node" | "python" | "go" | "deno" | "docker" | "dotnet";
+
+// Program basename (lowercased, extension-stripped) -> tech. Mirrors deriveName's
+// program parsing so the row logo matches how commands are actually launched.
+const TECH_BY_PROG: Record<string, TechKey> = {
+  cargo: "rust", rustc: "rust", rustup: "rust",
+  flutter: "flutter", dart: "flutter",
+  npm: "node", pnpm: "node", yarn: "node", bun: "node", npx: "node", node: "node",
+  python: "python", python3: "python", py: "python",
+  go: "go",
+  deno: "deno",
+  docker: "docker", "docker-compose": "docker",
+  dotnet: "dotnet",
+};
+
+// Detect the tech of a single command string from its program token. Handles the
+// fvm wrapper Joe uses for Flutter ("fvm flutter run").
+export function techFromCmd(cmd: string): TechKey | null {
+  const toks = cmd.trim().split(/\s+/).filter(Boolean);
+  if (toks.length === 0) return null;
+  const prog = basename(toks[0]).replace(/\.(exe|cmd|bat|sh|ps1)$/i, "").toLowerCase();
+  if (prog === "fvm" && toks[1] && basename(toks[1]).toLowerCase().startsWith("flutter")) {
+    return "flutter";
+  }
+  return TECH_BY_PROG[prog] ?? null;
+}
+
+// A project's tech: prefer a currently-live command's tech (that's what the user
+// cares about right now), else the first command with a detectable tech.
+export function projectTech(
+  project: Project,
+  statusById: Record<string, ProcInfo>,
+): TechKey | null {
+  const isLive = (c: Project["commands"][number]) => {
+    const st = statusById[`${project.id}:${c.id}`]?.status;
+    return st === "running" || st === "starting";
+  };
+  const live = project.commands.find(isLive);
+  const ordered = live ? [live, ...project.commands] : project.commands;
+  for (const c of ordered) {
+    const t = techFromCmd(c.cmd);
+    if (t) return t;
+  }
+  return null;
+}
+
+// Devicon class per tech. `colored` is appended where the brand has a colored
+// variant; rust has none (tinted via CSS instead). Class names verified against
+// the installed devicon.min.css (deno is `denojs`, .NET is `dotnetcore`, Go's
+// colored mark is `go-original-wordmark`).
+const DEVICON: Record<TechKey, string> = {
+  rust: "devicon-rust-plain",
+  flutter: "devicon-flutter-plain colored",
+  node: "devicon-nodejs-plain colored",
+  python: "devicon-python-plain colored",
+  go: "devicon-go-original-wordmark colored",
+  deno: "devicon-denojs-original",
+  docker: "devicon-docker-plain colored",
+  dotnet: "devicon-dotnetcore-plain colored",
+};
+
+export function deviconClass(tech: TechKey): string {
+  return DEVICON[tech];
 }
