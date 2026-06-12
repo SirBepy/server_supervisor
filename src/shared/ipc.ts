@@ -7,6 +7,7 @@ import type {
   Command,
   DetectedCommand,
   CommandCheck,
+  ProjectIcon,
 } from "../types/ipc.generated";
 
 // Runtime control (composite "projectId:commandId" ids).
@@ -75,6 +76,9 @@ export function validateCommand(root: string, cmd: string): Promise<CommandCheck
 
 export const openInExplorer = (path: string) =>
   invoke<void>("open_in_explorer", { path });
+
+export const getProjectIcon = (root: string) =>
+  invoke<ProjectIcon | null>("get_project_icon", { root });
 
 export const getSettings = () => invoke<Settings>("get_settings");
 export const getApiToken = () => invoke<string>("get_api_token");

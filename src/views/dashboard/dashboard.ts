@@ -329,9 +329,40 @@ function hasStartable(project: Project): boolean {
   });
 }
 
-// The project's icon slot. Phase 1: tech logo (Devicon) if detectable, else a
-// generic Phosphor terminal glyph. Phase 2 prepends a real project icon.
+// Kick off a one-time icon fetch for a project, caching the result. Redraws when
+// it resolves so the <img> appears. No-op if already fetched/pending.
+function ensureProjectIcon(project: Project) {
+  if (project.id in ui.iconCache) return;
+  ui.iconCache[project.id] = undefined; // mark pending (key now present)
+  void ipc
+    .getProjectIcon(project.root)
+    .then((icon) => {
+      ui.iconCache[project.id] = icon ? `data:${icon.mime};base64,${icon.data}` : null;
+      draw();
+    })
+    .catch(() => {
+      ui.iconCache[project.id] = null;
+      draw();
+    });
+}
+
+// The project's icon slot: real project icon (tier 1) -> tech logo (tier 2) ->
+// generic Phosphor terminal glyph (tier 3).
 function projectIconTemplate(project: Project): TemplateResult {
+  ensureProjectIcon(project);
+  const cached = ui.iconCache[project.id];
+  if (typeof cached === "string") {
+    // onerror falls back to the tech logo if the bytes fail to decode.
+    return html`<span class="picon"
+      ><img
+        src=${cached}
+        alt=""
+        @error=${() => {
+          ui.iconCache[project.id] = null;
+          draw();
+        }}
+    /></span>`;
+  }
   const tech = projectTech(project, ui.statusById);
   if (tech) {
     return html`<span class="picon"><i class="${deviconClass(tech)}"></i></span>`;

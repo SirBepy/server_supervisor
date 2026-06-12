@@ -121,6 +121,9 @@ export const ui = {
   showCommandCount: false,
   showRam: true,
   showPort: true,
+  // Per-project resolved icon data URI. undefined = not fetched, null = none
+  // found (use tech-logo fallback), string = ready-to-render data URI.
+  iconCache: {} as Record<string, string | null | undefined>,
 };
 
 // draw() indirection: dashboard.ts owns the top-level render and registers it
