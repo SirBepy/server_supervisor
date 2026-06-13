@@ -6,12 +6,28 @@ use ts_rs::TS;
 // Candidate icon locations under a project root, in priority order. First file
 // that exists wins. Covers generic roots, web/public, Flutter, and Tauri layouts.
 const CANDIDATES: &[&str] = &[
+    // Root-level explicit icons.
     "icon.svg",
     "icon.png",
     "icon.ico",
     "logo.svg",
     "logo.png",
     "app-icon.png",
+    // assets/ icons (common in Flutter and other app projects, e.g. revaire-mobile
+    // keeps its app icon at assets/icons/app_icon.svg). Match specific names only -
+    // assets/icons/ is usually full of UI glyphs, so never grab an arbitrary file.
+    "assets/icons/app_icon.svg",
+    "assets/icons/app_icon.png",
+    "assets/icon/app_icon.png",
+    "assets/icon/icon.png",
+    "assets/icon.svg",
+    "assets/icon.png",
+    "assets/logo.svg",
+    "assets/logo.png",
+    "assets/icons/logo.svg",
+    "assets/icons/logo.png",
+    "assets/images/logo.png",
+    // Web favicons.
     "favicon.svg",
     "favicon.ico",
     "favicon.png",
@@ -24,6 +40,7 @@ const CANDIDATES: &[&str] = &[
     "static/favicon.png",
     "web/icons/Icon-192.png",
     "web/favicon.png",
+    // Tauri bundle icons.
     "src-tauri/icons/128x128.png",
     "src-tauri/icons/icon.png",
 ];
@@ -144,6 +161,19 @@ mod tests {
         fs::write(dir.join("icon.png"), b"x").unwrap();
         let found = find_icon_file(&dir).unwrap();
         assert!(found.ends_with("icon.png"), "got {found:?}");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn finds_app_icon_under_assets() {
+        // A Flutter-style project whose only icon lives at assets/icons/app_icon.svg
+        // (like revaire-mobile) must be found, not missed.
+        let dir = std::env::temp_dir().join(format!("ss_icons_assets_{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("assets/icons")).unwrap();
+        fs::write(dir.join("assets/icons/app_icon.svg"), b"<svg/>").unwrap();
+        let found = find_icon_file(&dir).unwrap();
+        assert!(found.ends_with("app_icon.svg"), "got {found:?}");
         let _ = fs::remove_dir_all(&dir);
     }
 
