@@ -11,14 +11,14 @@ body {
 }
 
 body {
-  /* Barely-noticeable static gradient: a faint accent-tinted glow at the top
-     fading into the base background for a touch of depth. No animation, so no
-     ongoing GPU/compositor cost. Fixed so it doesn't scroll with content. */
+  /* Static gradient: an accent-tinted glow at the top fading into the base
+     background for a touch of depth. No animation, so no ongoing GPU/compositor
+     cost. Fixed so it doesn't scroll with content. */
   background:
     radial-gradient(
-      130% 90% at 50% 0%,
-      color-mix(in srgb, var(--accent) 7%, var(--bg)),
-      var(--bg) 55%
+      125% 90% at 50% -10%,
+      color-mix(in srgb, var(--accent) 18%, var(--bg)),
+      var(--bg) 62%
     )
     fixed;
   color: var(--fg);
