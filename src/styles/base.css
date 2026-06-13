@@ -12,7 +12,11 @@ body {
 
 body {
   color: var(--fg);
-  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  font-family:
+    system-ui,
+    -apple-system,
+    "Segoe UI",
+    sans-serif;
   font-size: 14px;
 }
 
@@ -22,10 +26,9 @@ body {
    out-specify the vendored kit's `body { background: var(--kit-bg) }`, which loads
    after this file and would otherwise win by source order and flatten it. */
 html body {
-  background:
-    linear-gradient(
+  background: linear-gradient(
       180deg,
-      color-mix(in srgb, var(--accent) 14%, var(--bg)) 0%,
+      color-mix(in srgb, var(--accent) 7%, var(--bg)) 0%,
       var(--bg) 75%
     )
     fixed;
