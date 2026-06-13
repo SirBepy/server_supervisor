@@ -18,18 +18,15 @@ body {
 }
 
 /* The animated background is the vendored bepy_styleguide widget (wired in
-   main.ts); it self-mounts a fixed #bepy-bg layer at z-index -1. These two rules
-   just add app-specific guards the widget doesn't ship: pause it while the window
-   is hidden to tray, and hold still under reduced-motion. */
+   main.ts); it self-mounts a fixed #bepy-bg layer at z-index -1. We pause it only
+   while the window is hidden to tray (a pure perf win). We deliberately do NOT
+   honor prefers-reduced-motion here: the widget never has (it animates in every
+   other app), this is a single-user tool, and Joe keeps Windows "Animation
+   effects" off for snappiness, not motion sensitivity - that OS toggle is what
+   sets reduced-motion, and it was silently freezing this background. */
 body.bg-paused #bepy-bg *,
 body.bg-paused #bepy-bg *::before {
   animation-play-state: paused !important;
-}
-@media (prefers-reduced-motion: reduce) {
-  #bepy-bg *,
-  #bepy-bg *::before {
-    animation: none !important;
-  }
 }
 
 .shell {
