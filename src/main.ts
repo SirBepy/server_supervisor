@@ -5,6 +5,10 @@ import { mountDashboard } from "./views/dashboard/dashboard";
 import { mountSettings } from "./views/settings/settings";
 import { bootstrapTheme } from "./shared/theme";
 import { runAutoUpdateCheck } from "../vendor/tauri_kit/frontend/updater/auto-check";
+// Vendored bepy_styleguide animated background (background.js + its pattern svg).
+// Imported as bundled asset URLs so it works fully offline (no CDN).
+import bgWidgetUrl from "../vendor/bepy_styleguide/background.js?url";
+import bgPatternUrl from "../vendor/bepy_styleguide/background_pattern.svg?url";
 
 const app = document.getElementById("app")!;
 
@@ -33,6 +37,20 @@ window.addEventListener("hashchange", () => void route());
 // default inside bootstrapTheme lands before route()'s first paint.
 void bootstrapTheme();
 void route();
+
+// Mount the vendored bepy_styleguide background widget: point it at the bundled
+// (offline) pattern asset, default to the lively "gradient" variant on first run
+// (the widget's own default is "pattern"), then load it. It self-mounts a fixed
+// #bepy-bg layer at z-index -1 and exposes window.BEPY_BG to switch variants.
+(window as unknown as { BEPY_BG_PATTERN?: string }).BEPY_BG_PATTERN = bgPatternUrl;
+if (!localStorage.getItem("tabs-labs-bg-variant")) {
+  localStorage.setItem("tabs-labs-bg-variant", "gradient");
+}
+{
+  const bgScript = document.createElement("script");
+  bgScript.src = bgWidgetUrl;
+  document.head.appendChild(bgScript);
+}
 
 // Pause the background animation while the window is hidden (tray) so it never
 // repaints off-screen.
