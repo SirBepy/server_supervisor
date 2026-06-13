@@ -11,10 +11,17 @@ body {
 }
 
 body {
-  /* Static top-to-bottom gradient: accent-tinted just under the header, fading
-     into the base background toward the bottom. (A top-anchored glow was hidden
-     behind the opaque header bar.) No animation = no ongoing GPU cost; fixed so
-     it doesn't scroll with content. */
+  color: var(--fg);
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  font-size: 14px;
+}
+
+/* Static top-to-bottom gradient: accent-tinted just under the header, fading into
+   the base background toward the bottom. No animation = no ongoing GPU cost; fixed
+   so it doesn't scroll with content. Selector is `html body` (not just `body`) to
+   out-specify the vendored kit's `body { background: var(--kit-bg) }`, which loads
+   after this file and would otherwise win by source order and flatten it. */
+html body {
   background:
     linear-gradient(
       180deg,
@@ -22,9 +29,6 @@ body {
       var(--bg) 75%
     )
     fixed;
-  color: var(--fg);
-  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
-  font-size: 14px;
 }
 
 .shell {
