@@ -11,14 +11,15 @@ body {
 }
 
 body {
-  /* Static gradient: an accent-tinted glow at the top fading into the base
-     background for a touch of depth. No animation, so no ongoing GPU/compositor
-     cost. Fixed so it doesn't scroll with content. */
+  /* Static top-to-bottom gradient: accent-tinted just under the header, fading
+     into the base background toward the bottom. (A top-anchored glow was hidden
+     behind the opaque header bar.) No animation = no ongoing GPU cost; fixed so
+     it doesn't scroll with content. */
   background:
-    radial-gradient(
-      125% 90% at 50% -10%,
-      color-mix(in srgb, var(--accent) 18%, var(--bg)),
-      var(--bg) 62%
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--accent) 24%, var(--bg)) 0%,
+      var(--bg) 75%
     )
     fixed;
   color: var(--fg);
