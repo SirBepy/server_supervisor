@@ -11,22 +11,19 @@ body {
 }
 
 body {
-  background: var(--bg);
+  /* Barely-noticeable static gradient: a faint accent-tinted glow at the top
+     fading into the base background for a touch of depth. No animation, so no
+     ongoing GPU/compositor cost. Fixed so it doesn't scroll with content. */
+  background:
+    radial-gradient(
+      130% 90% at 50% 0%,
+      color-mix(in srgb, var(--accent) 7%, var(--bg)),
+      var(--bg) 55%
+    )
+    fixed;
   color: var(--fg);
   font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
   font-size: 14px;
-}
-
-/* The animated background is the vendored bepy_styleguide widget (wired in
-   main.ts); it self-mounts a fixed #bepy-bg layer at z-index -1. We pause it only
-   while the window is hidden to tray (a pure perf win). We deliberately do NOT
-   honor prefers-reduced-motion here: the widget never has (it animates in every
-   other app), this is a single-user tool, and Joe keeps Windows "Animation
-   effects" off for snappiness, not motion sensitivity - that OS toggle is what
-   sets reduced-motion, and it was silently freezing this background. */
-body.bg-paused #bepy-bg *,
-body.bg-paused #bepy-bg *::before {
-  animation-play-state: paused !important;
 }
 
 .shell {
