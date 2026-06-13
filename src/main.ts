@@ -43,9 +43,10 @@ void route();
 // (the widget's own default is "pattern"), then load it. It self-mounts a fixed
 // #bepy-bg layer at z-index -1 and exposes window.BEPY_BG to switch variants.
 (window as unknown as { BEPY_BG_PATTERN?: string }).BEPY_BG_PATTERN = bgPatternUrl;
-if (!localStorage.getItem("tabs-labs-bg-variant")) {
-  localStorage.setItem("tabs-labs-bg-variant", "gradient");
-}
+// Default to the panning "pattern" (sparkles) variant: darker and more visibly
+// animated than "gradient". Set on every load so the default is deterministic;
+// switch this to only-seed-when-unset once a variant picker exists in Settings.
+localStorage.setItem("tabs-labs-bg-variant", "pattern");
 {
   const bgScript = document.createElement("script");
   bgScript.src = bgWidgetUrl;
