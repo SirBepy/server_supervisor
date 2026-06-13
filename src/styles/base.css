@@ -25,7 +25,7 @@ html body {
   background:
     linear-gradient(
       180deg,
-      color-mix(in srgb, var(--accent) 24%, var(--bg)) 0%,
+      color-mix(in srgb, var(--accent) 14%, var(--bg)) 0%,
       var(--bg) 75%
     )
     fixed;
