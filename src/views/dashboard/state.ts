@@ -102,8 +102,6 @@ export const ui = {
   comboOpen: false,
   // Debounce handle for the advisory command-validity check.
   validateTimer: undefined as number | undefined,
-  // Show only processes that are currently running.
-  filterRunning: false,
   // Project IDs that are currently collapsed. Projects start collapsed by
   // default (see refresh): you open a project to reveal its commands.
   collapsed: new Set<string>(),

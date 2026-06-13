@@ -263,6 +263,13 @@ function commandRow(project: Project, cmd: Project["commands"][number]): Templat
         role=${expandable ? "button" : nothing}
         title=${expandable ? `Click to ${logsOpen ? "hide" : "show"} logs` : nothing}
         @click=${expandable ? () => toggleLogs(id) : nothing}
+        @contextmenu=${(e: Event) => {
+          e.preventDefault();
+          e.stopPropagation();
+          ui.openMenuFor = null;
+          ui.openCmdMenuFor = id;
+          draw();
+        }}
       >
         <span class="name" title=${cmd.name}>${displayName(cmd)}</span>
         ${isFlutter ? html`<span class="ftag">flutter</span>` : nothing}
@@ -309,24 +316,6 @@ function commandRow(project: Project, cmd: Project["commands"][number]): Templat
         : nothing}
     </div>
   `;
-}
-
-// Start every command in the project that isn't already live. The row's play
-// button; analogous to the command card's per-command start.
-function startAll(project: Project) {
-  for (const c of project.commands) {
-    const id = `${project.id}:${c.id}`;
-    const st = ui.statusById[id]?.status;
-    if (st !== "running" && st !== "starting") void act(ipc.startProc(id));
-  }
-}
-
-// True if the project has at least one command that could be started.
-function hasStartable(project: Project): boolean {
-  return project.commands.some((c) => {
-    const st = ui.statusById[`${project.id}:${c.id}`]?.status;
-    return st !== "running" && st !== "starting";
-  });
 }
 
 // Kick off a one-time icon fetch for a project, caching the result. Redraws when
@@ -426,18 +415,21 @@ function moreMenu(project: Project): TemplateResult {
 
 function projectSection(project: Project): TemplateResult | typeof nothing {
   const count = runningCount(project);
-  if (ui.filterRunning && count === 0) return nothing;
-
   const collapsed = ui.collapsed.has(project.id);
-  const visibleCmds = ui.filterRunning
-    ? project.commands.filter(
-        (c) => ui.statusById[`${project.id}:${c.id}`]?.status === "running",
-      )
-    : project.commands;
 
   return html`
     <section class="group">
-      <div class="prow" @click=${() => toggleCollapse(project.id)}>
+      <div
+        class="prow"
+        @click=${() => toggleCollapse(project.id)}
+        @contextmenu=${(e: Event) => {
+          e.preventDefault();
+          e.stopPropagation();
+          ui.openCmdMenuFor = null;
+          ui.openMenuFor = project.id;
+          draw();
+        }}
+      >
         <span class="pdot ${count > 0 ? "on" : ""}"></span>
         ${projectIconTemplate(project)}
         <span class="pname" title=${project.name}>${project.name}</span>
@@ -445,21 +437,14 @@ function projectSection(project: Project): TemplateResult | typeof nothing {
           ${ui.showCommandCount
             ? html`<span class="pcount"><i class="ph ph-terminal-window"></i>${project.commands.length}</span>`
             : nothing}
-          <div class="prow-actions">
-            ${hasStartable(project)
-              ? html`<button class="abtn start" title="Start all" @click=${() => startAll(project)}>
-                  <i class="ph ph-play"></i>
-                </button>`
-              : nothing}
-            ${moreMenu(project)}
-          </div>
+          <div class="prow-actions">${moreMenu(project)}</div>
         </div>
       </div>
       ${collapsed
         ? nothing
-        : visibleCmds.length === 0
+        : project.commands.length === 0
           ? html`<p class="empty-cmd">No commands. Add one.</p>`
-          : visibleCmds.map((c) => commandRow(project, c))}
+          : project.commands.map((c) => commandRow(project, c))}
     </section>
   `;
 }
@@ -467,9 +452,7 @@ function projectSection(project: Project): TemplateResult | typeof nothing {
 function draw() {
   const emptyMsg = ui.projects.length === 0
     ? html`<p class="empty">No projects yet. Use the + button to add a project.</p>`
-    : ui.filterRunning && ui.projects.every((p) => runningCount(p) === 0)
-      ? html`<p class="empty">No running processes.</p>`
-      : nothing;
+    : nothing;
 
   render(
     html`
@@ -483,16 +466,6 @@ function draw() {
             <i class="ph ph-gear"></i>
           </button>
         </header>
-        <div class="filterbar">
-          <button
-            class="filter-chip ${ui.filterRunning ? "" : "active"}"
-            @click=${() => { ui.filterRunning = false; draw(); }}
-          >All</button>
-          <button
-            class="filter-chip ${ui.filterRunning ? "active" : ""}"
-            @click=${() => { ui.filterRunning = true; draw(); }}
-          >Running</button>
-        </div>
       </div>
       ${ui.error ? html`<div class="error">${ui.error}</div>` : nothing}
       ${emptyMsg}
