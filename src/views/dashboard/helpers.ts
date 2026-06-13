@@ -144,3 +144,9 @@ const DEVICON: Record<TechKey, string> = {
 export function deviconClass(tech: TechKey): string {
   return DEVICON[tech];
 }
+
+// Devicon class for a tech name that isn't statically known to be a TechKey
+// (e.g. a string returned by the backend marker-file scan). Null if unrecognized.
+export function deviconClassByName(name: string): string | null {
+  return (DEVICON as Record<string, string>)[name] ?? null;
+}

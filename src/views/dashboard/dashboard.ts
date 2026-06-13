@@ -7,7 +7,7 @@ import "./dashboard.css";
 import * as ipc from "../../shared/ipc";
 import type { Project } from "../../types/ipc.generated";
 import { ui, setDraw, refresh, act } from "./state";
-import { formatBytes, displayName, formatUptime, projectTech, deviconClass } from "./helpers";
+import { formatBytes, displayName, formatUptime, projectTech, deviconClass, deviconClassByName } from "./helpers";
 import { modalView, startAddCommand } from "./modals";
 import { startAddProject } from "./add-project";
 import { renderAnsi } from "../../shared/ansi";
@@ -335,8 +335,29 @@ function ensureProjectIcon(project: Project) {
     });
 }
 
-// The project's icon slot: real project icon (tier 1) -> tech logo (tier 2) ->
-// generic Phosphor terminal glyph (tier 3).
+// One-time backend marker-file tech fetch for a project, cached. Only called when
+// the command name didn't reveal the tech. No-op if already fetched/pending.
+function ensureProjectTech(project: Project) {
+  if (project.id in ui.techCache) return;
+  ui.techCache[project.id] = undefined; // mark pending (key now present)
+  void ipc
+    .getProjectTech(project.root)
+    .then((tech) => {
+      ui.techCache[project.id] = tech;
+      draw();
+    })
+    .catch(() => {
+      ui.techCache[project.id] = null;
+      draw();
+    });
+}
+
+// The project's icon slot, resolved in tiers:
+//   1. real project icon (backend folder scan)
+//   2a. tech logo from the command program (e.g. `cargo`, `flutter`)
+//   2b. tech logo from project marker files (e.g. pyproject.toml -> python), for
+//       custom launcher commands that hide the tech
+//   3. generic Phosphor terminal glyph
 function projectIconTemplate(project: Project): TemplateResult {
   ensureProjectIcon(project);
   const cached = ui.iconCache[project.id];
@@ -352,9 +373,16 @@ function projectIconTemplate(project: Project): TemplateResult {
         }}
     /></span>`;
   }
-  const tech = projectTech(project, ui.statusById);
-  if (tech) {
-    return html`<span class="picon"><i class="${deviconClass(tech)}"></i></span>`;
+  const cmdTech = projectTech(project, ui.statusById);
+  if (cmdTech) {
+    return html`<span class="picon"><i class="${deviconClass(cmdTech)}"></i></span>`;
+  }
+  // Command didn't reveal the tech: fall back to the backend marker-file scan.
+  ensureProjectTech(project);
+  const fileTech = ui.techCache[project.id];
+  if (typeof fileTech === "string") {
+    const cls = deviconClassByName(fileTech);
+    if (cls) return html`<span class="picon"><i class="${cls}"></i></span>`;
   }
   return html`<span class="picon"><i class="ph ph-terminal-window"></i></span>`;
 }

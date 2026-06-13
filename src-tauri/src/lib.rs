@@ -58,6 +58,7 @@ pub fn run() {
             ipc::commands::reserve_port,
             ipc::commands::get_api_token,
             icons::get_project_icon,
+            icons::get_project_tech,
         ])
         .setup(|app| {
             let handle = app.handle().clone();

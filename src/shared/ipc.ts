@@ -80,6 +80,9 @@ export const openInExplorer = (path: string) =>
 export const getProjectIcon = (root: string) =>
   invoke<ProjectIcon | null>("get_project_icon", { root });
 
+export const getProjectTech = (root: string) =>
+  invoke<string | null>("get_project_tech", { root });
+
 export const getSettings = () => invoke<Settings>("get_settings");
 export const getApiToken = () => invoke<string>("get_api_token");
 export const quitApp = () => invoke<void>("quit_app");

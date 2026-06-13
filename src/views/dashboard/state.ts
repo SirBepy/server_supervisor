@@ -122,6 +122,10 @@ export const ui = {
   // Per-project resolved icon data URI. undefined = not fetched, null = none
   // found (use tech-logo fallback), string = ready-to-render data URI.
   iconCache: {} as Record<string, string | null | undefined>,
+  // Per-project file-detected tech (backend marker scan), the tier-2 fallback
+  // when the command name doesn't reveal it. undefined = not fetched, null =
+  // unknown, string = a tech key (rust/flutter/node/python/...).
+  techCache: {} as Record<string, string | null | undefined>,
 };
 
 // draw() indirection: dashboard.ts owns the top-level render and registers it

@@ -82,6 +82,53 @@ pub fn get_project_icon(root: String) -> Option<ProjectIcon> {
     })
 }
 
+/// Detect a project's primary tech from marker files in its root. Used as a
+/// fallback when the command program doesn't reveal it (e.g. a custom launcher
+/// script like `start-odysseus`). Returns a key matching the frontend tech logos
+/// (rust / flutter / node / python / go / deno / dotnet). Most-specific markers
+/// win; `package.json` (the most common) is checked last so a Tauri/Flutter repo
+/// that also carries a frontend package.json still reads as rust/flutter.
+pub fn detect_tech(root: &Path) -> Option<&'static str> {
+    let has = |rel: &str| root.join(rel).exists();
+    if has("pubspec.yaml") {
+        return Some("flutter");
+    }
+    if has("Cargo.toml") {
+        return Some("rust");
+    }
+    if has("pyproject.toml") || has("requirements.txt") || has("setup.py") || has("Pipfile") {
+        return Some("python");
+    }
+    if has("go.mod") {
+        return Some("go");
+    }
+    if has("deno.json") || has("deno.jsonc") {
+        return Some("deno");
+    }
+    let has_dotnet = std::fs::read_dir(root).ok().is_some_and(|entries| {
+        entries.flatten().any(|e| {
+            e.path()
+                .extension()
+                .and_then(|x| x.to_str())
+                .is_some_and(|x| x.eq_ignore_ascii_case("csproj") || x.eq_ignore_ascii_case("sln"))
+        })
+    });
+    if has_dotnet {
+        return Some("dotnet");
+    }
+    if has("package.json") {
+        return Some("node");
+    }
+    None
+}
+
+/// Marker-file tech detection for a project root, or None. Frontend tier-2
+/// fallback when command parsing can't infer the tech.
+#[tauri::command]
+pub fn get_project_tech(root: String) -> Option<String> {
+    detect_tech(Path::new(&root)).map(|s| s.to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -114,5 +161,29 @@ mod tests {
         assert_eq!(mime_for(Path::new("a/icon.svg")), Some("image/svg+xml"));
         assert_eq!(mime_for(Path::new("a/icon.PNG")), Some("image/png"));
         assert_eq!(mime_for(Path::new("a/icon.txt")), None);
+    }
+
+    #[test]
+    fn detect_tech_prefers_specific_marker_over_package_json() {
+        let dir = std::env::temp_dir().join(format!("ss_tech_test_{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        // A Python project that also ships a frontend package.json (like odysseus)
+        // must read as python, not node.
+        fs::write(dir.join("pyproject.toml"), b"x").unwrap();
+        fs::write(dir.join("package.json"), b"{}").unwrap();
+        assert_eq!(detect_tech(&dir), Some("python"));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn detect_tech_node_and_none() {
+        let dir = std::env::temp_dir().join(format!("ss_tech_node_{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        assert_eq!(detect_tech(&dir), None);
+        fs::write(dir.join("package.json"), b"{}").unwrap();
+        assert_eq!(detect_tech(&dir), Some("node"));
+        let _ = fs::remove_dir_all(&dir);
     }
 }
