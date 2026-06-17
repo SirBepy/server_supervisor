@@ -67,14 +67,18 @@ async function loadPrefs() {
   }
 }
 
-// Jump-bar click: reveal a running command in the list. Expand its project,
-// force its log drawer open (a second click on the already-open command just
-// re-focuses, never closes), then scroll its card into view once it's rendered.
-async function focusCommand(projectId: string, id: string) {
+// Jump-bar click: reveal a running command in the list. Expand its project and
+// open its log drawer, then scroll its card into view. The expand + scroll draw
+// happens IMMEDIATELY (synchronously); the log text is fetched in the background
+// and drawn in when it lands, so a slow getProcLogs never delays the visible
+// response. A second click on the already-open command just re-focuses (scrolls)
+// without refetching.
+function focusCommand(projectId: string, id: string) {
   ui.collapsed.delete(projectId);
-  if (ui.openLogsFor !== id) {
+  const needLogs = ui.openLogsFor !== id;
+  if (needLogs) {
     ui.openLogsFor = id;
-    ui.logText = (await ipc.getProcLogs(id)).map((l) => l.text).join("\n");
+    ui.logText = ""; // clear the previous command's text; "(no output yet)" until the fetch lands
     ui.scrollLogsToBottom = true;
   }
   draw();
@@ -83,6 +87,16 @@ async function focusCommand(projectId: string, id: string) {
     const el = ui.root.querySelector(`[data-cmd-id="${CSS.escape(id)}"]`);
     el?.scrollIntoView({ block: "nearest" });
   });
+  if (needLogs) {
+    void ipc.getProcLogs(id).then((lines) => {
+      // Only apply if this command is still the open one (the user may have
+      // clicked elsewhere while the fetch was in flight).
+      if (ui.openLogsFor !== id) return;
+      ui.logText = lines.map((l) => l.text).join("\n");
+      ui.scrollLogsToBottom = true;
+      draw();
+    });
+  }
 }
 
 async function toggleLogs(id: string) {
