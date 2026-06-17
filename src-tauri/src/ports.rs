@@ -135,42 +135,56 @@ fn port_free(port: u16) -> bool {
 /// OS via `netstat -ano`. Covers both IPv4 (`0.0.0.0:port`) and IPv6
 /// (`[::]:port`) wildcard listeners regardless of how they were bound, which a
 /// bind-probe cannot reliably detect on Windows. Best-effort: returns an empty
-/// set if netstat is unavailable (the bind-probe still applies).
-#[cfg(windows)]
+/// set if netstat is unavailable (the bind-probe still applies). Derived from the
+/// single `listeners()` netstat reader, dropping the owning PID.
 fn listening_ports() -> std::collections::HashSet<u16> {
+    listeners().into_iter().map(|(p, _)| p).collect()
+}
+
+/// `(port, owning pid)` for every TCP listener, read once from the OS via
+/// `netstat -ano`. This is the single netstat call site in the codebase; other
+/// modules (e.g. `supervisor::sampler`) consume this. Best-effort: empty on any
+/// failure (callers keep forced ports / fall back to the bind-probe).
+#[cfg(windows)]
+pub(crate) fn listeners() -> Vec<(u16, u32)> {
     use std::os::windows::process::CommandExt;
     const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-    let mut set = std::collections::HashSet::new();
     let Ok(out) = std::process::Command::new("netstat")
         .args(["-ano"])
         .creation_flags(CREATE_NO_WINDOW)
         .output()
     else {
-        return set;
+        return Vec::new();
     };
-    let text = String::from_utf8_lossy(&out.stdout);
-    for line in text.lines() {
-        // Columns: Proto, Local Address, Foreign Address, State, PID.
-        let cols: Vec<&str> = line.split_whitespace().collect();
-        if cols.len() >= 4 && cols[0].eq_ignore_ascii_case("TCP") && cols[3] == "LISTENING" {
-            if let Some(port) = local_port(cols[1]) {
-                set.insert(port);
-            }
-        }
-    }
-    set
+    parse_listeners(&String::from_utf8_lossy(&out.stdout))
 }
 
 #[cfg(not(windows))]
-fn listening_ports() -> std::collections::HashSet<u16> {
-    std::collections::HashSet::new()
+pub(crate) fn listeners() -> Vec<(u16, u32)> {
+    Vec::new()
+}
+
+/// Pure parser for `netstat -ano` output. Columns: Proto, Local Address, Foreign
+/// Address, State, PID. We keep only TCP rows in the LISTENING state. Kept pure
+/// (separate from the `Command` invocation) so it stays unit-testable on any
+/// platform.
+pub(crate) fn parse_listeners(text: &str) -> Vec<(u16, u32)> {
+    let mut out = Vec::new();
+    for line in text.lines() {
+        let cols: Vec<&str> = line.split_whitespace().collect();
+        if cols.len() >= 5 && cols[0].eq_ignore_ascii_case("TCP") && cols[3] == "LISTENING" {
+            if let (Some(port), Ok(pid)) = (local_port(cols[1]), cols[4].parse::<u32>()) {
+                out.push((port, pid));
+            }
+        }
+    }
+    out
 }
 
 /// Parse the port from a netstat local-address column: `0.0.0.0:42000`,
 /// `[::]:42000`, `127.0.0.1:42000`, `[::1]:42000`. The port is the segment after
-/// the final `:`.
-#[cfg(windows)]
-fn local_port(local: &str) -> Option<u16> {
+/// the final `:`. The single local-address port parser for the codebase.
+pub(crate) fn local_port(local: &str) -> Option<u16> {
     local.rsplit(':').next()?.parse().ok()
 }
 
@@ -255,7 +269,6 @@ mod tests {
         assert!(!port_free(port), "IPv6-bound port must count as taken");
     }
 
-    #[cfg(windows)]
     #[test]
     fn local_port_parses_netstat_addresses() {
         assert_eq!(local_port("0.0.0.0:42000"), Some(42000));
@@ -263,6 +276,22 @@ mod tests {
         assert_eq!(local_port("127.0.0.1:6969"), Some(6969));
         assert_eq!(local_port("[::1]:1"), Some(1));
         assert_eq!(local_port("*:*"), None);
+    }
+
+    #[test]
+    fn parse_listeners_keeps_only_listening_tcp_with_pid() {
+        // Mixed netstat output: a header, a LISTENING IPv4 row, an ESTABLISHED row
+        // (must be dropped), a LISTENING IPv6 wildcard row, and a UDP row.
+        let text = "\
+Active Connections
+  Proto  Local Address          Foreign Address        State           PID
+  TCP    0.0.0.0:8080           0.0.0.0:0              LISTENING       1234
+  TCP    127.0.0.1:6970         127.0.0.1:51000        ESTABLISHED     1234
+  TCP    [::]:42013             [::]:0                 LISTENING       5678
+  UDP    0.0.0.0:5353           *:*                                    900";
+        let mut got = parse_listeners(text);
+        got.sort();
+        assert_eq!(got, vec![(8080, 1234), (42013, 5678)]);
     }
 
     #[cfg(windows)]

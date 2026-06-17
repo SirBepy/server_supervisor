@@ -14,51 +14,9 @@ use sysinfo::System;
 
 // The port-resolution logic that used to live in `fill_ports` now lives in the
 // combined background sampler (`supervisor::sampler`), which owns the single
-// shared `System` refresh and reuses these pure helpers. Keeping the helpers
-// here (with their netstat parser + tests) keeps the OS-probe surface in one
-// place.
-
-/// `(port, owning pid)` for every TCP listener, read once from the OS via
-/// `netstat -ano`. Best-effort: empty on any failure (callers keep forced ports).
-#[cfg(windows)]
-pub(crate) fn listeners() -> Vec<(u16, u32)> {
-    use std::os::windows::process::CommandExt;
-    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-    let Ok(out) = std::process::Command::new("netstat")
-        .args(["-ano"])
-        .creation_flags(CREATE_NO_WINDOW)
-        .output()
-    else {
-        return Vec::new();
-    };
-    parse_listeners(&String::from_utf8_lossy(&out.stdout))
-}
-
-#[cfg(not(windows))]
-pub(crate) fn listeners() -> Vec<(u16, u32)> {
-    Vec::new()
-}
-
-/// Pure parser for `netstat -ano` output. Columns: Proto, Local Address, Foreign
-/// Address, State, PID. We keep only TCP rows in the LISTENING state.
-fn parse_listeners(text: &str) -> Vec<(u16, u32)> {
-    let mut out = Vec::new();
-    for line in text.lines() {
-        let cols: Vec<&str> = line.split_whitespace().collect();
-        if cols.len() >= 5 && cols[0].eq_ignore_ascii_case("TCP") && cols[3] == "LISTENING" {
-            if let (Some(port), Ok(pid)) = (port_of(cols[1]), cols[4].parse::<u32>()) {
-                out.push((port, pid));
-            }
-        }
-    }
-    out
-}
-
-/// Parse the port from a netstat local-address column (`0.0.0.0:8080`,
-/// `[::]:8080`, `127.0.0.1:6969`, `[::1]:1`). The port is the final `:` segment.
-fn port_of(local: &str) -> Option<u16> {
-    local.rsplit(':').next()?.parse().ok()
-}
+// shared `System` refresh and reuses these pure helpers. The netstat reader and
+// its local-address port parser live in `crate::ports` (the single OS-probe
+// surface); this module keeps only the process-subtree helpers.
 
 /// parent pid -> direct child pids, from a refreshed `System`.
 pub(crate) fn children_map(sys: &System) -> HashMap<u32, Vec<u32>> {
@@ -90,31 +48,6 @@ pub(crate) fn subtree(root: u32, children: &HashMap<u32, Vec<u32>>) -> HashSet<u
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn parse_listeners_keeps_only_listening_tcp_with_pid() {
-        // Mixed netstat output: a header, a LISTENING IPv4 row, an ESTABLISHED row
-        // (must be dropped), a LISTENING IPv6 wildcard row, and a UDP row.
-        let text = "\
-Active Connections
-  Proto  Local Address          Foreign Address        State           PID
-  TCP    0.0.0.0:8080           0.0.0.0:0              LISTENING       1234
-  TCP    127.0.0.1:6970         127.0.0.1:51000        ESTABLISHED     1234
-  TCP    [::]:42013             [::]:0                 LISTENING       5678
-  UDP    0.0.0.0:5353           *:*                                    900";
-        let mut got = parse_listeners(text);
-        got.sort();
-        assert_eq!(got, vec![(8080, 1234), (42013, 5678)]);
-    }
-
-    #[test]
-    fn port_of_parses_v4_and_v6() {
-        assert_eq!(port_of("0.0.0.0:8080"), Some(8080));
-        assert_eq!(port_of("[::]:42013"), Some(42013));
-        assert_eq!(port_of("127.0.0.1:6969"), Some(6969));
-        assert_eq!(port_of("[::1]:1"), Some(1));
-        assert_eq!(port_of("*:*"), None);
-    }
 
     #[test]
     fn subtree_includes_root_and_all_descendants() {

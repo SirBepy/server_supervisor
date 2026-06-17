@@ -50,7 +50,7 @@ pub fn sample(running: &[(String, u32, Option<u16>)]) -> HashMap<String, Sample>
     sys.refresh_processes(ProcessesToUpdate::All, true);
     let procmap = mem::snapshot(&sys);
     let children = ports_detect::children_map(&sys);
-    let listeners = ports_detect::listeners();
+    let listeners = crate::ports::listeners();
     let global: HashSet<u16> = listeners.iter().map(|(port, _)| *port).collect();
 
     for (id, pid, forced) in running {
