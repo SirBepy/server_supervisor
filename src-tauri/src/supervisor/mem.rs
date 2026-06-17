@@ -11,16 +11,18 @@
 //! drives both this and `ports_detect` off it, so the UI poll path never
 //! enumerates the process table.
 
-use std::collections::{HashMap, HashSet};
+use super::proc_tree;
+use std::collections::HashMap;
 use sysinfo::System;
 
 /// pid -> (parent pid, own resident bytes). The shape `subtree_rss` walks.
 pub(crate) type ProcMap = HashMap<u32, (Option<u32>, u64)>;
 
 /// Sum resident bytes of `root` plus every descendant, given the full process
-/// map. Pure and deterministic so the tree-walk is unit-testable without a real
-/// `System`. Cycles (which shouldn't occur in a pid graph) are guarded via
-/// `seen` so a malformed map can't loop forever.
+/// map. The cycle-guarded subtree BFS is shared (`proc_tree::subtree`); this
+/// just builds the parent->children map from the `ProcMap` and sums RSS over the
+/// returned pid set. Pure and deterministic so it's unit-testable without a real
+/// `System`.
 pub(crate) fn subtree_rss(root: u32, procs: &ProcMap) -> u64 {
     let mut children: HashMap<u32, Vec<u32>> = HashMap::new();
     for (&pid, &(parent, _)) in procs {
@@ -28,21 +30,10 @@ pub(crate) fn subtree_rss(root: u32, procs: &ProcMap) -> u64 {
             children.entry(pp).or_default().push(pid);
         }
     }
-    let mut total = 0u64;
-    let mut seen = HashSet::new();
-    let mut stack = vec![root];
-    while let Some(pid) = stack.pop() {
-        if !seen.insert(pid) {
-            continue;
-        }
-        if let Some(&(_, mem)) = procs.get(&pid) {
-            total += mem;
-        }
-        if let Some(kids) = children.get(&pid) {
-            stack.extend(kids);
-        }
-    }
-    total
+    proc_tree::subtree(root, &children)
+        .iter()
+        .filter_map(|pid| procs.get(pid).map(|&(_, mem)| mem))
+        .sum()
 }
 
 /// Snapshot an already-refreshed `System` into the pid map `subtree_rss`
