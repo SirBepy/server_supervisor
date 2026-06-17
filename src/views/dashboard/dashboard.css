@@ -462,6 +462,13 @@
   line-height: 1.5;
 }
 
+/* Trailing scroll room so the last command card can be pulled comfortably up
+   into view when its drawer opens (jump-bar focus or a manual expand), instead
+   of sitting jammed against the bottom edge. */
+.list-tail {
+  height: 40vh;
+}
+
 /* Expanded log drawer: a thin rule, the pid/RAM/port/uptime header line, then
    the scrolling log pane. pid + the run stats live here (not on the resting row)
    so they stay visible while the card is open. */

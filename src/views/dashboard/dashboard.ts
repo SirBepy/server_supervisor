@@ -579,6 +579,7 @@ function draw() {
       ${ui.error ? html`<div class="error">${ui.error}</div>` : nothing}
       ${emptyMsg}
       ${ui.projects.map(projectSection)}
+      ${ui.projects.length ? html`<div class="list-tail"></div>` : nothing}
       ${modalView()}
     `,
     ui.root,
