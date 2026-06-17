@@ -97,8 +97,13 @@ pub fn run() {
                 reap_sup.sample_tick();
             });
 
+            // Sync OS startup entry with the current setting on every launch so the
+            // registry always matches the JSON, even after reinstall or manual edits.
+            let loaded = settings::load(&handle);
+            settings::sync_autostart(&handle, loaded.autostart);
+
             // Localhost API for programmatic (AI agent) control.
-            let port = settings::load(&handle).api_port;
+            let port = loaded.api_port;
             let token = api::ensure_token(&data_dir);
             let api_sup = supervisor.clone();
             let api_ports = ports.clone();

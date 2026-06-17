@@ -60,6 +60,18 @@ pub fn save(app: &AppHandle, settings: &Settings) -> Result<(), String> {
     tauri_kit_settings::save_for(app, FILE, settings).map_err(|e| e.to_string())
 }
 
+/// Sync the OS startup entry with the current autostart flag. Logs a warning on
+/// failure (e.g., missing registry permissions) but never propagates the error
+/// to callers, since a failed autostart sync should not block saving settings.
+pub fn sync_autostart<R: tauri::Runtime>(app: &AppHandle<R>, enabled: bool) {
+    use tauri_plugin_autostart::ManagerExt;
+    let mgr = app.autolaunch();
+    let result = if enabled { mgr.enable() } else { mgr.disable() };
+    if let Err(e) = result {
+        log::warn!("autostart sync failed (enabled={enabled}): {e}");
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::Settings;

@@ -43,6 +43,7 @@ pub fn get_settings(app: AppHandle) -> Settings {
 
 #[tauri::command]
 pub fn save_settings(app: AppHandle, settings: Settings) -> Result<(), String> {
+    crate::settings::sync_autostart(&app, settings.autostart);
     settings::save(&app, &settings)
 }
 
