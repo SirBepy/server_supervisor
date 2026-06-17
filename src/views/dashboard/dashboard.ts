@@ -165,6 +165,10 @@ function cmdMenu(
         title="More options"
         @click=${(e: Event) => {
           e.stopPropagation();
+          if (!open) {
+            const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+            ui.cmdMenuFlipUp = rect.bottom + 200 > window.innerHeight;
+          }
           ui.openCmdMenuFor = open ? null : id;
           draw();
         }}
@@ -173,7 +177,7 @@ function cmdMenu(
       </button>
       ${open
         ? html`
-            <div class="more-menu" @click=${(e: Event) => e.stopPropagation()}>
+            <div class="more-menu ${ui.cmdMenuFlipUp ? "flip-up" : ""}" @click=${(e: Event) => e.stopPropagation()}>
               ${live
                 ? html`
                     ${port != null
@@ -399,6 +403,10 @@ function moreMenu(project: Project): TemplateResult {
         title="More options"
         @click=${(e: Event) => {
           e.stopPropagation();
+          if (!open) {
+            const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+            ui.projMenuFlipUp = rect.bottom + 140 > window.innerHeight;
+          }
           ui.openMenuFor = open ? null : project.id;
           draw();
         }}
@@ -407,7 +415,7 @@ function moreMenu(project: Project): TemplateResult {
       </button>
       ${open
         ? html`
-            <div class="more-menu" @click=${(e: Event) => e.stopPropagation()}>
+            <div class="more-menu ${ui.projMenuFlipUp ? "flip-up" : ""}" @click=${(e: Event) => e.stopPropagation()}>
               <button
                 @click=${() => {
                   ui.openMenuFor = null;
