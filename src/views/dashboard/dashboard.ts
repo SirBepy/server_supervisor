@@ -67,6 +67,24 @@ async function loadPrefs() {
   }
 }
 
+// Jump-bar click: reveal a running command in the list. Expand its project,
+// force its log drawer open (a second click on the already-open command just
+// re-focuses, never closes), then scroll its card into view once it's rendered.
+async function focusCommand(projectId: string, id: string) {
+  ui.collapsed.delete(projectId);
+  if (ui.openLogsFor !== id) {
+    ui.openLogsFor = id;
+    ui.logText = (await ipc.getProcLogs(id)).map((l) => l.text).join("\n");
+    ui.scrollLogsToBottom = true;
+  }
+  draw();
+  // Next frame: the (now expanded) card exists in the DOM, so scroll to it.
+  requestAnimationFrame(() => {
+    const el = ui.root.querySelector(`[data-cmd-id="${CSS.escape(id)}"]`);
+    el?.scrollIntoView({ block: "nearest" });
+  });
+}
+
 async function toggleLogs(id: string) {
   if (ui.openLogsFor === id) {
     ui.openLogsFor = null;
@@ -260,6 +278,7 @@ function commandRow(project: Project, cmd: Project["commands"][number]): Templat
 
   return html`
     <div
+      data-cmd-id=${id}
       class="card ${statusClass(status)} ${expandable ? "expandable" : ""} ${logsOpen ? "logs-open" : ""} ${menuOpen ? "cmd-menu-open" : ""}"
     >
       <div
@@ -356,39 +375,45 @@ function ensureProjectTech(project: Project) {
     });
 }
 
-// The project's icon slot, resolved in tiers:
+// The project's icon, resolved in tiers (the bare <img>/<i>, no wrapper):
 //   1. real project icon (backend folder scan)
 //   2a. tech logo from the command program (e.g. `cargo`, `flutter`)
 //   2b. tech logo from project marker files (e.g. pyproject.toml -> python), for
 //       custom launcher commands that hide the tech
 //   3. generic Phosphor terminal glyph
-function projectIconTemplate(project: Project): TemplateResult {
+// Factored out so both the project row (.picon) and a jump-bar icon (.ji) can
+// reuse the same tier logic with their own wrappers.
+function resolveProjectIcon(project: Project): TemplateResult {
   ensureProjectIcon(project);
   const cached = ui.iconCache[project.id];
   if (typeof cached === "string") {
     // onerror falls back to the tech logo if the bytes fail to decode.
-    return html`<span class="picon"
-      ><img
-        src=${cached}
-        alt=""
-        @error=${() => {
-          ui.iconCache[project.id] = null;
-          draw();
-        }}
-    /></span>`;
+    return html`<img
+      src=${cached}
+      alt=""
+      @error=${() => {
+        ui.iconCache[project.id] = null;
+        draw();
+      }}
+    />`;
   }
   const cmdTech = projectTech(project, ui.statusById);
   if (cmdTech) {
-    return html`<span class="picon"><i class="${deviconClass(cmdTech)}"></i></span>`;
+    return html`<i class="${deviconClass(cmdTech)}"></i>`;
   }
   // Command didn't reveal the tech: fall back to the backend marker-file scan.
   ensureProjectTech(project);
   const fileTech = ui.techCache[project.id];
   if (typeof fileTech === "string") {
     const cls = deviconClassByName(fileTech);
-    if (cls) return html`<span class="picon"><i class="${cls}"></i></span>`;
+    if (cls) return html`<i class="${cls}"></i>`;
   }
-  return html`<span class="picon"><i class="ph ph-terminal-window"></i></span>`;
+  return html`<i class="ph ph-terminal-window"></i>`;
+}
+
+// The project's icon slot for the project row.
+function projectIconTemplate(project: Project): TemplateResult {
+  return html`<span class="picon">${resolveProjectIcon(project)}</span>`;
 }
 
 // Per-project "more options" (kebab) button + its popover menu. The kebab trigger
@@ -485,6 +510,39 @@ function projectSection(project: Project): TemplateResult | typeof nothing {
   `;
 }
 
+// The running jump bar: one icon per live command, pinned under the topbar. A
+// pure projection of process state (no own state), hidden entirely when nothing
+// is running. Hover shows "project · command"; click reveals it in the list.
+function jumpBar(): TemplateResult | typeof nothing {
+  const items: { project: Project; cmd: Project["commands"][number]; id: string }[] = [];
+  for (const project of ui.projects) {
+    for (const cmd of project.commands) {
+      const id = `${project.id}:${cmd.id}`;
+      const status = ui.statusById[id]?.status;
+      // Only live commands have a terminal worth jumping to.
+      if (status === "running" || status === "starting") {
+        items.push({ project, cmd, id });
+      }
+    }
+  }
+  if (items.length === 0) return nothing;
+  return html`
+    <div class="jump">
+      ${items.map(
+        ({ project, cmd, id }) => html`
+          <button
+            class="ji ${ui.openLogsFor === id ? "active" : ""}"
+            title=${`${project.name} · ${displayName(cmd)}`}
+            @click=${() => void focusCommand(project.id, id)}
+          >
+            ${resolveProjectIcon(project)}
+          </button>
+        `,
+      )}
+    </div>
+  `;
+}
+
 function draw() {
   const emptyMsg = ui.projects.length === 0
     ? html`<p class="empty">No projects yet. Use the + button to add a project.</p>`
@@ -502,6 +560,7 @@ function draw() {
             <i class="ph ph-gear"></i>
           </button>
         </header>
+        ${jumpBar()}
       </div>
       ${ui.error ? html`<div class="error">${ui.error}</div>` : nothing}
       ${emptyMsg}

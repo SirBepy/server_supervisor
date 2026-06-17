@@ -35,6 +35,54 @@
   border-color: var(--accent);
 }
 
+/* Running jump bar: a thin, icon-only strip under the topbar, one button per
+   live command. Lives inside the sticky .header-block so it stays reachable
+   while the list scrolls. Hidden entirely (not rendered) when nothing runs. */
+.jump {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 20px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg);
+  overflow-x: auto;
+}
+.ji {
+  flex: 0 0 auto;
+  width: 34px;
+  height: 34px;
+  border-radius: 9px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--fg);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 18px;
+  line-height: 1;
+  padding: 0;
+  cursor: pointer;
+}
+.ji:hover {
+  border-color: var(--accent);
+}
+/* The icon whose log drawer is currently open: accent ring, matching the
+   active-kebab treatment elsewhere. Derived purely from ui.openLogsFor. */
+.ji.active {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+.ji img {
+  width: 20px;
+  height: 20px;
+  border-radius: 5px;
+  object-fit: cover;
+}
+/* Rust has no colored Devicon variant - tint it, as in the project row. */
+.ji .devicon-rust-plain {
+  color: #e0a884;
+}
+
 /* Project row: status dot + icon + name, with a hover swap zone on the right
    (quiet at rest, reveals start-all + more-options on hover) - mirrors the
    command card's right-side swap. The whole row toggles collapse on click. */
