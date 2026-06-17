@@ -175,6 +175,40 @@ fn crud_add_remove_project_and_command() {
 }
 
 #[test]
+fn crud_rename_project() {
+    let dir = tempfile::tempdir().unwrap();
+    let sup = new_sup(dir.path());
+
+    let p = sup.add_project("My App".into(), "C:/tmp".into()).unwrap();
+
+    // Rename mutates only the display name; the id is a stable handle and must
+    // not change (it keys the runtime map, logs, and API paths).
+    let renamed = sup.rename_project(&p.id, "New Name".into()).unwrap();
+    assert_eq!(renamed.name, "New Name", "name should be the trimmed new value");
+    assert_eq!(renamed.id, p.id, "id must not change on rename");
+
+    // Persistence: a fresh Supervisor over the SAME data dir reloads the new
+    // name from disk (proves config::save wrote it, not just an in-memory edit).
+    let reloaded = new_sup(dir.path());
+    let projects = reloaded.list_projects();
+    assert_eq!(projects.len(), 1);
+    assert_eq!(projects[0].id, p.id);
+    assert_eq!(projects[0].name, "New Name", "renamed name should survive a reload");
+
+    // Empty-name guard: a whitespace-only name trims to empty and is rejected.
+    assert!(
+        sup.rename_project(&p.id, "   ".into()).is_err(),
+        "blank name must be rejected"
+    );
+
+    // Unknown-id guard.
+    assert!(
+        sup.rename_project("nope", "X".into()).is_err(),
+        "unknown project id must be rejected"
+    );
+}
+
+#[test]
 fn removing_last_command_deletes_project() {
     let dir = tempfile::tempdir().unwrap();
     let sup = new_sup(dir.path());
