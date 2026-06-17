@@ -1,5 +1,5 @@
 import "@phosphor-icons/web/regular";
-import "devicon/devicon.min.css";
+import "./styles/devicon.css";
 import "./styles/base.css";
 import { mountDashboard } from "./views/dashboard/dashboard";
 import { mountSettings } from "./views/settings/settings";

@@ -1,0 +1,56 @@
+/*
+ * Trimmed, self-hosted Devicon subset.
+ *
+ * Upstream `devicon/devicon.min.css` ships an @font-face that references the
+ * icon font in FOUR formats (eot, svg, ttf, woff). Vite copies every url()
+ * asset it sees into dist/assets, so importing the upstream CSS bundled ~11MB
+ * of fonts (svg ~6.7MB, ttf/woff/eot ~1.5MB each) when WebView2 only needs
+ * woff/ttf. eot (legacy IE) and svg (legacy WebKit) fonts are pure dead weight.
+ *
+ * This file re-declares @font-face pointing ONLY at woff (WebView2 handles it) and
+ * copies just the glyph/color rules for the icons the dashboard actually uses
+ * (the DEVICON map in src/views/dashboard/helpers.ts). Rules below are copied
+ * verbatim from node_modules/devicon/devicon.min.css. If new techs are added to
+ * the helper map, copy their matching rules here too.
+ */
+
+@font-face {
+  font-family: "devicon";
+  src: url("devicon/fonts/devicon.woff?qd25fp") format("woff");
+  font-weight: normal;
+  font-style: normal;
+  font-display: block;
+}
+
+[class^="devicon-"],
+[class*=" devicon-"] {
+  font-family: "devicon" !important;
+  speak: never;
+  font-style: normal;
+  font-weight: normal;
+  font-variant: normal;
+  text-transform: none;
+  line-height: 1;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Glyph code points (verbatim from devicon.min.css). */
+.devicon-rust-plain:before { content: "\ebe6"; }
+.devicon-flutter-plain:before { content: "\ea06"; }
+.devicon-nodejs-plain:before { content: "\ed9e"; }
+.devicon-python-plain:before { content: "\eb9c"; }
+.devicon-go-original-wordmark:before,
+.devicon-go-plain-wordmark:before { content: "\ea3c"; }
+.devicon-denojs-original:before,
+.devicon-denojs-plain:before { content: "\e9b3"; }
+.devicon-docker-plain:before { content: "\e9c3"; }
+.devicon-dotnetcore-plain:before { content: "\e9c9"; }
+
+/* Brand colors for the `.colored` variant (verbatim from devicon.min.css). */
+.devicon-flutter-plain.colored { color: #3fb6d3; }
+.devicon-nodejs-plain.colored { color: #5fa04e; }
+.devicon-python-plain.colored { color: #ffd845; }
+.devicon-go-original-wordmark.colored { color: #00acd7; }
+.devicon-docker-plain.colored { color: #019bc6; }
+.devicon-dotnetcore-plain.colored { color: #623697; }
