@@ -248,7 +248,8 @@
   position: relative;
   z-index: 0;
 }
-.group:has(.proj-more.menu-open) {
+.group:has(.proj-more.menu-open),
+.group:has(.card.cmd-menu-open) {
   z-index: 10;
 }
 

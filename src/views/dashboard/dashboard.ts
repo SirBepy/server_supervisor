@@ -319,7 +319,6 @@ function projectIconTemplate(project: Project): TemplateResult {
 function projectSection(project: Project): TemplateResult | typeof nothing {
   const count = runningCount(project);
   const collapsed = ui.collapsed.has(project.id);
-
   return html`
     <section class="group">
       <div
