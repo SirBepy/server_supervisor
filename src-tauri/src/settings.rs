@@ -66,7 +66,10 @@ pub fn save(app: &AppHandle, settings: &Settings) -> Result<(), String> {
 pub fn sync_autostart<R: tauri::Runtime>(app: &AppHandle<R>, enabled: bool) {
     use tauri_plugin_autostart::ManagerExt;
     let mgr = app.autolaunch();
-    let result = if enabled { mgr.enable() } else { mgr.disable() };
+    // Never register a debug binary for autostart - it pops a terminal and
+    // loads the dev server URL instead of bundled assets.
+    let effective = enabled && !cfg!(debug_assertions);
+    let result = if effective { mgr.enable() } else { mgr.disable() };
     if let Err(e) = result {
         log::warn!("autostart sync failed (enabled={enabled}): {e}");
     }
