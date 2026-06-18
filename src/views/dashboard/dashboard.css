@@ -472,7 +472,7 @@
    into view when its drawer opens (jump-bar focus or a manual expand), instead
    of sitting jammed against the bottom edge. */
 .list-tail {
-  height: 40vh;
+  height: 200px;
 }
 
 /* Expanded log drawer: a thin rule, the pid/RAM/port/uptime header line, then
