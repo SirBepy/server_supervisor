@@ -245,6 +245,11 @@
 
 .group {
   padding: 4px 20px 2px;
+  position: relative;
+  z-index: 0;
+}
+.group:has(.proj-more.menu-open) {
+  z-index: 10;
 }
 
 .group h2 {
