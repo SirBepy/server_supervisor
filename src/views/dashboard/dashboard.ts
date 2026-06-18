@@ -376,6 +376,13 @@ function jumpBar(): TemplateResult | typeof nothing {
             class="ji ${ui.openLogsFor === id ? "active" : ""}"
             title=${`${project.name} · ${displayName(cmd)}`}
             @click=${() => void focusCommand(project.id, id)}
+            @contextmenu=${(e: Event) => {
+              e.preventDefault();
+              e.stopPropagation();
+              ui.openCmdMenuFor = null;
+              ui.openMenuFor = project.id;
+              draw();
+            }}
           >
             ${resolveProjectIcon(project)}
           </button>
