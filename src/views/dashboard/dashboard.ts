@@ -10,7 +10,7 @@ import { ui, setDraw, refresh, act } from "./state";
 import { formatBytes, displayName, formatUptime, projectTech, deviconClass, deviconClassByName } from "./helpers";
 import { modalView } from "./modals";
 import { startAddProject } from "./add-project";
-import { cmdMenu, moreMenu } from "./menus";
+import { cmdMenu, moreMenu, portalMenu, setMouseAnchor } from "./menus";
 import { renderAnsi } from "../../shared/ansi";
 
 const POLL_MS = 2500;
@@ -33,6 +33,7 @@ export function mountDashboard(el: HTMLElement): () => void {
     if (ui.openMenuFor !== null || ui.openCmdMenuFor !== null) {
       ui.openMenuFor = null;
       ui.openCmdMenuFor = null;
+      ui.menuAnchor = null;
       draw();
     }
   };
@@ -40,6 +41,7 @@ export function mountDashboard(el: HTMLElement): () => void {
     if (e.key === "Escape" && (ui.openMenuFor !== null || ui.openCmdMenuFor !== null)) {
       ui.openMenuFor = null;
       ui.openCmdMenuFor = null;
+      ui.menuAnchor = null;
       draw();
     }
   };
@@ -191,6 +193,7 @@ function commandRow(project: Project, cmd: Project["commands"][number]): Templat
           e.stopPropagation();
           ui.openMenuFor = null;
           ui.openCmdMenuFor = id;
+          setMouseAnchor(e as MouseEvent, 200);
           draw();
         }}
       >
@@ -329,6 +332,7 @@ function projectSection(project: Project): TemplateResult | typeof nothing {
           e.stopPropagation();
           ui.openCmdMenuFor = null;
           ui.openMenuFor = project.id;
+          setMouseAnchor(e as MouseEvent, 140);
           draw();
         }}
       >
@@ -378,8 +382,15 @@ function jumpBar(): TemplateResult | typeof nothing {
             @contextmenu=${(e: Event) => {
               e.preventDefault();
               e.stopPropagation();
-              ui.openCmdMenuFor = null;
-              ui.openMenuFor = project.id;
+              ui.openMenuFor = null;
+              ui.openCmdMenuFor = id;
+              const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+              ui.menuAnchor = {
+                top: rect.top,
+                bottom: rect.bottom,
+                right: rect.right,
+                flipUp: rect.bottom + 200 > window.innerHeight,
+              };
               draw();
             }}
           >
@@ -415,6 +426,7 @@ function draw() {
       ${ui.projects.map(projectSection)}
       ${ui.projects.length ? html`<div class="list-tail"></div>` : nothing}
       ${modalView()}
+      ${portalMenu()}
     `,
     ui.root,
   );

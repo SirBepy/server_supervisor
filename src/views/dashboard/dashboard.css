@@ -196,12 +196,9 @@
   color: var(--accent);
 }
 
-/* "More options" popover menu, anchored under the kebab button. */
+/* "More options" popover menu. Rendered via the portal (position:fixed inline
+   style), so only visual properties live here - no position/top/right/z-index. */
 .more-menu {
-  position: absolute;
-  top: calc(100% + 4px);
-  right: 0;
-  z-index: 100;
   min-width: 180px;
   display: flex;
   flex-direction: column;
@@ -210,11 +207,6 @@
   border: 1px solid var(--border);
   border-radius: 8px;
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
-}
-/* Flip menu upward when near the bottom of the viewport. */
-.more-menu.flip-up {
-  top: auto;
-  bottom: calc(100% + 4px);
 }
 .more-menu button {
   display: flex;

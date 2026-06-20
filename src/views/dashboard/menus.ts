@@ -1,44 +1,51 @@
-// Kebab popover menus for the dashboard list. cmdMenu is the per-command kebab
-// (Open in browser / Copy URL / Restart / Stop, or Edit / Remove); moreMenu is
-// the per-project kebab (Add command / Rename project / Open in file explorer).
-// Split out of dashboard.ts to keep the controller focused (one concern per file).
+// Kebab popover menus for the dashboard list. cmdMenu/moreMenu render only the
+// trigger button; the actual popover floats via portalMenu(), rendered at the
+// root of draw() as position:fixed so it always clears every stacking context.
 
 import { html, nothing, type TemplateResult } from "lit-html";
+import { styleMap } from "lit-html/directives/style-map.js";
 import type { Project } from "../../types/ipc.generated";
 import * as ipc from "../../shared/ipc";
 import { ui, act, draw } from "./state";
 import { startAddCommand } from "./modals";
 
-// Open a running command's port in a browser (from the kebab menu). Flutter-web
-// ports go to the dedicated CORS-disabled dev browser (new tab in the same
-// window); everything else opens in the default browser. Always http: these are
-// localhost dev servers (and the flutter reload proxy), never https.
 function openInBrowser(port: number, flutter: boolean) {
   void ipc.openPortUrl(`http://localhost:${port}`, flutter);
 }
 
-// Copy a command's localhost URL to the clipboard (from the kebab menu).
 function copyPortUrl(port: number) {
   void navigator.clipboard?.writeText(`http://localhost:${port}`);
 }
 
-// Per-command "more options" (kebab) menu. For a live process (running or
-// starting): Open-in-browser + Copy URL for its port (the port is no longer a
-// bare clickable badge - opening it lives here), then Restart / Stop. For a
-// stopped or crashed process: Edit / Remove (you can't edit a live command).
+// Store the anchor rect for the portal from a button click event.
+function setButtonAnchor(e: Event, menuHeight = 200) {
+  const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+  ui.menuAnchor = {
+    top: rect.top,
+    bottom: rect.bottom,
+    right: rect.right,
+    flipUp: rect.bottom + menuHeight > window.innerHeight,
+  };
+}
+
+// Store the anchor from a contextmenu (mouse) event. Menu opens at the cursor.
+export function setMouseAnchor(e: MouseEvent, menuHeight = 200) {
+  ui.menuAnchor = {
+    top: e.clientY,
+    bottom: e.clientY,
+    right: e.clientX,
+    flipUp: e.clientY + menuHeight > window.innerHeight,
+  };
+}
+
+// Per-command kebab button only. The popover is rendered by portalMenu().
 export function cmdMenu(
-  project: Project,
-  cmd: Project["commands"][number],
+  _project: Project,
+  _cmd: Project["commands"][number],
   id: string,
-  status: string,
+  _status: string,
 ): TemplateResult {
   const open = ui.openCmdMenuFor === id;
-  const live = status === "running" || status === "starting";
-  const port = ui.statusById[id]?.port;
-  const isFlutter = cmd.kind === "flutter";
-  const close = () => {
-    ui.openCmdMenuFor = null;
-  };
   return html`
     <div class="cmd-more">
       <button
@@ -46,87 +53,23 @@ export function cmdMenu(
         title="More options"
         @click=${(e: Event) => {
           e.stopPropagation();
-          if (!open) {
-            const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
-            ui.cmdMenuFlipUp = rect.bottom + 200 > window.innerHeight;
+          if (open) {
+            ui.openCmdMenuFor = null;
+            ui.menuAnchor = null;
+          } else {
+            setButtonAnchor(e, 200);
+            ui.openCmdMenuFor = id;
           }
-          ui.openCmdMenuFor = open ? null : id;
           draw();
         }}
       >
         <i class="ph ph-dots-three-vertical"></i>
       </button>
-      ${open
-        ? html`
-            <div class="more-menu ${ui.cmdMenuFlipUp ? "flip-up" : ""}" @click=${(e: Event) => e.stopPropagation()}>
-              ${live
-                ? html`
-                    ${port != null
-                      ? html`
-                          <button class="accent" @click=${() => { close(); openInBrowser(port, isFlutter); }}>
-                            <i class="ph ph-globe-simple"></i> Open :${port} in browser
-                          </button>
-                          <button @click=${() => { close(); copyPortUrl(port); }}>
-                            <i class="ph ph-copy"></i> Copy URL
-                          </button>
-                          <div class="menu-div"></div>
-                        `
-                      : nothing}
-                    <button @click=${() => { close(); if (ui.openLogsFor === id) { ui.logText = ""; } void act(ipc.restartProc(id)); }}>
-                      <i class="ph ph-arrow-clockwise"></i> Restart
-                    </button>
-                    <button @click=${() => { close(); if (ui.openLogsFor === id) { ui.logText = ""; } void act(ipc.stopProc(id)); }}>
-                      <i class="ph ph-stop"></i> Stop
-                    </button>
-                  `
-                : html`
-                    <button
-                      @click=${() => {
-                        close();
-                        ui.modal = {
-                          t: "editCommand",
-                          projectId: project.id,
-                          commandId: cmd.id,
-                          root: project.root,
-                          name: cmd.name,
-                          cmd: cmd.cmd,
-                          autostart: cmd.autostart,
-                          useDynamicPort: cmd.use_dynamic_port,
-                          env: cmd.env,
-                          check: null,
-                        };
-                        ui.comboOpen = false;
-                        draw();
-                      }}
-                    >
-                      <i class="ph ph-pencil-simple"></i> Edit command
-                    </button>
-                    <button
-                      @click=${() => {
-                        close();
-                        ui.modal = {
-                          t: "confirmDeleteCommand",
-                          projectId: project.id,
-                          commandId: cmd.id,
-                          cmdName: cmd.name,
-                          lastOne: project.commands.length === 1,
-                        };
-                        draw();
-                      }}
-                    >
-                      <i class="ph ph-trash"></i> Remove command
-                    </button>
-                  `}
-            </div>
-          `
-        : nothing}
     </div>
   `;
 }
 
-// Per-project "more options" (kebab) button + its popover menu. The kebab trigger
-// lives in the row's hover swap zone (.prow-actions); this provides the button +
-// anchored menu (Add command / Rename project / Open in file explorer).
+// Per-project kebab button only. The popover is rendered by portalMenu().
 export function moreMenu(project: Project): TemplateResult {
   const open = ui.openMenuFor === project.id;
   return html`
@@ -136,48 +79,187 @@ export function moreMenu(project: Project): TemplateResult {
         title="More options"
         @click=${(e: Event) => {
           e.stopPropagation();
-          if (!open) {
-            const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
-            ui.projMenuFlipUp = rect.bottom + 140 > window.innerHeight;
+          if (open) {
+            ui.openMenuFor = null;
+            ui.menuAnchor = null;
+          } else {
+            setButtonAnchor(e, 140);
+            ui.openMenuFor = project.id;
           }
-          ui.openMenuFor = open ? null : project.id;
           draw();
         }}
       >
         <i class="ph ph-dots-three-vertical"></i>
       </button>
-      ${open
-        ? html`
-            <div class="more-menu ${ui.projMenuFlipUp ? "flip-up" : ""}" @click=${(e: Event) => e.stopPropagation()}>
-              <button
-                @click=${() => {
-                  ui.openMenuFor = null;
-                  void startAddCommand(project.id, project.root);
-                }}
-              >
-                <i class="ph ph-plus"></i> Add command
-              </button>
-              <button
-                @click=${() => {
-                  ui.openMenuFor = null;
-                  ui.modal = { t: "renameProject", projectId: project.id, name: project.name };
-                  draw();
-                }}
-              >
-                <i class="ph ph-pencil-simple"></i> Rename project
-              </button>
-              <button
-                @click=${() => {
-                  ui.openMenuFor = null;
-                  void ipc.openInExplorer(project.root);
-                  draw();
-                }}
-              >
-                <i class="ph ph-folder-open"></i> Open in file explorer
-              </button>
-            </div>
-          `
-        : nothing}
     </div>
+  `;
+}
+
+// The floating menu portal. Call from draw() at root level. Renders position:fixed
+// at the stored anchor so the menu is always on top of every stacking context.
+export function portalMenu(): TemplateResult | typeof nothing {
+  const anchor = ui.menuAnchor;
+  if (!anchor) return nothing;
+
+  let content: TemplateResult | typeof nothing = nothing;
+
+  if (ui.openMenuFor !== null) {
+    const project = ui.projects.find((p) => p.id === ui.openMenuFor);
+    if (project) content = projMenuContent(project);
+  } else if (ui.openCmdMenuFor !== null) {
+    outer: for (const project of ui.projects) {
+      for (const cmd of project.commands) {
+        const id = `${project.id}:${cmd.id}`;
+        if (id === ui.openCmdMenuFor) {
+          const status = ui.statusById[id]?.status ?? "stopped";
+          content = cmdMenuContent(project, cmd, id, status);
+          break outer;
+        }
+      }
+    }
+  }
+
+  if (content === nothing) return nothing;
+
+  const style = styleMap({
+    position: "fixed",
+    zIndex: "9999",
+    right: `${window.innerWidth - anchor.right}px`,
+    top: anchor.flipUp ? undefined : `${anchor.bottom + 4}px`,
+    bottom: anchor.flipUp ? `${window.innerHeight - anchor.top + 4}px` : undefined,
+  });
+
+  return html`
+    <div class="more-menu" style=${style} @click=${(e: Event) => e.stopPropagation()}>
+      ${content}
+    </div>
+  `;
+}
+
+function projMenuContent(project: Project): TemplateResult {
+  const close = () => {
+    ui.openMenuFor = null;
+    ui.menuAnchor = null;
+  };
+  return html`
+    <button
+      @click=${() => {
+        close();
+        void startAddCommand(project.id, project.root);
+      }}
+    >
+      <i class="ph ph-plus"></i> Add command
+    </button>
+    <button
+      @click=${() => {
+        close();
+        ui.modal = { t: "renameProject", projectId: project.id, name: project.name };
+        draw();
+      }}
+    >
+      <i class="ph ph-pencil-simple"></i> Rename project
+    </button>
+    <button
+      @click=${() => {
+        close();
+        void ipc.openInExplorer(project.root);
+        draw();
+      }}
+    >
+      <i class="ph ph-folder-open"></i> Open in file explorer
+    </button>
+  `;
+}
+
+function cmdMenuContent(
+  project: Project,
+  cmd: Project["commands"][number],
+  id: string,
+  status: string,
+): TemplateResult {
+  const live = status === "running" || status === "starting";
+  const port = ui.statusById[id]?.port;
+  const isFlutter = cmd.kind === "flutter";
+  const close = () => {
+    ui.openCmdMenuFor = null;
+    ui.menuAnchor = null;
+  };
+  return html`
+    ${live
+      ? html`
+          ${port != null
+            ? html`
+                <button
+                  class="accent"
+                  @click=${() => {
+                    close();
+                    openInBrowser(port, isFlutter);
+                  }}
+                >
+                  <i class="ph ph-globe-simple"></i> Open :${port} in browser
+                </button>
+                <button @click=${() => { close(); copyPortUrl(port); }}>
+                  <i class="ph ph-copy"></i> Copy URL
+                </button>
+                <div class="menu-div"></div>
+              `
+            : nothing}
+          <button
+            @click=${() => {
+              close();
+              if (ui.openLogsFor === id) ui.logText = "";
+              void act(ipc.restartProc(id));
+            }}
+          >
+            <i class="ph ph-arrow-clockwise"></i> Restart
+          </button>
+          <button
+            @click=${() => {
+              close();
+              if (ui.openLogsFor === id) ui.logText = "";
+              void act(ipc.stopProc(id));
+            }}
+          >
+            <i class="ph ph-stop"></i> Stop
+          </button>
+        `
+      : html`
+          <button
+            @click=${() => {
+              close();
+              ui.modal = {
+                t: "editCommand",
+                projectId: project.id,
+                commandId: cmd.id,
+                root: project.root,
+                name: cmd.name,
+                cmd: cmd.cmd,
+                autostart: cmd.autostart,
+                useDynamicPort: cmd.use_dynamic_port,
+                env: cmd.env,
+                check: null,
+              };
+              ui.comboOpen = false;
+              draw();
+            }}
+          >
+            <i class="ph ph-pencil-simple"></i> Edit command
+          </button>
+          <button
+            @click=${() => {
+              close();
+              ui.modal = {
+                t: "confirmDeleteCommand",
+                projectId: project.id,
+                commandId: cmd.id,
+                cmdName: cmd.name,
+                lastOne: project.commands.length === 1,
+              };
+              draw();
+            }}
+          >
+            <i class="ph ph-trash"></i> Remove command
+          </button>
+        `}
   `;
 }

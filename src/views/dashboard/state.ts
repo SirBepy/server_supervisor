@@ -110,14 +110,14 @@ export const ui = {
   seenProjectIds: new Set<string>(),
   // Project ID whose per-project "more options" (kebab) menu is open, or null.
   openMenuFor: null as string | null,
-  // Whether the project kebab menu should flip upward (near bottom of viewport).
-  projMenuFlipUp: false,
   // Command id (`project:command`) whose per-command "more options" (kebab) menu
   // is open, or null. Holds the secondary actions (stop/restart, edit/remove);
   // the primary action stays a bare button on the card.
   openCmdMenuFor: null as string | null,
-  // Whether the command kebab menu should flip upward (near bottom of viewport).
-  cmdMenuFlipUp: false,
+  // Anchor for the floating menu portal. Set when a kebab button is clicked or a
+  // context-menu event fires; cleared when the menu is dismissed. The portal
+  // renders via position:fixed so it escapes all stacking-context traps.
+  menuAnchor: null as { top: number; bottom: number; right: number; flipUp: boolean } | null,
   // Dashboard density prefs, loaded from settings on mount (see loadPrefs).
   // Defaults mirror the Rust Settings defaults so first paint matches.
   showCommandCount: false,
