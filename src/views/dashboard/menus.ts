@@ -72,10 +72,10 @@ export function cmdMenu(
                           <div class="menu-div"></div>
                         `
                       : nothing}
-                    <button @click=${() => { close(); void act(ipc.restartProc(id)); }}>
+                    <button @click=${() => { close(); if (ui.openLogsFor === id) { ui.logText = ""; } void act(ipc.restartProc(id)); }}>
                       <i class="ph ph-arrow-clockwise"></i> Restart
                     </button>
-                    <button @click=${() => { close(); void act(ipc.stopProc(id)); }}>
+                    <button @click=${() => { close(); if (ui.openLogsFor === id) { ui.logText = ""; } void act(ipc.stopProc(id)); }}>
                       <i class="ph ph-stop"></i> Stop
                     </button>
                   `

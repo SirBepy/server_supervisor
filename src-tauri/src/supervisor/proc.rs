@@ -228,6 +228,8 @@ impl ManagedProc {
             return Ok(self.pid.unwrap_or(0));
         }
 
+        self.logs.lock().unwrap().clear();
+
         // Tear down any proxy left over from a prior (crashed) run before we
         // re-spawn, so the new proxy can re-bind the same public port. Dropping
         // it signals graceful shutdown + joins its thread.

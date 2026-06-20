@@ -214,7 +214,7 @@ function commandRow(project: Project, cmd: Project["commands"][number]): Templat
                 </button>`
               : nothing}
             ${status === "stopped" || status === "crashed"
-              ? html`<button class="abtn start" title="Start" @click=${() => act(ipc.startProc(id))}>
+              ? html`<button class="abtn start" title="Start" @click=${() => { if (ui.openLogsFor === id) { ui.logText = ""; } act(ipc.startProc(id)); }}>
                   <i class="ph ph-play"></i>
                 </button>`
               : nothing}
