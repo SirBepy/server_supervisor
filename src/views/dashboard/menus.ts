@@ -4,10 +4,11 @@
 
 import { html, nothing, type TemplateResult } from "lit-html";
 import { styleMap } from "lit-html/directives/style-map.js";
-import type { Project } from "../../types/ipc.generated";
+import type { Group, Project } from "../../types/ipc.generated";
 import * as ipc from "../../shared/ipc";
 import { ui, act, draw } from "./state";
 import { startAddCommand } from "./modals";
+import { startAddProject } from "./add-project";
 
 function openInBrowser(port: number, flutter: boolean) {
   void ipc.openPortUrl(`http://localhost:${port}`, flutter);
@@ -97,6 +98,32 @@ export function moreMenu(project: Project): TemplateResult {
   `;
 }
 
+// Per-group kebab button only. The popover is rendered by portalMenu().
+export function groupMenu(group: Group): TemplateResult {
+  const open = ui.openGroupMenuFor === group.id;
+  return html`
+    <div class="proj-more ${open ? "menu-open" : ""}">
+      <button
+        class="abtn ${open ? "active" : ""}"
+        title="Group options"
+        @click=${(e: Event) => {
+          e.stopPropagation();
+          if (open) {
+            ui.openGroupMenuFor = null;
+            ui.menuAnchor = null;
+          } else {
+            setButtonAnchor(e, 120);
+            ui.openGroupMenuFor = group.id;
+          }
+          draw();
+        }}
+      >
+        <i class="ph ph-dots-three-vertical"></i>
+      </button>
+    </div>
+  `;
+}
+
 // The floating menu portal. Call from draw() at root level. Renders position:fixed
 // at the stored anchor so the menu is always on top of every stacking context.
 export function portalMenu(): TemplateResult | typeof nothing {
@@ -119,6 +146,13 @@ export function portalMenu(): TemplateResult | typeof nothing {
         }
       }
     }
+  } else if (ui.openGroupMenuFor !== null) {
+    const group = ui.groups.find((g) => g.id === ui.openGroupMenuFor);
+    if (group) content = groupMenuContent(group);
+  } else if (ui.openMoveToGroupFor !== null) {
+    content = moveToGroupContent(ui.openMoveToGroupFor);
+  } else if (ui.openEmptyMenu) {
+    content = emptyMenuContent();
   }
 
   if (content === nothing) return nothing;
@@ -173,7 +207,168 @@ function projMenuContent(project: Project): TemplateResult {
     >
       <i class="ph ph-folder-open"></i> Open in file explorer
     </button>
+    <button
+      @click=${() => {
+        ui.openMenuFor = null;
+        ui.openMoveToGroupFor = project.id;
+        draw();
+      }}
+    >
+      <i class="ph ph-rows"></i> Move to group
+    </button>
   `;
+}
+
+function groupMenuContent(group: Group): TemplateResult {
+  const close = () => {
+    ui.openGroupMenuFor = null;
+    ui.menuAnchor = null;
+  };
+  return html`
+    <button
+      @click=${() => {
+        close();
+        const name = window.prompt("Rename group:", group.name);
+        if (name && name.trim() && name.trim() !== group.name) {
+          void act(ipc.updateGroup(group.id, name.trim()));
+        } else {
+          draw();
+        }
+      }}
+    >
+      <i class="ph ph-pencil-simple"></i> Rename group
+    </button>
+    <button
+      @click=${() => {
+        close();
+        void startAddProjectInGroup(group.id);
+      }}
+    >
+      <i class="ph ph-plus"></i> New project in "${group.name}"
+    </button>
+    <button
+      class="danger"
+      @click=${() => {
+        close();
+        if (window.confirm(`Delete group "${group.name}"? Projects will become ungrouped.`)) {
+          void act(ipc.deleteGroup(group.id));
+        } else {
+          draw();
+        }
+      }}
+    >
+      <i class="ph ph-trash"></i> Delete group
+    </button>
+  `;
+}
+
+function moveToGroupContent(projectId: string): TemplateResult {
+  const currentGroupId = ui.groups.find((g) => g.project_ids.includes(projectId))?.id ?? null;
+  const close = () => {
+    ui.openMoveToGroupFor = null;
+    ui.menuAnchor = null;
+  };
+  return html`
+    ${ui.groups.map(
+      (g) => html`
+        <button
+          @click=${() => {
+            close();
+            const newGroupId = currentGroupId === g.id ? null : g.id;
+            void act(ipc.setProjectGroup(projectId, newGroupId));
+          }}
+        >
+          ${currentGroupId === g.id ? html`<i class="ph ph-check"></i>` : nothing}
+          ${g.name}
+        </button>
+      `,
+    )}
+    <button
+      @click=${() => {
+        close();
+        const name = window.prompt("New group name:");
+        if (name?.trim()) {
+          void ipc.createGroup(name.trim()).then((g) =>
+            act(ipc.setProjectGroup(projectId, g.id)),
+          );
+        } else {
+          draw();
+        }
+      }}
+    >
+      <i class="ph ph-plus"></i> New group...
+    </button>
+    ${currentGroupId !== null
+      ? html`
+          <button
+            @click=${() => {
+              close();
+              void act(ipc.setProjectGroup(projectId, null));
+            }}
+          >
+            <i class="ph ph-x"></i> Ungroup
+          </button>
+        `
+      : nothing}
+  `;
+}
+
+function emptyMenuContent(): TemplateResult {
+  const close = () => {
+    ui.openEmptyMenu = false;
+    ui.menuAnchor = null;
+  };
+  return html`
+    <button
+      @click=${() => {
+        close();
+        const name = window.prompt("Group name:");
+        if (name?.trim()) {
+          void act(ipc.createGroup(name.trim()));
+        } else {
+          draw();
+        }
+      }}
+    >
+      <i class="ph ph-rows"></i> New group
+    </button>
+    <button
+      @click=${() => {
+        close();
+        void startAddProject();
+      }}
+    >
+      <i class="ph ph-folder-plus"></i> New project (ungrouped)
+    </button>
+  `;
+}
+
+async function startAddProjectInGroup(groupId: string) {
+  const before = new Set(ui.projects.map((p) => p.id));
+  startAddProject();
+  // Wait for the modal to open
+  await new Promise<void>((resolve) => {
+    const check = window.setInterval(() => {
+      if (ui.modal !== null) {
+        window.clearInterval(check);
+        resolve();
+      }
+    }, 50);
+  });
+  // Wait for the modal to close (user submitted or cancelled)
+  await new Promise<void>((resolve) => {
+    const check = window.setInterval(() => {
+      if (ui.modal === null) {
+        window.clearInterval(check);
+        resolve();
+      }
+    }, 100);
+  });
+  // Assign the newly created project to the group if one was added
+  const newProject = ui.projects.find((p) => !before.has(p.id));
+  if (newProject) {
+    void act(ipc.setProjectGroup(newProject.id, groupId));
+  }
 }
 
 function cmdMenuContent(

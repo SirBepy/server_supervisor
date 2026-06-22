@@ -16,7 +16,7 @@ use axum::{
     http::{header, HeaderMap, StatusCode},
     middleware::{self, Next},
     response::{IntoResponse, Response},
-    routing::{delete, get, patch, post},
+    routing::{delete, get, patch, post, put},
     Json, Router,
 };
 use serde::Deserialize;
@@ -42,6 +42,7 @@ struct ApiState {
     token: String,
     /// None in tests (all AI operations allowed); Some in production (reads live settings).
     ai_flags: Option<PermissionFlags>,
+    data_dir: std::path::PathBuf,
 }
 
 #[derive(Deserialize)]
@@ -121,10 +122,68 @@ fn ai_forbidden(allowed: bool, action: &str) -> Option<Response> {
     }
 }
 
+// --- group handlers ---
+
+async fn list_groups_api(State(s): State<ApiState>) -> impl IntoResponse {
+    Json(crate::groups::load(&s.data_dir))
+}
+
+#[derive(Deserialize)]
+struct GroupNameBody {
+    name: String,
+}
+
+async fn create_group_api(
+    State(s): State<ApiState>,
+    Json(body): Json<GroupNameBody>,
+) -> impl IntoResponse {
+    match crate::groups::create(&s.data_dir, body.name) {
+        Ok(g) => (StatusCode::CREATED, Json(g)).into_response(),
+        Err(e) => (StatusCode::CONFLICT, e).into_response(),
+    }
+}
+
+async fn update_group_api(
+    State(s): State<ApiState>,
+    Path(id): Path<String>,
+    Json(body): Json<GroupNameBody>,
+) -> impl IntoResponse {
+    match crate::groups::update(&s.data_dir, &id, body.name) {
+        Ok(g) => Json(g).into_response(),
+        Err(e) => (StatusCode::NOT_FOUND, e).into_response(),
+    }
+}
+
+async fn delete_group_api(
+    State(s): State<ApiState>,
+    Path(id): Path<String>,
+) -> impl IntoResponse {
+    match crate::groups::delete(&s.data_dir, &id) {
+        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Err(e) => (StatusCode::NOT_FOUND, e).into_response(),
+    }
+}
+
+#[derive(Deserialize)]
+struct SetGroupBody {
+    group_id: Option<String>,
+}
+
+async fn set_project_group_api(
+    State(s): State<ApiState>,
+    Path(project_id): Path<String>,
+    Json(body): Json<SetGroupBody>,
+) -> impl IntoResponse {
+    match crate::groups::set_project_group(&s.data_dir, &project_id, body.group_id.as_deref()) {
+        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Err(e) => (StatusCode::NOT_FOUND, e).into_response(),
+    }
+}
+
 /// Build the router. Exposed for tests so the API can be exercised without Tauri.
 /// Pass `None` for `ai_flags` in tests; permission checks are skipped when `None`.
-pub fn router(sup: Arc<Supervisor>, ports: Arc<PortRegistry>, token: String, ai_flags: Option<PermissionFlags>) -> Router {
-    let state = ApiState { sup, ports, token, ai_flags };
+pub fn router(sup: Arc<Supervisor>, ports: Arc<PortRegistry>, token: String, ai_flags: Option<PermissionFlags>, data_dir: std::path::PathBuf) -> Router {
+    let state = ApiState { sup, ports, token, ai_flags, data_dir };
     Router::new()
         .route("/procs", get(list_procs))
         .route("/procs/:id/start", post(start_proc))
@@ -141,6 +200,9 @@ pub fn router(sup: Arc<Supervisor>, ports: Arc<PortRegistry>, token: String, ai_
             "/projects/:project_id/commands/:command_id",
             patch(update_command).delete(remove_command),
         )
+        .route("/groups", get(list_groups_api).post(create_group_api))
+        .route("/groups/:id", put(update_group_api).delete(delete_group_api))
+        .route("/projects/:project_id/group", patch(set_project_group_api))
         .route_layer(middleware::from_fn_with_state(state.clone(), auth))
         // /health is added after the auth layer, so it stays unauthenticated.
         .route("/health", get(health))
@@ -175,7 +237,7 @@ pub async fn serve(
         let cfg = crate::settings::load(&app_handle);
         (cfg.ai_can_add_projects, cfg.ai_can_add_commands)
     });
-    let app = router(sup, ports, token, Some(flags));
+    let app = router(sup, ports, token, Some(flags), data_dir.clone());
     let listener = match bind_probe(port).await {
         Ok(l) => l,
         Err(e) => {

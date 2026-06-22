@@ -4,6 +4,7 @@
 //! per-type `#[ts(export)]`, which races on a shared output path). Run via the
 //! npm `prebuild` / `gen-types` script.
 
+use server_supervisor_lib::groups::Group;
 use server_supervisor_lib::icons::ProjectIcon;
 use server_supervisor_lib::ports::PortEntry;
 use server_supervisor_lib::settings::Settings;
@@ -45,6 +46,7 @@ fn emit_ipc_types() {
     out.push_str(&decl::<Settings>());
     out.push_str(&decl::<CommandCheck>());
     out.push_str(&decl::<ProjectIcon>());
+    out.push_str(&decl::<Group>());
 
     let path = output_path();
     if let Some(parent) = path.parent() {

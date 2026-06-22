@@ -5,12 +5,11 @@
 import { html, render, nothing, type TemplateResult } from "lit-html";
 import "./dashboard.css";
 import * as ipc from "../../shared/ipc";
-import type { Project } from "../../types/ipc.generated";
+import type { Group, Project } from "../../types/ipc.generated";
 import { ui, setDraw, refresh, act } from "./state";
 import { formatBytes, displayName, formatUptime, projectTech, deviconClass, deviconClassByName } from "./helpers";
 import { modalView } from "./modals";
-import { startAddProject } from "./add-project";
-import { cmdMenu, moreMenu, portalMenu, setMouseAnchor } from "./menus";
+import { cmdMenu, groupMenu, moreMenu, portalMenu, setMouseAnchor } from "./menus";
 import { renderAnsi } from "../../shared/ansi";
 
 const POLL_MS = 2500;
@@ -30,17 +29,36 @@ export function mountDashboard(el: HTMLElement): () => void {
   // The button + menu both stopPropagation, so any click reaching the document
   // is outside the open menu.
   const onDocClick = () => {
-    if (ui.openMenuFor !== null || ui.openCmdMenuFor !== null) {
+    if (
+      ui.openMenuFor !== null ||
+      ui.openCmdMenuFor !== null ||
+      ui.openGroupMenuFor !== null ||
+      ui.openMoveToGroupFor !== null ||
+      ui.openEmptyMenu
+    ) {
       ui.openMenuFor = null;
       ui.openCmdMenuFor = null;
+      ui.openGroupMenuFor = null;
+      ui.openMoveToGroupFor = null;
+      ui.openEmptyMenu = false;
       ui.menuAnchor = null;
       draw();
     }
   };
   const onKey = (e: KeyboardEvent) => {
-    if (e.key === "Escape" && (ui.openMenuFor !== null || ui.openCmdMenuFor !== null)) {
+    if (
+      e.key === "Escape" &&
+      (ui.openMenuFor !== null ||
+        ui.openCmdMenuFor !== null ||
+        ui.openGroupMenuFor !== null ||
+        ui.openMoveToGroupFor !== null ||
+        ui.openEmptyMenu)
+    ) {
       ui.openMenuFor = null;
       ui.openCmdMenuFor = null;
+      ui.openGroupMenuFor = null;
+      ui.openMoveToGroupFor = null;
+      ui.openEmptyMenu = false;
       ui.menuAnchor = null;
       draw();
     }
@@ -130,6 +148,73 @@ function toggleCollapse(projectId: string) {
     ui.collapsed.add(projectId);
   }
   draw();
+}
+
+function toggleGroupCollapse(id: string) {
+  if (ui.collapsedGroups.has(id)) {
+    ui.collapsedGroups.delete(id);
+  } else {
+    ui.collapsedGroups.add(id);
+  }
+  draw();
+}
+
+function groupRunningCount(group: Group): number {
+  return group.project_ids
+    .flatMap((pid) => {
+      const p = ui.projects.find((p) => p.id === pid);
+      return p ? p.commands.map((c) => ui.statusById[`${p.id}:${c.id}`]?.status) : [];
+    })
+    .filter((s) => s === "running").length;
+}
+
+function groupSection(group: Group): TemplateResult {
+  const projects = group.project_ids
+    .map((id) => ui.projects.find((p) => p.id === id))
+    .filter((p): p is Project => p != null);
+  const running = groupRunningCount(group);
+  const collapsed = ui.collapsedGroups.has(group.id);
+  return html`
+    <section class="ggroup">
+      <div
+        class="grow"
+        @click=${() => toggleGroupCollapse(group.id)}
+        @contextmenu=${(e: Event) => {
+          e.preventDefault();
+          e.stopPropagation();
+          ui.openMenuFor = null;
+          ui.openCmdMenuFor = null;
+          ui.openMoveToGroupFor = null;
+          ui.openEmptyMenu = false;
+          ui.openGroupMenuFor = group.id;
+          setMouseAnchor(e as MouseEvent, 120);
+          draw();
+        }}
+      >
+        <i class="ph ${collapsed ? "ph-caret-right" : "ph-caret-down"} gchev"></i>
+        <span class="gname">${group.name}</span>
+        ${running > 0 ? html`<span class="gbadge">${running} running</span>` : nothing}
+        <div @click=${(e: Event) => e.stopPropagation()}>${groupMenu(group)}</div>
+      </div>
+      ${collapsed ? nothing : projects.map((p) => projectSection(p))}
+    </section>
+  `;
+}
+
+function otherSection(projects: Project[]): TemplateResult | typeof nothing {
+  if (projects.length === 0) return nothing;
+  const collapsed = ui.collapsedGroups.has("__other__");
+  const running = projects.reduce((n, p) => n + runningCount(p), 0);
+  return html`
+    <section class="ggroup">
+      <div class="grow other" @click=${() => toggleGroupCollapse("__other__")}>
+        <i class="ph ${collapsed ? "ph-caret-right" : "ph-caret-down"} gchev"></i>
+        <span class="gname">other</span>
+        ${running > 0 ? html`<span class="gbadge">${running} running</span>` : nothing}
+      </div>
+      ${collapsed ? nothing : projects.map((p) => projectSection(p))}
+    </section>
+  `;
 }
 
 // Map a process status to the card's status class (drives the colored left
@@ -404,17 +489,14 @@ function jumpBar(): TemplateResult | typeof nothing {
 }
 
 function draw() {
-  const emptyMsg = ui.projects.length === 0
-    ? html`<p class="empty">No projects yet. Use the + button to add a project.</p>`
-    : nothing;
+  const groupedIds = new Set(ui.groups.flatMap((g) => g.project_ids));
+  const ungrouped = ui.projects.filter((p) => !groupedIds.has(p.id));
+  const isEmpty = ui.projects.length === 0 && ui.groups.length === 0;
 
   render(
     html`
       <div class="header-block">
         <header class="topbar">
-          <button class="icon-btn" title="Add project" @click=${() => void startAddProject()}>
-            <i class="ph ph-folder-plus"></i>
-          </button>
           <h1>Server Supervisor</h1>
           <button class="icon-btn" title="Settings" @click=${() => { location.hash = "#settings"; }}>
             <i class="ph ph-gear"></i>
@@ -423,9 +505,26 @@ function draw() {
         ${jumpBar()}
       </div>
       ${ui.error ? html`<div class="error">${ui.error}</div>` : nothing}
-      ${emptyMsg}
-      ${ui.projects.map(projectSection)}
-      ${ui.projects.length ? html`<div class="list-tail"></div>` : nothing}
+      ${isEmpty
+        ? html`<p class="empty">Right-click to add a project or group.</p>`
+        : nothing}
+      <div
+        class="project-list"
+        @contextmenu=${(e: Event) => {
+          if ((e.target as HTMLElement).closest(".prow, .card, .grow")) return;
+          e.preventDefault();
+          ui.openMenuFor = null;
+          ui.openCmdMenuFor = null;
+          ui.openGroupMenuFor = null;
+          ui.openMoveToGroupFor = null;
+          ui.openEmptyMenu = true;
+          setMouseAnchor(e as MouseEvent, 80);
+          draw();
+        }}
+      >
+        ${ui.groups.map(groupSection)}
+        ${otherSection(ungrouped)}
+      </div>
       ${modalView()}
       ${portalMenu()}
     `,

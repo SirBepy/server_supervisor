@@ -8,6 +8,7 @@ import type {
   DetectedCommand,
   CommandCheck,
   ProjectIcon,
+  Group,
 } from "../types/ipc.generated";
 
 // Runtime control (composite "projectId:commandId" ids).
@@ -86,3 +87,12 @@ export const getProjectTech = (root: string) =>
 export const getSettings = () => invoke<Settings>("get_settings");
 export const getApiToken = () => invoke<string>("get_api_token");
 export const quitApp = () => invoke<void>("quit_app");
+
+// Group CRUD
+export const listGroups = () => invoke<Group[]>("list_groups");
+export const createGroup = (name: string) => invoke<Group>("create_group", { name });
+export const updateGroup = (id: string, name: string) =>
+  invoke<Group>("update_group", { id, name });
+export const deleteGroup = (id: string) => invoke<void>("delete_group", { id });
+export const setProjectGroup = (projectId: string, groupId: string | null) =>
+  invoke<void>("set_project_group", { projectId, groupId });

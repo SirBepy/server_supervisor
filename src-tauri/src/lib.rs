@@ -1,5 +1,6 @@
 pub mod api;
 pub mod fsutil;
+pub mod groups;
 pub mod icons;
 pub mod ipc;
 pub mod ports;
@@ -59,6 +60,11 @@ pub fn run() {
             ipc::commands::get_api_token,
             icons::get_project_icon,
             icons::get_project_tech,
+            ipc::commands::list_groups,
+            ipc::commands::create_group,
+            ipc::commands::update_group,
+            ipc::commands::delete_group,
+            ipc::commands::set_project_group,
         ])
         .setup(|app| {
             let handle = app.handle().clone();

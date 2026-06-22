@@ -10,6 +10,7 @@ import type {
   Project,
   CommandCheck,
   DetectedCommand,
+  Group,
 } from "../../types/ipc.generated";
 
 // Debounce window for the advisory command-validity check.
@@ -130,6 +131,16 @@ export const ui = {
   // when the command name doesn't reveal it. undefined = not fetched, null =
   // unknown, string = a tech key (rust/flutter/node/python/...).
   techCache: {} as Record<string, string | null | undefined>,
+  // Groups fetched from the backend each poll tick.
+  groups: [] as Group[],
+  // Group IDs (and "__other__" for the ungrouped section) that are collapsed.
+  collapsedGroups: new Set<string>(),
+  // Group ID whose kebab menu is open, or null.
+  openGroupMenuFor: null as string | null,
+  // Project ID currently in "move to group" picker mode, or null.
+  openMoveToGroupFor: null as string | null,
+  // True when the empty-area right-click menu is open.
+  openEmptyMenu: false,
 };
 
 // draw() indirection: dashboard.ts owns the top-level render and registers it
@@ -144,7 +155,11 @@ export function draw() {
 
 export async function refresh() {
   try {
-    const [projs, procs] = await Promise.all([ipc.listProjects(), ipc.listProcs()]);
+    const [projs, procs, groups] = await Promise.all([
+      ipc.listProjects(),
+      ipc.listProcs(),
+      ipc.listGroups(),
+    ]);
     // Alphabetical by display name (case-insensitive) so the list order is
     // stable and predictable regardless of add order.
     projs.sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" }));
@@ -158,6 +173,7 @@ export async function refresh() {
       }
     }
     ui.projects = projs;
+    ui.groups = groups;
     ui.statusById = Object.fromEntries(procs.map((p) => [p.id, p]));
     ui.error = null;
     if (ui.openLogsFor) {
