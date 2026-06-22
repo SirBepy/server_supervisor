@@ -23,6 +23,7 @@ function setButtonAnchor(e: Event, menuHeight = 200) {
   ui.menuAnchor = {
     top: rect.top,
     bottom: rect.bottom,
+    left: rect.left,
     right: rect.right,
     flipUp: rect.bottom + menuHeight > window.innerHeight,
   };
@@ -33,6 +34,7 @@ export function setMouseAnchor(e: MouseEvent, menuHeight = 200) {
   ui.menuAnchor = {
     top: e.clientY,
     bottom: e.clientY,
+    left: e.clientX,
     right: e.clientX,
     flipUp: e.clientY + menuHeight > window.innerHeight,
   };
@@ -121,10 +123,13 @@ export function portalMenu(): TemplateResult | typeof nothing {
 
   if (content === nothing) return nothing;
 
+  const menuWidth = 200;
+  const openLeft = anchor.right >= menuWidth;
   const style = styleMap({
     position: "fixed",
     zIndex: "9999",
-    right: `${window.innerWidth - anchor.right}px`,
+    right: openLeft ? `${window.innerWidth - anchor.right}px` : undefined,
+    left: openLeft ? undefined : `${anchor.left}px`,
     top: anchor.flipUp ? undefined : `${anchor.bottom + 4}px`,
     bottom: anchor.flipUp ? `${window.innerHeight - anchor.top + 4}px` : undefined,
   });

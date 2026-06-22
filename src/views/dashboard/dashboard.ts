@@ -388,6 +388,7 @@ function jumpBar(): TemplateResult | typeof nothing {
               ui.menuAnchor = {
                 top: rect.top,
                 bottom: rect.bottom,
+                left: rect.left,
                 right: rect.right,
                 flipUp: rect.bottom + 200 > window.innerHeight,
               };
