@@ -63,13 +63,26 @@ export function mountDashboard(el: HTMLElement): () => void {
       draw();
     }
   };
+  const onContextMenu = (e: MouseEvent) => {
+    if ((e.target as HTMLElement).closest(".prow, .card, .grow, .more-menu, .proj-more, .cmd-more")) return;
+    e.preventDefault();
+    ui.openMenuFor = null;
+    ui.openCmdMenuFor = null;
+    ui.openGroupMenuFor = null;
+    ui.openMoveToGroupFor = null;
+    ui.openEmptyMenu = true;
+    setMouseAnchor(e, 80);
+    draw();
+  };
   document.addEventListener("click", onDocClick);
   document.addEventListener("keydown", onKey);
+  el.addEventListener("contextmenu", onContextMenu);
 
   return () => {
     window.clearInterval(timer);
     document.removeEventListener("click", onDocClick);
     document.removeEventListener("keydown", onKey);
+    el.removeEventListener("contextmenu", onContextMenu);
   };
 }
 
@@ -508,20 +521,7 @@ function draw() {
       ${isEmpty
         ? html`<p class="empty">Right-click to add a project or group.</p>`
         : nothing}
-      <div
-        class="project-list"
-        @contextmenu=${(e: Event) => {
-          if ((e.target as HTMLElement).closest(".prow, .card, .grow")) return;
-          e.preventDefault();
-          ui.openMenuFor = null;
-          ui.openCmdMenuFor = null;
-          ui.openGroupMenuFor = null;
-          ui.openMoveToGroupFor = null;
-          ui.openEmptyMenu = true;
-          setMouseAnchor(e as MouseEvent, 80);
-          draw();
-        }}
-      >
+      <div class="project-list">
         ${ui.groups.map(groupSection)}
         ${otherSection(ungrouped)}
       </div>
