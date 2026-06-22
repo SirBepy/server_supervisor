@@ -420,6 +420,9 @@ function projectIconTemplate(project: Project): TemplateResult {
 function projectSection(project: Project): TemplateResult | typeof nothing {
   const count = runningCount(project);
   const collapsed = ui.collapsed.has(project.id);
+  const singleCmd = project.commands.length === 1 ? project.commands[0] : null;
+  const singleId = singleCmd ? `${project.id}:${singleCmd.id}` : null;
+  const singleStatus = singleId ? (ui.statusById[singleId]?.status ?? "stopped") : null;
   return html`
     <section class="group">
       <div
@@ -441,7 +444,19 @@ function projectSection(project: Project): TemplateResult | typeof nothing {
           ${ui.showCommandCount
             ? html`<span class="pcount"><i class="ph ph-terminal-window"></i>${project.commands.length}</span>`
             : nothing}
-          <div class="prow-actions">${moreMenu(project)}</div>
+          <div class="prow-actions">
+            ${singleCmd && singleId && (singleStatus === "stopped" || singleStatus === "crashed")
+              ? html`<button class="abtn start" title="Start ${singleCmd.name}" @click=${() => act(ipc.startProc(singleId))}>
+                  <i class="ph ph-play"></i>
+                </button>`
+              : nothing}
+            ${singleCmd && singleId && (singleStatus === "running" || singleStatus === "starting")
+              ? html`<button class="abtn" title="Stop ${singleCmd.name}" @click=${() => act(ipc.stopProc(singleId))}>
+                  <i class="ph ph-stop"></i>
+                </button>`
+              : nothing}
+            ${moreMenu(project)}
+          </div>
         </div>
       </div>
       ${collapsed
