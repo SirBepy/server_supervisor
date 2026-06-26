@@ -29,10 +29,14 @@ pub fn stop_all_procs(sup: State<Arc<Supervisor>>) {
 pub fn open_in_explorer(path: String) -> Result<(), String> {
     #[cfg(windows)]
     {
-        // explorer.exe opens the folder; it returns quickly and sometimes exits
-        // non-zero even on success, so spawn-and-forget without checking status.
-        std::process::Command::new("explorer")
-            .arg(&path)
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        // `explorer.exe <path>` is unreliable when Explorer is already running
+        // (it ignores the path and opens the default folder). `cmd /c start`
+        // always opens the correct folder via the shell's folder handler.
+        std::process::Command::new("cmd")
+            .args(["/c", "start", "", &path])
+            .creation_flags(CREATE_NO_WINDOW)
             .spawn()
             .map(|_| ())
             .map_err(|e| e.to_string())
