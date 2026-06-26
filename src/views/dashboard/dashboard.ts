@@ -102,11 +102,11 @@ async function loadPrefs() {
 }
 
 // Jump-bar click: reveal a running command in the list. Expand its project and
-// open its log drawer, then scroll its card into view. The expand + scroll draw
-// happens IMMEDIATELY (synchronously); the log text is fetched in the background
-// and drawn in when it lands, so a slow getProcLogs never delays the visible
-// response. A second click on the already-open command just re-focuses (scrolls)
-// without refetching.
+// open its log drawer, then scroll its card into view.
+// Scroll happens AFTER logs are drawn: the card starts short ("(no output yet)")
+// and grows to ~260px once logs land, so scrolling before that puts the terminal
+// half off-screen. For an already-open command we scroll immediately (card is
+// already at full height).
 function focusCommand(projectId: string, id: string) {
   ui.collapsed.delete(projectId);
   const needLogs = ui.openLogsFor !== id;
@@ -116,11 +116,13 @@ function focusCommand(projectId: string, id: string) {
     ui.scrollLogsToBottom = true;
   }
   draw();
-  // Next frame: the (now expanded) card exists in the DOM, so scroll to it.
-  requestAnimationFrame(() => {
-    const el = ui.root.querySelector(`[data-cmd-id="${CSS.escape(id)}"]`);
-    el?.scrollIntoView({ block: "nearest" });
-  });
+  if (!needLogs) {
+    // Already open and fully expanded: scroll into view now.
+    requestAnimationFrame(() => {
+      const el = ui.root.querySelector(`[data-cmd-id="${CSS.escape(id)}"]`);
+      el?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    });
+  }
   if (needLogs) {
     void ipc.getProcLogs(id).then((lines) => {
       // Only apply if this command is still the open one (the user may have
@@ -129,6 +131,11 @@ function focusCommand(projectId: string, id: string) {
       ui.logText = lines.map((l) => l.text).join("\n");
       ui.scrollLogsToBottom = true;
       draw();
+      // Terminal is now fully expanded: scroll into view.
+      requestAnimationFrame(() => {
+        const el = ui.root.querySelector(`[data-cmd-id="${CSS.escape(id)}"]`);
+        el?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+      });
     });
   }
 }
