@@ -141,6 +141,10 @@ export const ui = {
   openMoveToGroupFor: null as string | null,
   // True when the empty-area right-click menu is open.
   openEmptyMenu: false,
+  // Group ID to auto-assign the next successfully-created project to, set by
+  // "New project in group" before opening the add-project wizard. Cleared on
+  // assignment or modal cancel.
+  pendingGroupId: null as string | null,
 };
 
 // draw() indirection: dashboard.ts owns the top-level render and registers it
@@ -202,6 +206,7 @@ export async function act(p: Promise<unknown>) {
 
 export function closeModal() {
   ui.modal = null;
+  ui.pendingGroupId = null;
   if (ui.validateTimer !== undefined) {
     window.clearTimeout(ui.validateTimer);
     ui.validateTimer = undefined;

@@ -19,7 +19,7 @@ function copyPortUrl(port: number) {
 }
 
 // Store the anchor rect for the portal from a button click event.
-function setButtonAnchor(e: Event, menuHeight = 200) {
+export function setButtonAnchor(e: Event, menuHeight = 200) {
   const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
   ui.menuAnchor = {
     top: rect.top,
@@ -343,32 +343,11 @@ function emptyMenuContent(): TemplateResult {
   `;
 }
 
-async function startAddProjectInGroup(groupId: string) {
-  const before = new Set(ui.projects.map((p) => p.id));
-  startAddProject();
-  // Wait for the modal to open
-  await new Promise<void>((resolve) => {
-    const check = window.setInterval(() => {
-      if (ui.modal !== null) {
-        window.clearInterval(check);
-        resolve();
-      }
-    }, 50);
-  });
-  // Wait for the modal to close (user submitted or cancelled)
-  await new Promise<void>((resolve) => {
-    const check = window.setInterval(() => {
-      if (ui.modal === null) {
-        window.clearInterval(check);
-        resolve();
-      }
-    }, 100);
-  });
-  // Assign the newly created project to the group if one was added
-  const newProject = ui.projects.find((p) => !before.has(p.id));
-  if (newProject) {
-    void act(ipc.setProjectGroup(newProject.id, groupId));
-  }
+// "New project in group": stash the target group so confirmAddProject (or
+// closeModal, on cancel) can assign/clear it once the wizard resolves.
+function startAddProjectInGroup(groupId: string) {
+  ui.pendingGroupId = groupId;
+  void startAddProject();
 }
 
 function cmdMenuContent(

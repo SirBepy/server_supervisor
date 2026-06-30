@@ -98,6 +98,10 @@ async function confirmAddProject() {
     for (const p of m.picked) {
       await ipc.addCommand(project.id, p.name, p.cmd, false, false);
     }
+    if (ui.pendingGroupId) {
+      await ipc.setProjectGroup(project.id, ui.pendingGroupId);
+      ui.pendingGroupId = null;
+    }
     ui.error = null;
     ui.modal = null;
   } catch (e) {

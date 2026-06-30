@@ -9,7 +9,7 @@ import type { Group, Project } from "../../types/ipc.generated";
 import { ui, setDraw, refresh, act } from "./state";
 import { formatBytes, displayName, formatUptime, projectTech, deviconClass, deviconClassByName } from "./helpers";
 import { modalView } from "./modals";
-import { cmdMenu, groupMenu, moreMenu, portalMenu, setMouseAnchor } from "./menus";
+import { cmdMenu, groupMenu, moreMenu, portalMenu, setButtonAnchor, setMouseAnchor } from "./menus";
 import { renderAnsi } from "../../shared/ansi";
 
 const POLL_MS = 2500;
@@ -183,12 +183,10 @@ function toggleGroupCollapse(id: string) {
 }
 
 function groupRunningCount(group: Group): number {
-  return group.project_ids
-    .flatMap((pid) => {
-      const p = ui.projects.find((p) => p.id === pid);
-      return p ? p.commands.map((c) => ui.statusById[`${p.id}:${c.id}`]?.status) : [];
-    })
-    .filter((s) => s === "running").length;
+  return group.project_ids.reduce((sum, pid) => {
+    const p = ui.projects.find((p) => p.id === pid);
+    return sum + (p ? runningCount(p) : 0);
+  }, 0);
 }
 
 function groupSection(group: Group): TemplateResult {
@@ -521,14 +519,7 @@ function jumpBar(): TemplateResult | typeof nothing {
               e.stopPropagation();
               ui.openMenuFor = null;
               ui.openCmdMenuFor = id;
-              const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
-              ui.menuAnchor = {
-                top: rect.top,
-                bottom: rect.bottom,
-                left: rect.left,
-                right: rect.right,
-                flipUp: rect.bottom + 200 > window.innerHeight,
-              };
+              setButtonAnchor(e, 200);
               draw();
             }}
           >
