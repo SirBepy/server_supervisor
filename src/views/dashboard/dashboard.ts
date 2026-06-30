@@ -76,13 +76,16 @@ export function mountDashboard(el: HTMLElement): () => void {
   };
   document.addEventListener("click", onDocClick);
   document.addEventListener("keydown", onKey);
-  el.addEventListener("contextmenu", onContextMenu);
+  // Listen on document, not el: el (the host div) shrink-wraps its content
+  // rather than filling the viewport, so empty space below the list belongs
+  // to body, not el. A document-level listener catches right-clicks there too.
+  document.addEventListener("contextmenu", onContextMenu);
 
   return () => {
     window.clearInterval(timer);
     document.removeEventListener("click", onDocClick);
     document.removeEventListener("keydown", onKey);
-    el.removeEventListener("contextmenu", onContextMenu);
+    document.removeEventListener("contextmenu", onContextMenu);
   };
 }
 
@@ -227,7 +230,21 @@ function otherSection(projects: Project[]): TemplateResult | typeof nothing {
   const running = projects.reduce((n, p) => n + runningCount(p), 0);
   return html`
     <section class="ggroup">
-      <div class="grow other" @click=${() => toggleGroupCollapse("__other__")}>
+      <div
+        class="grow other"
+        @click=${() => toggleGroupCollapse("__other__")}
+        @contextmenu=${(e: Event) => {
+          e.preventDefault();
+          e.stopPropagation();
+          ui.openMenuFor = null;
+          ui.openCmdMenuFor = null;
+          ui.openGroupMenuFor = null;
+          ui.openMoveToGroupFor = null;
+          ui.openEmptyMenu = true;
+          setMouseAnchor(e as MouseEvent, 80);
+          draw();
+        }}
+      >
         <i class="ph ${collapsed ? "ph-caret-right" : "ph-caret-down"} gchev"></i>
         <span class="gname">other</span>
         ${running > 0 ? html`<span class="gbadge">${running} running</span>` : nothing}
