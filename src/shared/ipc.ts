@@ -9,6 +9,7 @@ import type {
   CommandCheck,
   ProjectIcon,
   Group,
+  VersionInfo,
 } from "../types/ipc.generated";
 
 // Runtime control (composite "projectId:commandId" ids).
@@ -87,6 +88,8 @@ export const getProjectTech = (root: string) =>
 export const getSettings = () => invoke<Settings>("get_settings");
 export const getApiToken = () => invoke<string>("get_api_token");
 export const quitApp = () => invoke<void>("quit_app");
+// About page build/install info (kit's lazy `getVersionInfo` option).
+export const getVersionInfo = () => invoke<VersionInfo>("get_version_info");
 
 // Group CRUD
 export const listGroups = () => invoke<Group[]>("list_groups");

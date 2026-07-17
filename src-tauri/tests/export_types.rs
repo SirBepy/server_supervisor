@@ -6,6 +6,7 @@
 
 use server_supervisor_lib::groups::Group;
 use server_supervisor_lib::icons::ProjectIcon;
+use server_supervisor_lib::ipc::commands::VersionInfo;
 use server_supervisor_lib::ports::PortEntry;
 use server_supervisor_lib::settings::Settings;
 use server_supervisor_lib::supervisor::validate::CommandCheck;
@@ -47,6 +48,7 @@ fn emit_ipc_types() {
     out.push_str(&decl::<CommandCheck>());
     out.push_str(&decl::<ProjectIcon>());
     out.push_str(&decl::<Group>());
+    out.push_str(&decl::<VersionInfo>());
 
     let path = output_path();
     if let Some(parent) = path.parent() {

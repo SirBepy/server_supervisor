@@ -1,7 +1,7 @@
 import { html, render } from "lit-html";
 import { renderSettingsPage } from "../../../vendor/tauri_kit/frontend/settings/renderer";
 import "../../../vendor/tauri_kit/frontend/settings/styles.css";
-import { getApiToken } from "../../shared/ipc";
+import { getApiToken, getVersionInfo } from "../../shared/ipc";
 import { PALETTES, DEFAULT_PALETTE } from "../../shared/theme";
 import { buildSettingsSchema } from "./schema";
 import "./settings.css";
@@ -45,6 +45,13 @@ export async function mountSettings(el: HTMLElement): Promise<() => void> {
     // first-paint default and the picker default never drift. Mode left at the
     // kit default ("system").
     theme: { defaultPalette: DEFAULT_PALETTE },
+    async getVersionInfo() {
+      const info = await getVersionInfo();
+      return {
+        buildDate: info.build_date !== "unknown" ? info.build_date : undefined,
+        installedAt: info.installed_at ?? undefined,
+      };
+    },
     onHeaderChange(title, depth, pop) {
       // PageStack reports depth as the 1-based stack length, so the root page is
       // depth 1 (never 0). At the root, Back must exit settings to the dashboard;

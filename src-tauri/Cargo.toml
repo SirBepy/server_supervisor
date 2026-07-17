@@ -30,7 +30,7 @@ axum = "0.7"
 # reqwest 0.13) compiles the rustls connector in regardless, so reqwest 0.13's
 # `Client::new()` panics unless a rustls crypto provider is installed first - we
 # install the ring provider once in proxy::spawn before building the client.
-reqwest = { version = "0.13.4", default-features = false }
+reqwest = { version = "0.13.4", default-features = false, features = ["json"] }
 rustls = { version = "0.23", default-features = false, features = ["ring"] }
 uuid = { version = "1", features = ["v4"] }
 ts-rs = "10"
@@ -41,6 +41,8 @@ sysinfo = { version = "0.39", default-features = false, features = ["system"] }
 tauri_kit_settings = { path = "../vendor/tauri_kit/tauri/settings" }
 tauri_kit_updater = { path = "../vendor/tauri_kit/tauri/updater" }
 base64 = "0.22.1"
+# About page build/install date formatting (get_version_info).
+chrono = { version = "0.4", features = ["serde"] }
 
 [dev-dependencies]
 tempfile = "3"
