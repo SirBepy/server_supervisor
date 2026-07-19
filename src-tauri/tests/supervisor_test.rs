@@ -157,7 +157,7 @@ fn crud_add_remove_project_and_command() {
     assert_eq!(p.id, "my-app", "id should be slugged from the name");
 
     let c = sup
-        .add_command(&p.id, "Dev".into(), "ping -n 2 127.0.0.1".into(), None, false, false, "".into())
+        .add_command(&p.id, "Dev".into(), "ping -n 2 127.0.0.1".into(), None, false, false, "".into(), None)
         .unwrap();
     let composite = format!("{}:{}", p.id, c.id);
 
@@ -215,7 +215,7 @@ fn removing_last_command_deletes_project() {
 
     let p = sup.add_project("My App".into(), "C:/tmp".into()).unwrap();
     let c = sup
-        .add_command(&p.id, "Dev".into(), "ping -n 2 127.0.0.1".into(), None, false, false, "".into())
+        .add_command(&p.id, "Dev".into(), "ping -n 2 127.0.0.1".into(), None, false, false, "".into(), None)
         .unwrap();
 
     // Removing the only command removes the now-empty project too.
@@ -233,9 +233,9 @@ fn removing_one_of_several_keeps_project() {
 
     let p = sup.add_project("My App".into(), "C:/tmp".into()).unwrap();
     let c1 = sup
-        .add_command(&p.id, "Dev".into(), "ping -n 2 127.0.0.1".into(), None, false, false, "".into())
+        .add_command(&p.id, "Dev".into(), "ping -n 2 127.0.0.1".into(), None, false, false, "".into(), None)
         .unwrap();
-    sup.add_command(&p.id, "Build".into(), "ping -n 3 127.0.0.1".into(), None, false, false, "".into())
+    sup.add_command(&p.id, "Build".into(), "ping -n 3 127.0.0.1".into(), None, false, false, "".into(), None)
         .unwrap();
 
     // Removing one of two commands leaves the project with the other command.
@@ -276,18 +276,18 @@ fn add_command_infers_kind_from_cmd() {
 
     // No kind passed (None): inferred from the command string.
     let flutter = sup
-        .add_command(&p.id, "run".into(), "fvm flutter run".into(), None, false, false, "".into())
+        .add_command(&p.id, "run".into(), "fvm flutter run".into(), None, false, false, "".into(), None)
         .unwrap();
     assert_eq!(flutter.kind, ProcKind::Flutter, "flutter command -> Flutter");
 
     let node = sup
-        .add_command(&p.id, "api".into(), "node server.js".into(), None, false, false, "".into())
+        .add_command(&p.id, "api".into(), "node server.js".into(), None, false, false, "".into(), None)
         .unwrap();
     assert_eq!(node.kind, ProcKind::Generic, "non-flutter command -> Generic");
 
     // An explicit Some(kind) overrides inference (the /run API path).
     let forced = sup
-        .add_command(&p.id, "weird".into(), "node thing.js".into(), Some(ProcKind::Flutter), false, false, "".into())
+        .add_command(&p.id, "weird".into(), "node thing.js".into(), Some(ProcKind::Flutter), false, false, "".into(), None)
         .unwrap();
     assert_eq!(forced.kind, ProcKind::Flutter, "explicit kind overrides inference");
 }
@@ -300,10 +300,10 @@ fn adding_duplicate_command_is_noop() {
     let p = sup.add_project("My App".into(), "C:/tmp".into()).unwrap();
 
     let c1 = sup
-        .add_command(&p.id, "dev".into(), "npm run dev".into(), None, false, false, "".into())
+        .add_command(&p.id, "dev".into(), "npm run dev".into(), None, false, false, "".into(), None)
         .unwrap();
     let c2 = sup
-        .add_command(&p.id, "dev2".into(), "npm run dev".into(), None, false, false, "".into())
+        .add_command(&p.id, "dev2".into(), "npm run dev".into(), None, false, false, "".into(), None)
         .unwrap();
 
     let projects = sup.list_projects();
@@ -328,7 +328,7 @@ fn update_command_edits_in_place_and_keeps_id() {
 
     let p = sup.add_project("My App".into(), "C:/tmp".into()).unwrap();
     let c = sup
-        .add_command(&p.id, "Dev".into(), "ping -n 2 127.0.0.1".into(), None, false, false, "".into())
+        .add_command(&p.id, "Dev".into(), "ping -n 2 127.0.0.1".into(), None, false, false, "".into(), None)
         .unwrap();
 
     // Edit to a Flutter command: kind is inferred from the cmd string, so it
@@ -342,6 +342,7 @@ fn update_command_edits_in_place_and_keeps_id() {
             true,
             true,
             "".into(),
+            None,
         )
         .unwrap();
 
@@ -372,10 +373,10 @@ fn update_command_unknown_errors() {
     let sup = new_sup(dir.path());
     let p = sup.add_project("My App".into(), "C:/tmp".into()).unwrap();
     assert!(sup
-        .update_command(&p.id, "nope", "X".into(), "ping".into(), false, false, "".into())
+        .update_command(&p.id, "nope", "X".into(), "ping".into(), false, false, "".into(), None)
         .is_err());
     assert!(sup
-        .update_command("nope", "job", "X".into(), "ping".into(), false, false, "".into())
+        .update_command("nope", "job", "X".into(), "ping".into(), false, false, "".into(), None)
         .is_err());
 }
 
@@ -400,6 +401,7 @@ fn update_command_rejects_edit_while_running() {
             false,
             false,
             "".into(),
+            None,
         )
         .unwrap_err();
     assert!(err.contains("stop the command"), "running edit should be rejected: {err}");
@@ -415,6 +417,7 @@ fn update_command_rejects_edit_while_running() {
             false,
             false,
             "".into(),
+            None,
         )
         .unwrap();
     assert_eq!(updated.cmd, "ping -n 31 127.0.0.1");

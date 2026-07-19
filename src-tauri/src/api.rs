@@ -347,6 +347,9 @@ async fn add_command(
         b.autostart.unwrap_or(false),
         b.use_dynamic_port.unwrap_or(true),
         b.env.unwrap_or_default(),
+        // The localhost API has no `role` field on its request body (FE/BE
+        // badging is a dashboard-only concept); commands it creates start unset.
+        None,
     ))
 }
 
@@ -363,6 +366,11 @@ async fn update_command(
         b.autostart.unwrap_or(false),
         b.use_dynamic_port.unwrap_or(true),
         b.env.unwrap_or_default(),
+        // Same rationale as add_command: no `role` on the API body, and this
+        // endpoint already fully replaces the mutable fields rather than
+        // merging (autostart/use_dynamic_port fall back to a default, not the
+        // prior value, when omitted), so unset is consistent, not lossy-new.
+        None,
     ))
 }
 

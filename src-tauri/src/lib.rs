@@ -38,6 +38,7 @@ pub fn run() {
             ipc::commands::quit_app,
             ipc::commands::get_settings,
             ipc::commands::save_settings,
+            ipc::commands::get_system_stats,
             ipc::commands::list_procs,
             ipc::commands::open_port_url,
             ipc::commands::start_proc,

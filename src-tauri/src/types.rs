@@ -30,6 +30,16 @@ impl ProcKind {
     }
 }
 
+/// Which side of the stack a command belongs to, for the dashboard's FE/BE
+/// badge. Purely descriptive metadata - never read by the supervisor itself.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+pub enum Role {
+    #[serde(rename = "FE")]
+    Frontend,
+    #[serde(rename = "BE")]
+    Backend,
+}
+
 /// Lifecycle state of a supervised process.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "lowercase")]
@@ -126,6 +136,11 @@ pub struct Command {
     /// reference existing vars via `${NAME}` / `%NAME%`.
     #[serde(default)]
     pub env: String,
+    /// Optional FE/BE badge for the dashboard row. `None` for a command with no
+    /// declared side (and for every command saved before this field existed -
+    /// `#[serde(default)]` keeps those `projects.json` entries loading).
+    #[serde(default)]
+    pub role: Option<Role>,
 }
 
 /// A project: a named root folder with a set of runnable commands. This is the

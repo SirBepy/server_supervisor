@@ -10,6 +10,8 @@ import type {
   ProjectIcon,
   Group,
   VersionInfo,
+  Role,
+  SystemStats,
 } from "../types/ipc.generated";
 
 // Runtime control (composite "projectId:commandId" ids).
@@ -40,6 +42,7 @@ export const addCommand = (
   autostart: boolean,
   useDynamicPort: boolean,
   env = "",
+  role: Role | null = null,
 ) =>
   invoke<Command>("add_command", {
     projectId,
@@ -48,6 +51,7 @@ export const addCommand = (
     autostart,
     useDynamicPort,
     env,
+    role,
   });
 export const updateCommand = (
   projectId: string,
@@ -57,6 +61,7 @@ export const updateCommand = (
   autostart: boolean,
   useDynamicPort: boolean,
   env = "",
+  role: Role | null = null,
 ) =>
   invoke<Command>("update_command", {
     projectId,
@@ -66,6 +71,7 @@ export const updateCommand = (
     autostart,
     useDynamicPort,
     env,
+    role,
   });
 export const removeCommand = (projectId: string, commandId: string) =>
   invoke<void>("remove_command", { projectId, commandId });
@@ -86,6 +92,7 @@ export const getProjectTech = (root: string) =>
   invoke<string | null>("get_project_tech", { root });
 
 export const getSettings = () => invoke<Settings>("get_settings");
+export const getSystemStats = () => invoke<SystemStats>("get_system_stats");
 export const getApiToken = () => invoke<string>("get_api_token");
 export const quitApp = () => invoke<void>("quit_app");
 // About page build/install info (kit's lazy `getVersionInfo` option).

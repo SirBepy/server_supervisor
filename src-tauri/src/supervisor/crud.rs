@@ -6,7 +6,7 @@
 use super::config;
 use super::proc::ManagedProc;
 use super::registry::Supervisor;
-use crate::types::{unit_id, Command, ProcInfo, ProcKind, ProcSpec, Project};
+use crate::types::{unit_id, Command, ProcInfo, ProcKind, ProcSpec, Project, Role};
 
 impl Supervisor {
     // ----- config CRUD (mutates projects + runtime map, persists) -----
@@ -89,6 +89,7 @@ impl Supervisor {
         autostart: bool,
         use_dynamic_port: bool,
         env: String,
+        role: Option<Role>,
     ) -> Result<Command, String> {
         let name = name.trim().to_string();
         let cmd = normalize_cmd(&cmd);
@@ -116,6 +117,7 @@ impl Supervisor {
             autostart,
             use_dynamic_port,
             env,
+            role,
         };
         project.commands.push(command.clone());
         let project_snapshot = project.clone();
@@ -152,6 +154,7 @@ impl Supervisor {
             false,
             use_dynamic_port,
             env,
+            None,
         )?;
         // The incoming command is now registered, so pruning its failed siblings
         // can never empty the project. Clears the dead-on-arrival variant pile.
@@ -224,6 +227,7 @@ impl Supervisor {
         autostart: bool,
         use_dynamic_port: bool,
         env: String,
+        role: Option<Role>,
     ) -> Result<Command, String> {
         let name = name.trim().to_string();
         let cmd = cmd.trim().to_string();
@@ -261,6 +265,7 @@ impl Supervisor {
             command.autostart = autostart;
             command.use_dynamic_port = use_dynamic_port;
             command.env = env;
+            command.role = role;
             let updated = command.clone();
             let snapshot = project.clone();
             config::save(&self.data_dir, &projects);

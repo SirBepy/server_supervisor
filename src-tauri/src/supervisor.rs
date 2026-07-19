@@ -13,6 +13,7 @@ pub mod reaper;
 pub mod registry;
 pub mod sampler;
 pub mod spawn_env;
+pub mod sysstats;
 pub mod validate;
 
 pub use registry::Supervisor;

@@ -6,12 +6,12 @@
 
 use server_supervisor_lib::groups::Group;
 use server_supervisor_lib::icons::ProjectIcon;
-use server_supervisor_lib::ipc::commands::VersionInfo;
+use server_supervisor_lib::ipc::commands::{SystemStats, VersionInfo};
 use server_supervisor_lib::ports::PortEntry;
 use server_supervisor_lib::settings::Settings;
 use server_supervisor_lib::supervisor::validate::CommandCheck;
 use server_supervisor_lib::types::{
-    Command, DetectedCommand, LogLine, ProcInfo, ProcKind, ProcSpec, ProcStatus, Project,
+    Command, DetectedCommand, LogLine, ProcInfo, ProcKind, ProcSpec, ProcStatus, Project, Role,
 };
 use std::fs;
 use std::path::PathBuf;
@@ -37,6 +37,7 @@ fn emit_ipc_types() {
     let mut out = String::from(HEADER);
     out.push_str(&decl::<ProcKind>());
     out.push_str(&decl::<ProcStatus>());
+    out.push_str(&decl::<Role>());
     out.push_str(&decl::<ProcSpec>());
     out.push_str(&decl::<ProcInfo>());
     out.push_str(&decl::<LogLine>());
@@ -49,6 +50,7 @@ fn emit_ipc_types() {
     out.push_str(&decl::<ProjectIcon>());
     out.push_str(&decl::<Group>());
     out.push_str(&decl::<VersionInfo>());
+    out.push_str(&decl::<SystemStats>());
 
     let path = output_path();
     if let Some(parent) = path.parent() {

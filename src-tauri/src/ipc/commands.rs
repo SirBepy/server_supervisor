@@ -3,7 +3,7 @@ use crate::ports::{PortEntry, PortRegistry};
 use crate::settings::{self, Settings};
 use crate::supervisor::validate::CommandCheck;
 use crate::supervisor::{detect, validate, Supervisor};
-use crate::types::{Command, DetectedCommand, LogLine, ProcInfo, Project};
+use crate::types::{Command, DetectedCommand, LogLine, ProcInfo, Project, Role};
 use serde::Serialize;
 use std::sync::Arc;
 use tauri::{AppHandle, Manager, State};
@@ -53,6 +53,27 @@ pub fn open_in_explorer(path: String) -> Result<(), String> {
 #[tauri::command]
 pub fn get_settings(app: AppHandle) -> Settings {
     settings::load(&app)
+}
+
+/// System-wide RAM + CPU snapshot for the dashboard's stats tile.
+#[derive(Serialize, TS)]
+pub struct SystemStats {
+    pub total_mem_bytes: u64,
+    pub used_mem_bytes: u64,
+    pub cpu_pct: f32,
+}
+
+// `async` so Tauri runs it on a worker thread, not the main/UI thread: sysinfo
+// needs two CPU reads a short interval apart for a meaningful delta, so this
+// briefly blocks (see `supervisor::sysstats`).
+#[tauri::command(async)]
+pub fn get_system_stats() -> SystemStats {
+    let s = crate::supervisor::sysstats::sample();
+    SystemStats {
+        total_mem_bytes: s.total_mem_bytes,
+        used_mem_bytes: s.used_mem_bytes,
+        cpu_pct: s.cpu_pct,
+    }
 }
 
 #[tauri::command]
@@ -149,9 +170,10 @@ pub fn add_command(
     autostart: bool,
     use_dynamic_port: bool,
     env: String,
+    role: Option<Role>,
 ) -> Result<Command, String> {
     // Kind is inferred from the command string (None = infer).
-    sup.add_command(&project_id, name, cmd, None, autostart, use_dynamic_port, env)
+    sup.add_command(&project_id, name, cmd, None, autostart, use_dynamic_port, env, role)
 }
 
 #[tauri::command]
@@ -164,8 +186,9 @@ pub fn update_command(
     autostart: bool,
     use_dynamic_port: bool,
     env: String,
+    role: Option<Role>,
 ) -> Result<Command, String> {
-    sup.update_command(&project_id, &command_id, name, cmd, autostart, use_dynamic_port, env)
+    sup.update_command(&project_id, &command_id, name, cmd, autostart, use_dynamic_port, env, role)
 }
 
 #[tauri::command]
