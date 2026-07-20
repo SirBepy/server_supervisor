@@ -365,43 +365,25 @@ function cmdMenuContent(
   };
   return html`
     ${live
-      ? html`
-          ${port != null
-            ? html`
-                <button
-                  class="accent"
-                  @click=${() => {
-                    close();
-                    openInBrowser(port, isFlutter);
-                  }}
-                >
-                  <i class="ph ph-globe-simple"></i> Open :${port} in browser
-                </button>
-                <button @click=${() => { close(); copyPortUrl(port); }}>
-                  <i class="ph ph-copy"></i> Copy URL
-                </button>
-                <div class="menu-div"></div>
-              `
-            : nothing}
-          <button
-            @click=${() => {
-              close();
-              if (ui.openLogsFor === id) ui.logText = "";
-              void act(ipc.restartProc(id));
-            }}
-          >
-            <i class="ph ph-arrow-clockwise"></i> Restart
-          </button>
-          <button
-            @click=${() => {
-              close();
-              if (ui.openLogsFor === id) ui.logText = "";
-              void act(ipc.stopProc(id));
-            }}
-          >
-            <i class="ph ph-stop"></i> Stop
-          </button>
-        `
+      ? // Restart/Stop live as inline buttons on the Project screen row now, so
+        // this menu only carries the browser-link actions while live. Empty
+        // (no menu content at all) for a live command with no port yet.
+        port != null
+        ? html`
+            <button
+              class="accent"
+              @click=${() => {
+                close();
+                openInBrowser(port, isFlutter);
+              }}
+            >
+              <i class="ph ph-globe-simple"></i> Open :${port} in browser
+            </button>
+            <button @click=${() => { close(); copyPortUrl(port); }}>
+              <i class="ph ph-copy"></i> Copy URL
+            </button>
+          `
+        : nothing
       : html`
           <button
             @click=${() => {
@@ -416,6 +398,7 @@ function cmdMenuContent(
                 autostart: cmd.autostart,
                 useDynamicPort: cmd.use_dynamic_port,
                 env: cmd.env,
+                role: cmd.role,
                 check: null,
               };
               ui.comboOpen = false;

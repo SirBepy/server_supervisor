@@ -11,6 +11,8 @@ import type {
   CommandCheck,
   DetectedCommand,
   Group,
+  Role,
+  SystemStats,
 } from "../../types/ipc.generated";
 
 // Debounce window for the advisory command-validity check.
@@ -54,6 +56,7 @@ export type Modal =
       cmd: string;
       useDynamicPort: boolean;
       env: string;
+      role: Role | null;
       query: string;
       highlight: number;
       check: CommandCheck | null;
@@ -68,6 +71,7 @@ export type Modal =
       autostart: boolean;
       useDynamicPort: boolean;
       env: string;
+      role: Role | null;
       check: CommandCheck | null;
     }
   | {
@@ -82,6 +86,13 @@ export type Modal =
       projectId: string;
       name: string;
     };
+
+// Which top-level screen is showing. Home is the default landing screen (stats +
+// running-now + the project browser); Project shows one project's commands. This
+// is local navigation state (not persisted) - it survives poll refreshes since
+// this is a long-lived tray app, so a refresh tick must never bounce the user
+// back to Home mid-session.
+export type Screen = { t: "home" } | { t: "project"; projectId: string };
 
 // Single mutable view-state object. An object (not module-level `let`s) so that
 // imports across modules see the same live values — ES module bindings are
@@ -103,12 +114,21 @@ export const ui = {
   comboOpen: false,
   // Debounce handle for the advisory command-validity check.
   validateTimer: undefined as number | undefined,
-  // Project IDs that are currently collapsed. Projects start collapsed by
-  // default (see refresh): you open a project to reveal its commands.
-  collapsed: new Set<string>(),
-  // Project IDs we've already applied the default-collapse to, so a poll
-  // refresh never re-collapses a project the user has since expanded.
-  seenProjectIds: new Set<string>(),
+  // Current top-level screen (Home / Project). See Screen above.
+  screen: { t: "home" } as Screen,
+  // Command id (`project:command`) selected on the Project screen - drives the
+  // row highlight + which command the shared detail pane shows. Kept in lockstep
+  // with openLogsFor (below) by the code that sets it, so the existing log-fetch
+  // machinery in refresh() needs no changes.
+  expandedCmdId: null as string | null,
+  // Home's "Running now" list is capped at RUNNING_CAP by default; this flips
+  // that to show every match.
+  showAllRunning: false,
+  // Home's search box query - filters both the running-now list and the project
+  // browser by project name or command text.
+  homeSearch: "",
+  // System-wide RAM/CPU stats for Home's stats strip, polled alongside projects.
+  systemStats: null as SystemStats | null,
   // Project ID whose per-project "more options" (kebab) menu is open, or null.
   openMenuFor: null as string | null,
   // Command id (`project:command`) whose per-command "more options" (kebab) menu
@@ -134,7 +154,13 @@ export const ui = {
   // Groups fetched from the backend each poll tick.
   groups: [] as Group[],
   // Group IDs (and "__other__" for the ungrouped section) that are collapsed.
+  // Home's Projects section defaults new groups to collapsed (see refresh):
+  // decluttering was the whole point of bringing groups back onto Home.
   collapsedGroups: new Set<string>(),
+  // Group IDs we've already applied the default-collapse to, so a poll refresh
+  // never re-collapses a group the user has since expanded. Mirrors the
+  // seenProjectIds pattern this replaced.
+  seenGroupIds: new Set<string>(),
   // Group ID whose kebab menu is open, or null.
   openGroupMenuFor: null as string | null,
   // Project ID currently in "move to group" picker mode, or null.
@@ -159,26 +185,28 @@ export function draw() {
 
 export async function refresh() {
   try {
-    const [projs, procs, groups] = await Promise.all([
+    const [projs, procs, groups, systemStats] = await Promise.all([
       ipc.listProjects(),
       ipc.listProcs(),
       ipc.listGroups(),
+      ipc.getSystemStats(),
     ]);
     // Alphabetical by display name (case-insensitive) so the list order is
     // stable and predictable regardless of add order.
     projs.sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" }));
-    // First time we see a project, collapse it: the default is closed, and the
-    // user expands the one they want. seenProjectIds guards against re-collapsing
-    // a project the user later opened (this poll runs every few seconds).
-    for (const p of projs) {
-      if (!ui.seenProjectIds.has(p.id)) {
-        ui.seenProjectIds.add(p.id);
-        ui.collapsed.add(p.id);
+    // First time we see a group, collapse it: the default is closed, and the
+    // user expands the one they want. seenGroupIds guards against re-collapsing
+    // a group the user later opened (this poll runs every few seconds).
+    for (const g of groups) {
+      if (!ui.seenGroupIds.has(g.id)) {
+        ui.seenGroupIds.add(g.id);
+        ui.collapsedGroups.add(g.id);
       }
     }
     ui.projects = projs;
     ui.groups = groups;
     ui.statusById = Object.fromEntries(procs.map((p) => [p.id, p]));
+    ui.systemStats = systemStats;
     ui.error = null;
     if (ui.openLogsFor) {
       const lines = await ipc.getProcLogs(ui.openLogsFor);

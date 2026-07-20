@@ -11,12 +11,22 @@
   padding: 14px 20px 10px;
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  gap: 10px;
+  /* flex-start (not space-between): the Project screen's topbar has THREE
+     children (back, title, kebab) - h1's flex:1 below already pushes whatever
+     follows it to the far right, so this works for both Home's 2-child and
+     Project's 3-child layout without a different rule per screen. */
+  justify-content: flex-start;
 }
 
 .topbar h1 {
   font-size: 16px;
   margin: 0;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .icon-btn {
@@ -547,4 +557,344 @@
   border-radius: 10px;
   background: color-mix(in srgb, var(--green, #4caf50) 14%, transparent);
   color: var(--green, #4caf50);
+}
+
+/* ── Two-screen dashboard (Home / Project) ──────────────────────────
+   Ported from the reviewed /mockup (mockup-cmd-visibility), renamed off its
+   mk- scratch prefix. Reuses .card/.row/.right/.stats/.controls/.grow/.gname/
+   .gchev/.gbadge/.pidline/.logs as-is (unchanged above), so a hovered .card
+   still fades its .stats the same way it always has, even on rows that have
+   no .controls to reveal in their place (Home's running-now rows) - a minor
+   cosmetic quirk already present in the approved mockup, not introduced here. */
+
+.dash-screen {
+  padding: 14px 20px;
+}
+
+/* ----- Home: stats strip ----- */
+
+.stat-strip {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 18px;
+}
+.stat-pill {
+  flex: 1;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.stat-value {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--fg);
+  font-variant-numeric: tabular-nums;
+}
+.stat-subvalue {
+  font-size: 10.5px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.stat-label {
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin-top: 2px;
+}
+
+/* ----- Home: search ----- */
+
+.search-box {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0 10px;
+  height: 34px;
+  margin-bottom: 16px;
+}
+.search-box i {
+  color: var(--muted);
+  font-size: 14px;
+  flex: 0 0 auto;
+}
+.search-box input {
+  flex: 1;
+  min-width: 0;
+  background: transparent;
+  border: none;
+  color: var(--fg);
+  font-size: 13px;
+  outline: none;
+}
+.search-box input::placeholder {
+  color: var(--muted);
+}
+.search-clear {
+  cursor: pointer;
+}
+.search-clear:hover {
+  color: var(--fg);
+}
+
+/* ----- Home: section labels + empty state + show-more ----- */
+
+.section-label {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin: 4px 2px 8px;
+}
+.section-label-secondary {
+  margin-top: 22px;
+}
+
+.list-empty {
+  color: var(--muted);
+  font-size: 12px;
+  margin: 0 0 12px;
+}
+
+.show-more {
+  display: block;
+  width: 100%;
+  background: transparent;
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+  color: var(--muted);
+  font-size: 12px;
+  padding: 7px;
+  cursor: pointer;
+  margin-bottom: 4px;
+}
+.show-more:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+/* ----- Home: "Running now" rows (reuses .card for the status-colored left
+   edge + hover-lift, same as the Project screen's command rows) ----- */
+
+.card.run-row {
+  margin-bottom: 4px;
+  cursor: pointer;
+}
+.card.run-row:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 7px 20px rgba(0, 0, 0, 0.4);
+  border-color: rgba(56, 189, 248, 0.45);
+}
+
+/* ----- Home: project browser rows + group members ----- */
+
+.proj-browse-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 10px;
+  border-radius: 8px;
+  cursor: pointer;
+}
+.proj-browse-row:hover {
+  background: var(--surface);
+}
+.proj-browse-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--fg);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+.proj-browse-meta {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+}
+.meta-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+}
+.meta-chip i {
+  font-size: 13px;
+}
+.meta-chip-running {
+  color: var(--success, #34d399);
+}
+.row-goto {
+  color: var(--muted);
+  font-size: 13px;
+  margin-left: 6px;
+  flex: 0 0 auto;
+}
+
+/* Member projects nested under a group header (.grow) - indented so the
+   group/member relationship reads clearly. */
+.group-body {
+  padding-left: 14px;
+  margin-bottom: 4px;
+}
+
+/* ----- shared row bits: icon + name/cmd column + role badge (Home
+   running-now rows AND Project screen command rows) ----- */
+
+.row-namecol {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+  overflow: hidden;
+}
+.row-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--fg);
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.row-cmdtext {
+  font-size: 11px;
+  color: var(--muted);
+  font-family: "Cascadia Code", Consolas, monospace;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.role-badge {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  border-radius: 4px;
+  padding: 1px 5px;
+  flex: 0 0 auto;
+}
+.role-badge.role-fe {
+  color: #7dd3fc;
+  background: color-mix(in srgb, #7dd3fc 16%, transparent);
+}
+.role-badge.role-be {
+  color: #c4b5fd;
+  background: color-mix(in srgb, #c4b5fd 16%, transparent);
+}
+
+/* ----- Project screen: large icon + name + root path header ----- */
+
+.detail-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+.picon-lg {
+  width: 34px;
+  height: 34px;
+  font-size: 22px;
+  border-radius: 8px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+}
+.picon-lg img {
+  width: 26px;
+  height: 26px;
+  border-radius: 6px;
+  object-fit: cover;
+}
+.detail-title {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--fg);
+}
+.detail-sub {
+  font-size: 11px;
+  color: var(--muted);
+  font-family: "Cascadia Code", Consolas, monospace;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 320px;
+}
+
+/* ----- Project screen: one contiguous bordered command block, rows packed
+   with zero gap (only the left status edge + a hairline divider tell them
+   apart) - the detail pane lives OUTSIDE this block, below all of it, not
+   wedged between rows. ----- */
+
+.cmd-block {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  overflow: hidden;
+  margin-bottom: 16px;
+}
+.cmd-block .card {
+  margin-bottom: 0;
+  border-radius: 0;
+  border-top: none;
+  border-right: none;
+  border-bottom: 1px solid var(--border);
+}
+.cmd-block .card:last-child {
+  border-bottom: none;
+}
+.cmd-block .card.selected {
+  transform: none;
+  box-shadow: inset 0 0 0 1px var(--accent);
+  background: color-mix(in srgb, var(--accent) 7%, var(--surface));
+}
+
+/* ----- Project screen: shared terminal/detail pane - one instance, below the
+   WHOLE command block, reflecting whichever row is selected. ----- */
+
+.detail-pane {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 12px;
+}
+.detail-placeholder {
+  text-align: center;
+  padding: 18px;
+  border: 1px dashed var(--border);
+  border-radius: 10px;
+}
+.detail-cmdline {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-family: "Cascadia Code", Consolas, monospace;
+  font-size: 12.5px;
+  color: var(--fg);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 10px;
+  margin-bottom: 8px;
+}
+.detail-cmdline i {
+  color: var(--muted);
+}
+.crashed-tag {
+  color: var(--danger, #f87171);
+  font-weight: 600;
+  margin-right: 4px;
 }

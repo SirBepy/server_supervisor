@@ -1,11 +1,13 @@
 // Dashboard controller: mounts the view, drives the poll loop, and renders the
-// project/command list. Shared view state + the render trigger live in ./state;
-// the modals (add project/command, edit, delete) live in ./modals.
+// two-screen dashboard (Home: stats + running-now + project browser; Project:
+// one project's commands + shared detail pane). Shared view state + the render
+// trigger live in ./state; the modals (add project/command, edit, delete) live
+// in ./modals.
 
 import { html, render, nothing, type TemplateResult } from "lit-html";
 import "./dashboard.css";
 import * as ipc from "../../shared/ipc";
-import type { Group, Project } from "../../types/ipc.generated";
+import type { Group, Project, Role } from "../../types/ipc.generated";
 import { ui, setDraw, refresh, act } from "./state";
 import { formatBytes, displayName, formatUptime, projectTech, deviconClass, deviconClassByName } from "./helpers";
 import { modalView } from "./modals";
@@ -13,6 +15,9 @@ import { cmdMenu, groupMenu, moreMenu, portalMenu, setButtonAnchor, setMouseAnch
 import { renderAnsi } from "../../shared/ansi";
 
 const POLL_MS = 2500;
+// "Running now" on Home caps at this many rows total (crashed counted toward
+// the cap, not shown in addition to it); searching bypasses the cap entirely.
+const RUNNING_CAP = 3;
 
 export function mountDashboard(el: HTMLElement): () => void {
   ui.root = el;
@@ -64,7 +69,10 @@ export function mountDashboard(el: HTMLElement): () => void {
     }
   };
   const onContextMenu = (e: MouseEvent) => {
-    if ((e.target as HTMLElement).closest(".prow, .card, .grow, .more-menu, .proj-more, .cmd-more")) return;
+    if ((e.target as HTMLElement).closest(".card, .grow, .more-menu, .proj-more, .cmd-more, .proj-browse-row")) return;
+    // Only Home has an empty-area "new project/group" menu; the Project screen's
+    // equivalent actions live in its topbar kebab.
+    if (ui.screen.t !== "home") return;
     e.preventDefault();
     ui.openMenuFor = null;
     ui.openCmdMenuFor = null;
@@ -104,73 +112,74 @@ async function loadPrefs() {
   }
 }
 
-// Jump-bar click: reveal a running command in the list. Expand its project and
-// open its log drawer, then scroll its card into view.
-// Scroll happens AFTER logs are drawn: the card starts short ("(no output yet)")
-// and grows to ~260px once logs land, so scrolling before that puts the terminal
-// half off-screen. For an already-open command we scroll immediately (card is
-// already at full height).
-function focusCommand(projectId: string, id: string) {
-  ui.collapsed.delete(projectId);
-  const needLogs = ui.openLogsFor !== id;
-  if (needLogs) {
-    ui.openLogsFor = id;
-    ui.logText = ""; // clear the previous command's text; "(no output yet)" until the fetch lands
-    ui.scrollLogsToBottom = true;
-  }
-  draw();
-  if (!needLogs) {
-    // Already open and fully expanded: scroll into view now.
-    requestAnimationFrame(() => {
-      const el = ui.root.querySelector(`[data-cmd-id="${CSS.escape(id)}"]`);
-      el?.scrollIntoView({ behavior: "smooth", block: "nearest" });
-    });
-  }
-  if (needLogs) {
-    void ipc.getProcLogs(id).then((lines) => {
-      // Only apply if this command is still the open one (the user may have
-      // clicked elsewhere while the fetch was in flight).
-      if (ui.openLogsFor !== id) return;
-      ui.logText = lines.map((l) => l.text).join("\n");
-      ui.scrollLogsToBottom = true;
-      draw();
-      // Terminal is now fully expanded: scroll into view.
-      requestAnimationFrame(() => {
-        const el = ui.root.querySelector(`[data-cmd-id="${CSS.escape(id)}"]`);
-        el?.scrollIntoView({ behavior: "smooth", block: "nearest" });
-      });
-    });
-  }
-}
+// ----- navigation -----
 
-async function toggleLogs(id: string) {
-  if (ui.openLogsFor === id) {
-    ui.openLogsFor = null;
-    ui.logText = "";
-  } else {
-    ui.openLogsFor = id;
-    ui.logText = (await ipc.getProcLogs(id)).map((l) => l.text).join("\n");
-    // Newly opened: start at the newest line.
-    ui.scrollLogsToBottom = true;
-  }
+function goHome() {
+  ui.screen = { t: "home" };
+  ui.expandedCmdId = null;
+  ui.openLogsFor = null;
+  ui.logText = "";
   draw();
 }
 
-// ----- rendering -----
+// Navigate to a project's screen with nothing pre-selected (Home's project
+// browse rows, and a group/project's own context-menu entries).
+function goToProject(projectId: string) {
+  ui.screen = { t: "project", projectId };
+  ui.expandedCmdId = null;
+  ui.openLogsFor = null;
+  ui.logText = "";
+  draw();
+}
+
+// Select a command (Project screen row click, Home running-row click, jump-bar
+// click): fetch its logs and mark it the active selection. ui.openLogsFor stays
+// the underlying log-fetch trigger the existing refresh()/act() machinery
+// already keys off; ui.expandedCmdId just drives which row is highlighted and
+// which command the shared detail pane below the block reflects.
+function selectCmd(id: string) {
+  ui.expandedCmdId = id;
+  ui.openLogsFor = id;
+  ui.logText = ""; // clear the previous command's text until the fetch lands
+  ui.scrollLogsToBottom = true;
+  draw();
+  void ipc.getProcLogs(id).then((lines) => {
+    // Only apply if this command is still the selected one (the user may have
+    // clicked elsewhere while the fetch was in flight).
+    if (ui.openLogsFor !== id) return;
+    ui.logText = lines.map((l) => l.text).join("\n");
+    ui.scrollLogsToBottom = true;
+    draw();
+  });
+}
+
+function deselectCmd() {
+  ui.expandedCmdId = null;
+  ui.openLogsFor = null;
+  ui.logText = "";
+  draw();
+}
+
+// Project screen row click: single-select, click-to-toggle (matches the
+// shipped app's former single-open-drawer behavior).
+function toggleSelectCmd(id: string) {
+  if (ui.expandedCmdId === id) deselectCmd();
+  else selectCmd(id);
+}
+
+// Home running-row / jump-bar click: jump straight into the project screen with
+// that command already selected, skipping an empty intermediate screen.
+function openCommandInProject(projectId: string, id: string) {
+  ui.screen = { t: "project", projectId };
+  selectCmd(id);
+}
+
+// ----- rendering: shared bits -----
 
 function runningCount(project: Project): number {
   return project.commands.filter(
     (c) => ui.statusById[`${project.id}:${c.id}`]?.status === "running",
   ).length;
-}
-
-function toggleCollapse(projectId: string) {
-  if (ui.collapsed.has(projectId)) {
-    ui.collapsed.delete(projectId);
-  } else {
-    ui.collapsed.add(projectId);
-  }
-  draw();
 }
 
 function toggleGroupCollapse(id: string) {
@@ -189,69 +198,6 @@ function groupRunningCount(group: Group): number {
   }, 0);
 }
 
-function groupSection(group: Group): TemplateResult {
-  const projects = group.project_ids
-    .map((id) => ui.projects.find((p) => p.id === id))
-    .filter((p): p is Project => p != null);
-  const running = groupRunningCount(group);
-  const collapsed = ui.collapsedGroups.has(group.id);
-  return html`
-    <section class="ggroup">
-      <div
-        class="grow"
-        @click=${() => toggleGroupCollapse(group.id)}
-        @contextmenu=${(e: Event) => {
-          e.preventDefault();
-          e.stopPropagation();
-          ui.openMenuFor = null;
-          ui.openCmdMenuFor = null;
-          ui.openMoveToGroupFor = null;
-          ui.openEmptyMenu = false;
-          ui.openGroupMenuFor = group.id;
-          setMouseAnchor(e as MouseEvent, 120);
-          draw();
-        }}
-      >
-        <i class="ph ${collapsed ? "ph-caret-right" : "ph-caret-down"} gchev"></i>
-        <span class="gname">${group.name}</span>
-        ${running > 0 ? html`<span class="gbadge">${running} running</span>` : nothing}
-        <div @click=${(e: Event) => e.stopPropagation()}>${groupMenu(group)}</div>
-      </div>
-      ${collapsed ? nothing : projects.map((p) => projectSection(p))}
-    </section>
-  `;
-}
-
-function otherSection(projects: Project[]): TemplateResult | typeof nothing {
-  if (projects.length === 0) return nothing;
-  const collapsed = ui.collapsedGroups.has("__other__");
-  const running = projects.reduce((n, p) => n + runningCount(p), 0);
-  return html`
-    <section class="ggroup">
-      <div
-        class="grow other"
-        @click=${() => toggleGroupCollapse("__other__")}
-        @contextmenu=${(e: Event) => {
-          e.preventDefault();
-          e.stopPropagation();
-          ui.openMenuFor = null;
-          ui.openCmdMenuFor = null;
-          ui.openGroupMenuFor = null;
-          ui.openMoveToGroupFor = null;
-          ui.openEmptyMenu = true;
-          setMouseAnchor(e as MouseEvent, 80);
-          draw();
-        }}
-      >
-        <i class="ph ${collapsed ? "ph-caret-right" : "ph-caret-down"} gchev"></i>
-        <span class="gname">other</span>
-        ${running > 0 ? html`<span class="gbadge">${running} running</span>` : nothing}
-      </div>
-      ${collapsed ? nothing : projects.map((p) => projectSection(p))}
-    </section>
-  `;
-}
-
 // Map a process status to the card's status class (drives the colored left
 // edge). Unknown/absent reads as stopped.
 function statusClass(status: string | undefined): string {
@@ -265,9 +211,13 @@ function statusClass(status: string | undefined): string {
   }
 }
 
-// The expanded-card header: pid + RAM + port + uptime, in one muted line. These
-// move here from the resting row so the row stays clean; when the card is open
-// the right-side stats are hidden, so this is where they remain visible.
+// Small FE/BE pill next to a name, wherever a command has a declared role.
+function roleBadge(role: Role | null | undefined): TemplateResult | typeof nothing {
+  if (!role) return nothing;
+  return html`<span class="role-badge role-${role.toLowerCase()}">${role}</span>`;
+}
+
+// The expanded-card header: pid + RAM + port + uptime, in one muted line.
 function drawerHeader(
   pid: number | null | undefined,
   mem: bigint | number | null | undefined,
@@ -281,87 +231,6 @@ function drawerHeader(
   const up = formatUptime(startedAt);
   if (up) parts.push(`started ${up}`);
   return parts.length ? parts.join(" · ") : "no run info";
-}
-
-function commandRow(project: Project, cmd: Project["commands"][number]): TemplateResult {
-  const id = `${project.id}:${cmd.id}`;
-  const info = ui.statusById[id];
-  const status = info?.status ?? "stopped";
-  const running = status === "running";
-  const pid = info?.pid;
-  const port = info?.port;
-  const mem = info?.mem_bytes;
-  const startedAt = info?.started_at;
-  const isFlutter = cmd.kind === "flutter";
-  const logsOpen = ui.openLogsFor === id;
-  // Only live/crashed processes have logs worth expanding; stopped ones are inert.
-  const expandable = status !== "stopped";
-  const menuOpen = ui.openCmdMenuFor === id;
-
-  return html`
-    <div
-      data-cmd-id=${id}
-      class="card ${statusClass(status)} ${expandable ? "expandable" : ""} ${logsOpen ? "logs-open" : ""} ${menuOpen ? "cmd-menu-open" : ""}"
-    >
-      <div
-        class="row"
-        role=${expandable ? "button" : nothing}
-        title=${expandable ? `Click to ${logsOpen ? "hide" : "show"} logs` : nothing}
-        @click=${expandable ? () => toggleLogs(id) : nothing}
-        @contextmenu=${(e: Event) => {
-          e.preventDefault();
-          e.stopPropagation();
-          ui.openMenuFor = null;
-          ui.openCmdMenuFor = id;
-          setMouseAnchor(e as MouseEvent, 200);
-          draw();
-        }}
-      >
-        <span class="name" title=${cmd.name}>${displayName(cmd)}</span>
-        ${isFlutter ? html`<span class="ftag">flutter</span>` : nothing}
-        ${status === "crashed" ? html`<span class="statusword">crashed</span>` : nothing}
-        ${status === "starting" ? html`<span class="statusword">starting</span>` : nothing}
-        <div class="right">
-          <div class="stats">
-            ${ui.showRam && mem != null
-              ? html`<span class="cell"><span class="k">RAM</span><span class="v">${formatBytes(mem)}</span></span>`
-              : nothing}
-            ${ui.showPort && port != null
-              ? html`<span class="cell"><span class="k">Port</span><span class="v">${port}</span></span>`
-              : nothing}
-          </div>
-          <div class="controls" @click=${(e: Event) => e.stopPropagation()}>
-            ${running && isFlutter
-              ? html`<button class="abtn" title="Hot restart" @click=${() => act(ipc.reloadProc(id))}>
-                  <i class="ph ph-arrows-clockwise"></i>
-                </button>`
-              : nothing}
-            ${status === "stopped" || status === "crashed"
-              ? html`<button class="abtn start" title="Start" @click=${() => { if (ui.openLogsFor === id) { ui.logText = ""; } act(ipc.startProc(id)); }}>
-                  <i class="ph ph-play"></i>
-                </button>`
-              : nothing}
-            ${cmdMenu(project, cmd, id, status)}
-            ${expandable
-              ? html`<i
-                  class="ph ${logsOpen ? "ph-caret-up" : "ph-caret-down"} chev"
-                  title="${logsOpen ? "Hide" : "Show"} logs"
-                  @click=${() => toggleLogs(id)}
-                ></i>`
-              : nothing}
-          </div>
-        </div>
-      </div>
-      ${logsOpen
-        ? html`
-            <div class="drawer">
-              <div class="pidline">${drawerHeader(pid, mem, port, startedAt)}</div>
-              <pre class="logs">${ui.logText ? renderAnsi(ui.logText) : "(no output yet)"}</pre>
-            </div>
-          `
-        : nothing}
-    </div>
-  `;
 }
 
 // Kick off a one-time icon fetch for a project, caching the result. Redraws when
@@ -404,8 +273,8 @@ function ensureProjectTech(project: Project) {
 //   2b. tech logo from project marker files (e.g. pyproject.toml -> python), for
 //       custom launcher commands that hide the tech
 //   3. generic Phosphor terminal glyph
-// Factored out so both the project row (.picon) and a jump-bar icon (.ji) can
-// reuse the same tier logic with their own wrappers.
+// Factored out so the project row, running-now row, project detail header, and
+// jump-bar icon can all reuse the same tier logic with their own wrappers.
 function resolveProjectIcon(project: Project): TemplateResult {
   ensureProjectIcon(project);
   const cached = ui.iconCache[project.id];
@@ -434,65 +303,395 @@ function resolveProjectIcon(project: Project): TemplateResult {
   return html`<i class="ph ph-terminal-window"></i>`;
 }
 
-// The project's icon slot for the project row.
+// The project's icon slot, small (row) size.
 function projectIconTemplate(project: Project): TemplateResult {
   return html`<span class="picon">${resolveProjectIcon(project)}</span>`;
 }
 
-function projectSection(project: Project): TemplateResult | typeof nothing {
-  const count = runningCount(project);
-  const collapsed = ui.collapsed.has(project.id);
-  const singleCmd = project.commands.length === 1 ? project.commands[0] : null;
-  const singleId = singleCmd ? `${project.id}:${singleCmd.id}` : null;
-  const singleStatus = singleId ? (ui.statusById[singleId]?.status ?? "stopped") : null;
+// The project's icon slot, large (Project screen detail header) size.
+function projectIconTemplateLg(project: Project): TemplateResult {
+  return html`<span class="picon picon-lg">${resolveProjectIcon(project)}</span>`;
+}
+
+// ----- Home screen -----
+
+function matchesSearch(project: Project, query: string): boolean {
+  const q = query.trim().toLowerCase();
+  if (!q) return true;
+  if (project.name.toLowerCase().includes(q)) return true;
+  return project.commands.some((c) => c.cmd.toLowerCase().includes(q));
+}
+
+function statsStrip(): TemplateResult {
+  const runningTotal = ui.projects.reduce((n, p) => n + runningCount(p), 0);
+  const stats = ui.systemStats;
+  const memPct = stats && stats.total_mem_bytes > 0n
+    ? Math.round((Number(stats.used_mem_bytes) / Number(stats.total_mem_bytes)) * 100)
+    : null;
+  const cpuPct = stats ? Math.round(stats.cpu_pct) : null;
+  const cores = navigator.hardwareConcurrency || 1;
+  const coresUsed = stats ? ((stats.cpu_pct / 100) * cores).toFixed(1) : null;
   return html`
-    <section class="group">
-      <div
-        class="prow"
-        @click=${() => toggleCollapse(project.id)}
-        @contextmenu=${(e: Event) => {
-          e.preventDefault();
-          e.stopPropagation();
-          ui.openCmdMenuFor = null;
-          ui.openMenuFor = project.id;
-          setMouseAnchor(e as MouseEvent, 140);
+    <div class="stat-strip">
+      <div class="stat-pill">
+        <span class="stat-value">${runningTotal}</span>
+        <span class="stat-label">running</span>
+      </div>
+      <div class="stat-pill">
+        <span class="stat-value">${memPct != null ? `${memPct}%` : "-"}</span>
+        <span class="stat-subvalue">${stats ? formatBytes(stats.used_mem_bytes) : "-"}</span>
+        <span class="stat-label">RAM</span>
+      </div>
+      <div class="stat-pill">
+        <span class="stat-value">${cpuPct != null ? `${cpuPct}%` : "-"}</span>
+        <span class="stat-subvalue">${coresUsed != null ? `${coresUsed} of ${cores} cores` : "-"}</span>
+        <span class="stat-label">CPU</span>
+      </div>
+    </div>
+  `;
+}
+
+function searchBox(): TemplateResult {
+  return html`
+    <div class="search-box">
+      <i class="ph ph-magnifying-glass"></i>
+      <input
+        type="text"
+        placeholder="Find a project..."
+        .value=${ui.homeSearch}
+        @input=${(e: Event) => {
+          ui.homeSearch = (e.target as HTMLInputElement).value;
           draw();
         }}
-      >
-        <span class="pdot ${count > 0 ? "on" : ""}"></span>
+      />
+      ${ui.homeSearch
+        ? html`<i
+            class="ph ph-x search-clear"
+            @click=${() => {
+              ui.homeSearch = "";
+              draw();
+            }}
+          ></i>`
+        : nothing}
+    </div>
+  `;
+}
+
+function runningRow(project: Project, cmd: Project["commands"][number]): TemplateResult {
+  const id = `${project.id}:${cmd.id}`;
+  const info = ui.statusById[id];
+  const status = info?.status ?? "stopped";
+  return html`
+    <div class="card run-row ${statusClass(status)}" @click=${() => openCommandInProject(project.id, id)}>
+      <div class="row">
         ${projectIconTemplate(project)}
-        <span class="pname" title=${project.name}>${project.name}</span>
-        <div class="prow-right" @click=${(e: Event) => e.stopPropagation()}>
-          ${ui.showCommandCount
-            ? html`<span class="pcount"><i class="ph ph-terminal-window"></i>${project.commands.length}</span>`
-            : nothing}
-          <div class="prow-actions">
-            ${singleCmd && singleId && (singleStatus === "stopped" || singleStatus === "crashed")
-              ? html`<button class="abtn start" title="Start ${singleCmd.name}" @click=${() => act(ipc.startProc(singleId))}>
+        <div class="row-namecol">
+          <span class="row-title">${project.name} ${roleBadge(cmd.role)}</span>
+          <span class="row-cmdtext">${cmd.cmd}</span>
+        </div>
+        ${status === "crashed" ? html`<span class="statusword">crashed</span>` : nothing}
+        <div class="right">
+          <div class="stats">
+            ${ui.showRam && info?.mem_bytes != null
+              ? html`<span class="cell"><span class="k">RAM</span><span class="v">${formatBytes(info.mem_bytes)}</span></span>`
+              : nothing}
+            ${ui.showPort && info?.port != null
+              ? html`<span class="cell"><span class="k">Port</span><span class="v">${info.port}</span></span>`
+              : nothing}
+          </div>
+          <i class="ph ph-caret-right row-goto"></i>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function projectBrowseRow(project: Project): TemplateResult {
+  const running = runningCount(project);
+  return html`
+    <div
+      class="proj-browse-row"
+      @click=${() => goToProject(project.id)}
+      @contextmenu=${(e: Event) => {
+        e.preventDefault();
+        e.stopPropagation();
+        ui.openCmdMenuFor = null;
+        ui.openMenuFor = project.id;
+        setMouseAnchor(e as MouseEvent, 140);
+        draw();
+      }}
+    >
+      ${projectIconTemplate(project)}
+      <span class="proj-browse-name" title=${project.name}>${project.name}</span>
+      <span class="proj-browse-meta">
+        <span
+          class="meta-chip"
+          title="${project.commands.length} command${project.commands.length === 1 ? "" : "s"}"
+        >
+          <i class="ph ph-terminal-window"></i>${project.commands.length}
+        </span>
+        <span class="meta-chip ${running > 0 ? "meta-chip-running" : ""}" title="${running} running">
+          <i class="ph ph-play-circle"></i>${running}
+        </span>
+      </span>
+      <i class="ph ph-caret-right row-goto"></i>
+    </div>
+  `;
+}
+
+// Groups are the existing shipped mechanism (collapsible, project_ids array),
+// re-surfaced on Home after the dashboard-first redesign. Reuses the real
+// .grow/.gname/.gbadge/.gchev classes and the same rename/delete/new-project
+// context menu the old flat list's group header offered.
+function homeGroupSection(group: Group): TemplateResult {
+  const members = group.project_ids
+    .map((id) => ui.projects.find((p) => p.id === id))
+    .filter((p): p is Project => p != null);
+  const running = groupRunningCount(group);
+  const collapsed = ui.collapsedGroups.has(group.id);
+  return html`
+    <div
+      class="grow"
+      @click=${() => toggleGroupCollapse(group.id)}
+      @contextmenu=${(e: Event) => {
+        e.preventDefault();
+        e.stopPropagation();
+        ui.openMenuFor = null;
+        ui.openCmdMenuFor = null;
+        ui.openMoveToGroupFor = null;
+        ui.openEmptyMenu = false;
+        ui.openGroupMenuFor = group.id;
+        setMouseAnchor(e as MouseEvent, 120);
+        draw();
+      }}
+    >
+      <i class="ph ${collapsed ? "ph-caret-right" : "ph-caret-down"} gchev"></i>
+      <span class="gname">${group.name}</span>
+      ${running > 0 ? html`<span class="gbadge">${running} running</span>` : nothing}
+      <div @click=${(e: Event) => e.stopPropagation()}>${groupMenu(group)}</div>
+    </div>
+    ${collapsed ? nothing : html`<div class="group-body">${members.map((p) => projectBrowseRow(p))}</div>`}
+  `;
+}
+
+function homeScreen(): TemplateResult {
+  const searching = ui.homeSearch.trim().length > 0;
+  const matchingProjects = ui.projects.filter((p) => matchesSearch(p, ui.homeSearch));
+
+  const allRunning = matchingProjects
+    .flatMap((p) => p.commands.map((c) => ({ p, c, info: ui.statusById[`${p.id}:${c.id}`] })))
+    .filter(({ info }) => info?.status === "running" || info?.status === "crashed")
+    .sort((a, b) => Number(b.info?.started_at ?? 0) - Number(a.info?.started_at ?? 0));
+  const hiddenCount = allRunning.length - RUNNING_CAP;
+  const visible = searching || ui.showAllRunning || hiddenCount <= 0 ? allRunning : allRunning.slice(0, RUNNING_CAP);
+
+  const groupedIds = new Set(ui.groups.flatMap((g) => g.project_ids));
+  const ungrouped = matchingProjects.filter((p) => !groupedIds.has(p.id));
+
+  return html`
+    <div class="dash-screen">
+      ${statsStrip()}
+      ${searchBox()}
+      <div class="section-label">Running now</div>
+      ${visible.length
+        ? html`
+            ${visible.map(({ p, c }) => runningRow(p, c))}
+            ${!searching && hiddenCount > 0
+              ? html`
+                  <button
+                    class="show-more"
+                    @click=${() => {
+                      ui.showAllRunning = !ui.showAllRunning;
+                      draw();
+                    }}
+                  >
+                    ${ui.showAllRunning ? "Show less" : `Show ${hiddenCount} more`}
+                  </button>
+                `
+              : nothing}
+          `
+        : html`<p class="list-empty">${searching ? "No running matches." : "Nothing running right now."}</p>`}
+
+      <div class="section-label section-label-secondary">Projects</div>
+      ${!matchingProjects.length
+        ? ui.projects.length
+          ? html`<p class="list-empty">No projects match "${ui.homeSearch}".</p>`
+          : html`<p class="list-empty">Right-click to add a project or group.</p>`
+        : searching
+          ? matchingProjects.map((p) => projectBrowseRow(p))
+          : html`
+              ${ui.groups.map((g) => homeGroupSection(g))}
+              ${ungrouped.map((p) => projectBrowseRow(p))}
+            `}
+    </div>
+  `;
+}
+
+// ----- Project screen -----
+//
+// Commands stay stacked tight as one compact block (no per-row expansion
+// breaking up the list). Clicking a live row just selects it (accent
+// highlight); a single shared terminal/detail pane renders once, below the
+// WHOLE list, reflecting whichever row is selected - not wedged between rows.
+
+function projectCmdRow(project: Project, cmd: Project["commands"][number]): TemplateResult {
+  const id = `${project.id}:${cmd.id}`;
+  const info = ui.statusById[id];
+  const status = info?.status ?? "stopped";
+  const running = status === "running";
+  const isFlutter = cmd.kind === "flutter";
+  // Only live/crashed processes have anything to select; stopped ones are inert
+  // (no pointer cursor, no hover feedback, no click handler at all).
+  const selectable = status !== "stopped";
+  const selected = ui.expandedCmdId === id;
+  const menuOpen = ui.openCmdMenuFor === id;
+
+  return html`
+    <div
+      class="card ${statusClass(status)} ${selectable ? "expandable" : ""} ${selected ? "selected" : ""} ${menuOpen ? "cmd-menu-open" : ""}"
+      @click=${selectable ? () => toggleSelectCmd(id) : nothing}
+      @contextmenu=${(e: Event) => {
+        e.preventDefault();
+        e.stopPropagation();
+        ui.openMenuFor = null;
+        ui.openCmdMenuFor = id;
+        setMouseAnchor(e as MouseEvent, 200);
+        draw();
+      }}
+    >
+      <div class="row">
+        <div class="row-namecol">
+          <span class="row-title">${displayName(cmd)} ${roleBadge(cmd.role)}</span>
+          <span class="row-cmdtext">${cmd.cmd}</span>
+        </div>
+        ${status === "crashed" ? html`<span class="statusword">crashed</span>` : nothing}
+        ${status === "starting" ? html`<span class="statusword">starting</span>` : nothing}
+        <div class="right">
+          <div class="controls" @click=${(e: Event) => e.stopPropagation()}>
+            ${running && isFlutter
+              ? html`<button class="abtn" title="Hot restart" @click=${() => act(ipc.reloadProc(id))}>
+                  <i class="ph ph-arrows-clockwise"></i>
+                </button>`
+              : nothing}
+            ${status === "stopped" || status === "crashed"
+              ? html`<button
+                  class="abtn start"
+                  title="Start"
+                  @click=${() => {
+                    if (ui.openLogsFor === id) ui.logText = "";
+                    act(ipc.startProc(id));
+                  }}
+                >
                   <i class="ph ph-play"></i>
                 </button>`
               : nothing}
-            ${singleCmd && singleId && (singleStatus === "running" || singleStatus === "starting")
-              ? html`<button class="abtn" title="Stop ${singleCmd.name}" @click=${() => act(ipc.stopProc(singleId))}>
-                  <i class="ph ph-stop"></i>
-                </button>`
+            ${status === "running" || status === "starting"
+              ? html`
+                  <button
+                    class="abtn"
+                    title="Restart"
+                    @click=${() => {
+                      if (ui.openLogsFor === id) ui.logText = "";
+                      void act(ipc.restartProc(id));
+                    }}
+                  >
+                    <i class="ph ph-arrow-clockwise"></i>
+                  </button>
+                  <button
+                    class="abtn"
+                    title="Stop"
+                    @click=${() => {
+                      if (ui.openLogsFor === id) ui.logText = "";
+                      void act(ipc.stopProc(id));
+                    }}
+                  >
+                    <i class="ph ph-stop"></i>
+                  </button>
+                `
               : nothing}
-            ${moreMenu(project)}
+            ${cmdMenu(project, cmd, id, status)}
           </div>
         </div>
       </div>
-      ${collapsed
-        ? nothing
-        : project.commands.length === 0
-          ? html`<p class="empty-cmd">No commands. Add one.</p>`
-          : project.commands.map((c) => commandRow(project, c))}
-    </section>
+    </div>
+  `;
+}
+
+function detailPane(project: Project): TemplateResult {
+  const cmd = project.commands.find((c) => `${project.id}:${c.id}` === ui.expandedCmdId);
+  if (!cmd) {
+    return html`<p class="list-empty detail-placeholder">Select a running command above to see its logs.</p>`;
+  }
+  const id = `${project.id}:${cmd.id}`;
+  const info = ui.statusById[id];
+  const status = info?.status ?? "stopped";
+  return html`
+    <div class="detail-pane">
+      <div class="detail-cmdline"><i class="ph ph-caret-right"></i> ${cmd.cmd}</div>
+      <div class="pidline">
+        ${status === "crashed" ? html`<span class="crashed-tag">crashed</span> ` : nothing}${drawerHeader(info?.pid, info?.mem_bytes, info?.port, info?.started_at)}
+      </div>
+      <pre class="logs">${ui.logText ? renderAnsi(ui.logText) : "(no output yet)"}</pre>
+    </div>
+  `;
+}
+
+function projectScreen(projectId: string): TemplateResult {
+  const project = ui.projects.find((p) => p.id === projectId);
+  if (!project) {
+    return html`<div class="dash-screen"><p class="list-empty">Unknown project.</p></div>`;
+  }
+  return html`
+    <div class="dash-screen">
+      <div class="detail-header">
+        ${projectIconTemplateLg(project)}
+        <div>
+          <div class="detail-title">${project.name}</div>
+          <div class="detail-sub" title=${project.root}>${project.root}</div>
+        </div>
+      </div>
+      <div class="section-label">Commands</div>
+      ${project.commands.length === 0
+        ? html`<p class="list-empty">No commands. Add one from the menu above.</p>`
+        : html`<div class="cmd-block">${project.commands.map((c) => projectCmdRow(project, c))}</div>`}
+      ${detailPane(project)}
+    </div>
+  `;
+}
+
+// ----- topbar + jump bar -----
+
+function topbar(): TemplateResult {
+  const s = ui.screen;
+  if (s.t === "home") {
+    return html`
+      <header class="topbar">
+        <h1>Server Supervisor</h1>
+        <button class="icon-btn" title="Settings" @click=${() => { location.hash = "#settings"; }}>
+          <i class="ph ph-gear"></i>
+        </button>
+      </header>
+    `;
+  }
+  const project = ui.projects.find((p) => p.id === s.projectId);
+  return html`
+    <header class="topbar">
+      <button class="icon-btn" title="Back" @click=${goHome}>
+        <i class="ph ph-arrow-left"></i>
+      </button>
+      <h1 title=${project?.name ?? ""}>${project?.name ?? ""}</h1>
+      ${project ? moreMenu(project) : nothing}
+    </header>
   `;
 }
 
 // The running jump bar: one icon per live command, pinned under the topbar. A
 // pure projection of process state (no own state), hidden entirely when nothing
-// is running. Hover shows "project · command"; click reveals it in the list.
+// is running. Home-only - it complements Home's own running-now list by giving
+// uncapped, at-a-glance access to every live command; the Project screen's
+// commands are already all visible in its compact block. Hover shows
+// "project · command"; click jumps straight into that project with the command
+// selected.
 function jumpBar(): TemplateResult | typeof nothing {
   const items: { project: Project; cmd: Project["commands"][number]; id: string }[] = [];
   for (const project of ui.projects) {
@@ -511,9 +710,9 @@ function jumpBar(): TemplateResult | typeof nothing {
       ${items.map(
         ({ project, cmd, id }) => html`
           <button
-            class="ji ${ui.openLogsFor === id ? "active" : ""}"
+            class="ji ${ui.expandedCmdId === id ? "active" : ""}"
             title=${`${project.name} · ${displayName(cmd)}`}
-            @click=${() => void focusCommand(project.id, id)}
+            @click=${() => openCommandInProject(project.id, id)}
             @contextmenu=${(e: Event) => {
               e.preventDefault();
               e.stopPropagation();
@@ -531,30 +730,18 @@ function jumpBar(): TemplateResult | typeof nothing {
   `;
 }
 
-function draw() {
-  const groupedIds = new Set(ui.groups.flatMap((g) => g.project_ids));
-  const ungrouped = ui.projects.filter((p) => !groupedIds.has(p.id));
-  const isEmpty = ui.projects.length === 0 && ui.groups.length === 0;
+// ----- root draw -----
 
+function draw() {
+  const s = ui.screen;
   render(
     html`
       <div class="header-block">
-        <header class="topbar">
-          <h1>Server Supervisor</h1>
-          <button class="icon-btn" title="Settings" @click=${() => { location.hash = "#settings"; }}>
-            <i class="ph ph-gear"></i>
-          </button>
-        </header>
-        ${jumpBar()}
+        ${topbar()}
+        ${s.t === "home" ? jumpBar() : nothing}
       </div>
       ${ui.error ? html`<div class="error">${ui.error}</div>` : nothing}
-      ${isEmpty
-        ? html`<p class="empty">Right-click to add a project or group.</p>`
-        : nothing}
-      <div class="project-list">
-        ${ui.groups.map(groupSection)}
-        ${otherSection(ungrouped)}
-      </div>
+      ${s.t === "home" ? homeScreen() : projectScreen(s.projectId)}
       ${modalView()}
       ${portalMenu()}
     `,

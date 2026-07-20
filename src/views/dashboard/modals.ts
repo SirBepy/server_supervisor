@@ -32,6 +32,7 @@ export async function startAddCommand(projectId: string, root: string) {
     cmd: "",
     useDynamicPort: true,
     env: "",
+    role: null,
     query: "",
     highlight: -1,
     check: null,
@@ -45,7 +46,7 @@ async function confirmAddCommand() {
   const m = ui.modal;
   const name = m.name.trim() || deriveName(m.cmd);
   try {
-    await ipc.addCommand(m.projectId, name, m.cmd, false, m.useDynamicPort, m.env);
+    await ipc.addCommand(m.projectId, name, m.cmd, false, m.useDynamicPort, m.env, m.role);
     ui.error = null;
     ui.modal = null;
   } catch (e) {
@@ -65,7 +66,7 @@ async function confirmEditCommand() {
   }
   const name = m.name.trim() || deriveName(cmd);
   try {
-    await ipc.updateCommand(m.projectId, m.commandId, name, cmd, m.autostart, m.useDynamicPort, m.env);
+    await ipc.updateCommand(m.projectId, m.commandId, name, cmd, m.autostart, m.useDynamicPort, m.env, m.role);
     ui.error = null;
     ui.modal = null;
   } catch (e) {
@@ -98,6 +99,28 @@ function envField(m: CmdModal): TemplateResult {
         .value=${m.env}
         @input=${(e: Event) => (m.env = (e.target as HTMLTextAreaElement).value)}
       ></textarea>
+    </div>
+  `;
+}
+
+// 3-way FE/BE/None role selector, shown on both add and edit command modals.
+// Feeds the optional Role badge shown next to a command everywhere in the
+// dashboard (Home's running-now rows, Project screen's command rows).
+function roleField(m: CmdModal): TemplateResult {
+  return html`
+    <div class="field-row">
+      <label>Role</label>
+      <select
+        .value=${m.role ?? ""}
+        @change=${(e: Event) => {
+          const v = (e.target as HTMLSelectElement).value;
+          m.role = v === "FE" || v === "BE" ? v : null;
+        }}
+      >
+        <option value="">None</option>
+        <option value="FE">Frontend</option>
+        <option value="BE">Backend</option>
+      </select>
     </div>
   `;
 }
@@ -199,6 +222,7 @@ function addCommandModal(m: Extract<Modal, { t: "addCommand" }>): TemplateResult
           />
           <span>Assign a dynamic port</span>
         </label>
+        ${roleField(m)}
         ${envField(m)}
         <div class="dialog-actions">
           <button @click=${closeModal}>Cancel</button>
@@ -257,6 +281,7 @@ function editCommandModal(m: Extract<Modal, { t: "editCommand" }>): TemplateResu
           />
           <span>Start automatically when the supervisor launches</span>
         </label>
+        ${roleField(m)}
         ${envField(m)}
         <p class="muted note">Saving relaunches the command if it's running.</p>
         <div class="dialog-actions">
