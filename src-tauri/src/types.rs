@@ -90,6 +90,11 @@ pub struct ProcInfo {
     /// `cargo`) lives in grandchildren, not the top pid.
     #[serde(default)]
     pub mem_bytes: Option<u64>,
+    /// Subtree CPU usage, as a percentage of TOTAL system capacity (comparable
+    /// directly to `SystemStats::cpu_pct`, not per-core). `None` when stopped or
+    /// not yet sampled (the first reading needs a prior tick to diff against).
+    #[serde(default)]
+    pub cpu_pct: Option<f32>,
     /// Unix epoch millis when the current run started, for the dashboard's
     /// "started N ago" uptime line. `None` when stopped.
     #[serde(default)]

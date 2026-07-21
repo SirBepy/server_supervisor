@@ -6,6 +6,7 @@ use crate::types::{LogLine, ProcInfo, ProcSpec, Project};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
+use sysinfo::System;
 
 /// Owns every supervised process. `projects` is the persisted config (source of
 /// truth); `procs` is the live runtime map keyed by composite `project/command` id.
@@ -19,6 +20,10 @@ pub struct Supervisor {
     pub(super) procs: Mutex<HashMap<String, ManagedProc>>,
     pub(super) data_dir: PathBuf,
     ports: Arc<PortRegistry>,
+    /// Persists across `sample_tick` calls (unlike the one-shot `sysstats`
+    /// sampler) so per-process CPU usage has a prior reading to diff against -
+    /// see `sampler.rs` module docs.
+    sampler_sys: Mutex<System>,
 }
 
 impl Supervisor {
@@ -34,6 +39,7 @@ impl Supervisor {
             procs: Mutex::new(map),
             data_dir,
             ports,
+            sampler_sys: Mutex::new(System::new()),
         }
     }
 
@@ -170,13 +176,16 @@ impl Supervisor {
                 .filter_map(|p| p.pid.map(|pid| (p.spec.id.clone(), pid, p.acquired_port())))
                 .collect()
         };
-        let samples = super::sampler::sample(&running);
+        let samples = {
+            let mut sys = self.sampler_sys.lock().unwrap();
+            super::sampler::sample(&mut sys, &running)
+        };
         let mut guard = self.procs.lock().unwrap();
         for p in guard.values_mut() {
             if p.pid.is_none() {
-                p.set_sample(None, None);
+                p.set_sample(None, None, None);
             } else if let Some(s) = samples.get(&p.spec.id) {
-                p.set_sample(Some(s.mem), s.port);
+                p.set_sample(Some(s.mem), Some(s.cpu_pct), s.port);
             }
         }
     }

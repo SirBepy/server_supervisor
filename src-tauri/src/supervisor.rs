@@ -1,4 +1,5 @@
 pub mod config;
+pub mod cpu;
 pub mod crud;
 pub mod detect;
 pub mod dev_browser;

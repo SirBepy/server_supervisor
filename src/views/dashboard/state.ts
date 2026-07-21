@@ -129,6 +129,11 @@ export const ui = {
   homeSearch: "",
   // System-wide RAM/CPU stats for Home's stats strip, polled alongside projects.
   systemStats: null as SystemStats | null,
+  // Home's stats-strip donut charts (RAM/CPU): which of the 3 readings ("your
+  // apps" %, "system used" %, "total capacity") each ring's center currently
+  // shows. Set directly by clicking that arc segment (dashboard.ts's
+  // donutPill) - independent per metric, persists across poll refreshes.
+  statsDonutMode: { ram: "programs", cpu: "programs" } as Record<"ram" | "cpu", "programs" | "system" | "total">,
   // Project ID whose per-project "more options" (kebab) menu is open, or null.
   openMenuFor: null as string | null,
   // Command id (`project:command`) whose per-command "more options" (kebab) menu

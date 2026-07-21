@@ -57,6 +57,11 @@ pub struct ManagedProc {
     /// never computed on the UI poll path. `None` until the first sample after a
     /// start, and cleared when the proc stops/crashes.
     sampled_mem: Option<u64>,
+    /// Subtree CPU usage (% of total system capacity), cached by the background
+    /// sampler alongside `sampled_mem`. `None` until the first sample lands
+    /// (which needs a prior tick's reading to diff against - see `sampler.rs`),
+    /// and cleared when the proc stops/crashes.
+    sampled_cpu_pct: Option<f32>,
     /// OS-detected listening port, cached by the background sampler (same value
     /// the old inline `fill_ports` computed). `info()` prefers this over the
     /// forced `acquired_port` so the dashboard shows the port actually bound.
@@ -81,14 +86,16 @@ impl ManagedProc {
             reload_tx: None,
             internal_port: None,
             sampled_mem: None,
+            sampled_cpu_pct: None,
             sampled_port: None,
         }
     }
 
-    /// Store the latest background-sampler reading (subtree RAM + detected port).
-    /// Called only from `Supervisor::sample_tick`, never on the UI poll path.
-    pub fn set_sample(&mut self, mem: Option<u64>, port: Option<u16>) {
+    /// Store the latest background-sampler reading (subtree RAM + CPU + detected
+    /// port). Called only from `Supervisor::sample_tick`, never on the UI poll path.
+    pub fn set_sample(&mut self, mem: Option<u64>, cpu_pct: Option<f32>, port: Option<u16>) {
         self.sampled_mem = mem;
+        self.sampled_cpu_pct = cpu_pct;
         self.sampled_port = port;
     }
 
@@ -158,6 +165,7 @@ impl ManagedProc {
             // Cached by the background sampler, never computed here: the UI poll
             // path must not enumerate the process table (that was the lag).
             mem_bytes: self.sampled_mem,
+            cpu_pct: self.sampled_cpu_pct,
             started_at: self.started_at,
         }
     }
@@ -179,9 +187,10 @@ impl ManagedProc {
                 self.pid = None;
                 self.child = None;
                 self.stdin = None;
-                // No longer running: drop the cached RAM/port so the dashboard
-                // doesn't show a frozen figure until the next sampler tick.
+                // No longer running: drop the cached RAM/CPU/port so the
+                // dashboard doesn't show a frozen figure until the next sampler tick.
                 self.sampled_mem = None;
+                self.sampled_cpu_pct = None;
                 self.sampled_port = None;
                 // The child died on its own. Drop the proxy so its TcpListener on
                 // the public port is freed immediately (otherwise it keeps serving
@@ -401,6 +410,7 @@ impl ManagedProc {
         self.pid = None;
         self.started_at = None;
         self.sampled_mem = None;
+        self.sampled_cpu_pct = None;
         self.sampled_port = None;
         *self.app_id.lock().unwrap() = None;
         self.push_log("stdout", "[supervisor] stopped".to_string());
