@@ -19,31 +19,19 @@ use sysinfo::System;
 pub(crate) type ProcMap = HashMap<u32, (Option<u32>, u64)>;
 
 /// Sum resident bytes of `root` plus every descendant, given the full process
-/// map. The cycle-guarded subtree BFS is shared (`proc_tree::subtree`); this
-/// just builds the parent->children map from the `ProcMap` and sums RSS over the
-/// returned pid set. Pure and deterministic so it's unit-testable without a real
-/// `System`.
+/// map. Thin wrapper over the shared `proc_tree::subtree_sum` (cycle-guarded
+/// subtree BFS + summation); kept as a named, typed entry point so callers and
+/// tests don't need to know the generic shape. Pure and deterministic so it's
+/// unit-testable without a real `System`.
 pub(crate) fn subtree_rss(root: u32, procs: &ProcMap) -> u64 {
-    let mut children: HashMap<u32, Vec<u32>> = HashMap::new();
-    for (&pid, &(parent, _)) in procs {
-        if let Some(pp) = parent {
-            children.entry(pp).or_default().push(pid);
-        }
-    }
-    proc_tree::subtree(root, &children)
-        .iter()
-        .filter_map(|pid| procs.get(pid).map(|&(_, mem)| mem))
-        .sum()
+    proc_tree::subtree_sum(root, procs)
 }
 
 /// Snapshot an already-refreshed `System` into the pid map `subtree_rss`
 /// consumes. The caller owns the `refresh_processes(All)` pass (the sampler does
 /// it once and shares it with `ports_detect`).
 pub(crate) fn snapshot(sys: &System) -> ProcMap {
-    sys.processes()
-        .iter()
-        .map(|(pid, p)| (pid.as_u32(), (p.parent().map(|pp| pp.as_u32()), p.memory())))
-        .collect()
+    proc_tree::snapshot_metric(sys, |p| p.memory())
 }
 
 #[cfg(test)]

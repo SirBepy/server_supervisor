@@ -25,26 +25,14 @@ pub(crate) type CpuMap = HashMap<u32, (Option<u32>, f32)>;
 /// busy cores can sum past 100 - callers divide by core count to compare
 /// against the system-wide (already-normalized-to-100) figure.
 pub(crate) fn subtree_cpu(root: u32, procs: &CpuMap) -> f32 {
-    let mut children: HashMap<u32, Vec<u32>> = HashMap::new();
-    for (&pid, &(parent, _)) in procs {
-        if let Some(pp) = parent {
-            children.entry(pp).or_default().push(pid);
-        }
-    }
-    proc_tree::subtree(root, &children)
-        .iter()
-        .filter_map(|pid| procs.get(pid).map(|&(_, cpu)| cpu))
-        .sum()
+    proc_tree::subtree_sum(root, procs)
 }
 
 /// Snapshot an already-refreshed `System` into the pid map `subtree_cpu`
 /// consumes. The caller owns the `refresh_processes` pass (shared with `mem`
 /// and `ports_detect` in `sampler.rs`).
 pub(crate) fn snapshot(sys: &System) -> CpuMap {
-    sys.processes()
-        .iter()
-        .map(|(pid, p)| (pid.as_u32(), (p.parent().map(|pp| pp.as_u32()), p.cpu_usage())))
-        .collect()
+    proc_tree::snapshot_metric(sys, |p| p.cpu_usage())
 }
 
 #[cfg(test)]

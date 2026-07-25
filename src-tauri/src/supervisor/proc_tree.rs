@@ -7,7 +7,7 @@
 //! their own summation / set logic on top of the returned pid set.
 
 use std::collections::{HashMap, HashSet};
-use sysinfo::System;
+use sysinfo::{Process, System};
 
 /// Build the parent pid -> direct child pids map from an already-refreshed
 /// `System`. The caller owns the `refresh_processes` pass.
@@ -35,6 +35,40 @@ pub(crate) fn subtree(root: u32, children: &HashMap<u32, Vec<u32>>) -> HashSet<u
         }
     }
     seen
+}
+
+/// pid -> (parent pid, per-process metric `T`), keyed off an already-refreshed
+/// `System` via caller-supplied `extract` (e.g. `Process::memory` or
+/// `Process::cpu_usage`). Shared shape both `mem::snapshot` and `cpu::snapshot`
+/// produce; `extract` is the only thing that differs between them.
+pub(crate) fn snapshot_metric<T, F>(sys: &System, extract: F) -> HashMap<u32, (Option<u32>, T)>
+where
+    F: Fn(&Process) -> T,
+{
+    sys.processes()
+        .iter()
+        .map(|(pid, p)| (pid.as_u32(), (p.parent().map(|pp| pp.as_u32()), extract(p))))
+        .collect()
+}
+
+/// Sum metric `T` of `root` plus every descendant, given the full pid map
+/// produced by `snapshot_metric`. Builds the parent->children map and sums
+/// over the cycle-guarded `subtree` walk above - the shared logic behind
+/// `mem::subtree_rss` and `cpu::subtree_cpu`.
+pub(crate) fn subtree_sum<T>(root: u32, procs: &HashMap<u32, (Option<u32>, T)>) -> T
+where
+    T: Copy + std::iter::Sum,
+{
+    let mut children: HashMap<u32, Vec<u32>> = HashMap::new();
+    for (&pid, &(parent, _)) in procs {
+        if let Some(pp) = parent {
+            children.entry(pp).or_default().push(pid);
+        }
+    }
+    subtree(root, &children)
+        .iter()
+        .filter_map(|pid| procs.get(pid).map(|&(_, v)| v))
+        .sum()
 }
 
 #[cfg(test)]
