@@ -1,0 +1,136 @@
+/* Project screen only: large icon/name/root header, the packed command block,
+   and the shared terminal/detail pane below it. Split out of dashboard.css
+   along the Home/Project seam; shared/controller rules (topbar, jump bar,
+   layout shell, the .card system, shared row bits) stay in dashboard.css.
+   Imported right after dashboard.css so the cascade order is unchanged from
+   the pre-split single file. */
+
+/* Expanded log drawer: a thin rule, the pid/RAM/port/uptime header line, then
+   the scrolling log pane. pid + the run stats live here (not on the resting row)
+   so they stay visible while the card is open. */
+.drawer {
+  margin-top: 11px;
+  padding-top: 9px;
+  border-top: 1px solid var(--border);
+}
+.pidline {
+  font-size: 11.5px;
+  color: var(--muted);
+  font-family: "Cascadia Code", Consolas, monospace;
+  margin-bottom: 7px;
+}
+
+.logs {
+  margin: 0;
+  padding: 12px;
+  background: #0a0c10;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  max-height: 260px;
+  overflow: auto;
+  font-family: "Cascadia Code", Consolas, monospace;
+  font-size: 12px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* ----- Project screen: large icon + name + root path header ----- */
+
+.detail-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+.picon-lg {
+  width: 34px;
+  height: 34px;
+  font-size: 22px;
+  border-radius: 8px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+}
+.picon-lg img {
+  width: 26px;
+  height: 26px;
+  border-radius: 6px;
+  object-fit: cover;
+}
+.detail-title {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--fg);
+}
+.detail-sub {
+  font-size: 11px;
+  color: var(--muted);
+  font-family: "Cascadia Code", Consolas, monospace;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 320px;
+}
+
+/* ----- Project screen: one contiguous bordered command block, rows packed
+   with zero gap (only the left status edge + a hairline divider tell them
+   apart) - the detail pane lives OUTSIDE this block, below all of it, not
+   wedged between rows. ----- */
+
+.cmd-block {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  overflow: hidden;
+  margin-bottom: 16px;
+}
+.cmd-block .card {
+  margin-bottom: 0;
+  border-radius: 0;
+  border-top: none;
+  border-right: none;
+  border-bottom: 1px solid var(--border);
+}
+.cmd-block .card:last-child {
+  border-bottom: none;
+}
+.cmd-block .card.selected {
+  transform: none;
+  box-shadow: inset 0 0 0 1px var(--accent);
+  background: color-mix(in srgb, var(--accent) 7%, var(--surface));
+}
+
+/* ----- Project screen: shared terminal/detail pane - one instance, below the
+   WHOLE command block, reflecting whichever row is selected. ----- */
+
+.detail-pane {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 12px;
+}
+.detail-placeholder {
+  text-align: center;
+  padding: 18px;
+  border: 1px dashed var(--border);
+  border-radius: 10px;
+}
+.detail-cmdline {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-family: "Cascadia Code", Consolas, monospace;
+  font-size: 12.5px;
+  color: var(--fg);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 10px;
+  margin-bottom: 8px;
+}
+.detail-cmdline i {
+  color: var(--muted);
+}
+.crashed-tag {
+  color: var(--danger, #f87171);
+  font-weight: 600;
+  margin-right: 4px;
+}
