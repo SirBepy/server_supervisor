@@ -8,6 +8,7 @@ pub mod mem;
 pub mod port_inject;
 pub mod ports_detect;
 pub mod proc;
+pub mod proc_log;
 pub mod proc_tree;
 pub mod proxy;
 pub mod reaper;

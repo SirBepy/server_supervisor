@@ -1,14 +1,13 @@
 use super::proxy;
 use crate::types::{LogLine, ProcInfo, ProcKind, ProcSpec, ProcStatus};
 use std::collections::VecDeque;
-use std::io::{BufRead, BufReader, Read, Write};
+use std::io::Write;
 use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
-use tokio::sync::broadcast;
 
 /// Max log lines retained per process (ring buffer).
-const LOG_CAP: usize = 2000;
+pub(super) const LOG_CAP: usize = 2000;
 
 /// A crash within this window of start counts as dead-on-arrival (never came up).
 const DOA_WINDOW_MS: u64 = 8_000;
@@ -360,7 +359,7 @@ impl ManagedProc {
         // Reset appId for the new run; stdout reader re-captures it.
         *self.app_id.lock().unwrap() = None;
         if let Some(out) = child.stdout.take() {
-            spawn_reader(
+            super::proc_log::spawn_reader(
                 out,
                 "stdout",
                 self.logs.clone(),
@@ -369,7 +368,7 @@ impl ManagedProc {
             );
         }
         if let Some(err) = child.stderr.take() {
-            spawn_reader(err, "stderr", self.logs.clone(), None, None);
+            super::proc_log::spawn_reader(err, "stderr", self.logs.clone(), None, None);
         }
         self.stdin = child.stdin.take();
         // The dashboard advertises the public port: when proxied that is the
@@ -447,58 +446,8 @@ impl ManagedProc {
     }
 
     fn push_log(&self, stream: &str, text: String) {
-        push_line(&self.logs, stream, text);
+        super::proc_log::push_line(&self.logs, stream, text);
     }
-}
-
-fn push_line(logs: &Arc<Mutex<VecDeque<LogLine>>>, stream: &str, text: String) {
-    let mut buf = logs.lock().unwrap();
-    if buf.len() >= LOG_CAP {
-        buf.pop_front();
-    }
-    buf.push_back(LogLine {
-        ts: now_ms(),
-        stream: stream.to_string(),
-        text,
-    });
-}
-
-fn spawn_reader<R: Read + Send + 'static>(
-    reader: R,
-    stream: &'static str,
-    logs: Arc<Mutex<VecDeque<LogLine>>>,
-    app_id: Option<Arc<Mutex<Option<String>>>>,
-    reload_tx: Option<broadcast::Sender<()>>,
-) {
-    std::thread::spawn(move || {
-        let buffered = BufReader::new(reader);
-        for line in buffered.lines() {
-            let Ok(text) = line else { break };
-            // Capture the Flutter daemon appId from the raw JSON, exactly as before.
-            if let Some(slot) = &app_id {
-                if slot.lock().unwrap().is_none() {
-                    if let Some(id) = super::flutter::parse_flutter_app_id(&text) {
-                        *slot.lock().unwrap() = Some(id);
-                    }
-                }
-            }
-            // Humanize machine JSON into readable lines; on any non-JSON line
-            // (pre-daemon "Launching...", plain stderr) push it verbatim once.
-            match super::flutter::parse_flutter_machine_line(&text) {
-                Some(parsed) => {
-                    for l in parsed.lines {
-                        push_line(&logs, stream, l);
-                    }
-                    if parsed.fire_reload {
-                        if let Some(tx) = &reload_tx {
-                            let _ = tx.send(());
-                        }
-                    }
-                }
-                None => push_line(&logs, stream, text),
-            }
-        }
-    });
 }
 
 #[cfg(test)]
