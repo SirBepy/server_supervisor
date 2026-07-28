@@ -13,6 +13,7 @@ import type {
   Group,
   Role,
   SystemStats,
+  RequestLogEntry,
 } from "../../types/ipc.generated";
 
 // Debounce window for the advisory command-validity check.
@@ -93,6 +94,29 @@ export type Modal =
       t: "renameProject";
       projectId: string;
       name: string;
+    }
+  | {
+      t: "addPreset";
+      projectId: string;
+      name: string;
+      baseUrl: string;
+      danger: boolean;
+      urlError: string | null;
+    }
+  | {
+      t: "editPreset";
+      projectId: string;
+      presetId: string;
+      // Whether this preset was the active one when the edit opened. There is
+      // no backend `update_preset` - editing is a remove-then-add composite
+      // (see confirmEditPreset in modals.ts) - so on save we re-point
+      // active_preset at the newly created id iff this was true, preserving
+      // "still pointed at my edited preset" across the swap.
+      wasActive: boolean;
+      name: string;
+      baseUrl: string;
+      danger: boolean;
+      urlError: string | null;
     };
 
 // Which top-level screen is showing. Home is the default landing screen (stats +
@@ -193,6 +217,17 @@ export const ui = {
   // matching TOKEN|SECRET|KEY|PASSWORD|PASSWD|CREDENTIAL (see `EnvVar.secret`,
   // computed once in Rust so the classification isn't duplicated here).
   envRevealed: new Set<string>(),
+  // Per-project fixed reverse-proxy hub port (see supervisor::proxy_hub),
+  // resolved once and cached like iconCache/techCache: undefined = not
+  // fetched, null = fetch failed (no hub for this project), number = ready.
+  hubPort: {} as Record<string, number | null | undefined>,
+  // Per-project request-log ring buffer, refreshed on the poll tick while
+  // that project's log section is open (see hubLogOpen below and refresh()).
+  hubLog: {} as Record<string, RequestLogEntry[] | undefined>,
+  // Project IDs whose Project-screen "Request log" block is expanded. Absent
+  // = collapsed, the default (matches envSectionOpen's collapsed-by-default
+  // convention).
+  hubLogOpen: new Set<string>(),
 };
 
 // draw() indirection: dashboard.ts owns the top-level render and registers it
@@ -237,6 +272,11 @@ export async function refresh() {
       // readers are left where they are).
       ui.scrollLogsToBottom = logsAtBottom();
       ui.logText = lines.map((l) => l.text).join("\n");
+    }
+    // Keep the request-log viewer live while it's open, same cadence as the
+    // process log pane above.
+    if (ui.screen.t === "project" && ui.hubLogOpen.has(ui.screen.projectId)) {
+      ui.hubLog[ui.screen.projectId] = await ipc.getHubLog(ui.screen.projectId);
     }
   } catch (e) {
     ui.error = String(e);

@@ -1,6 +1,6 @@
 // Pure string helpers shared by the dashboard view modules. No state, no IPC.
 
-import type { Project, ProcInfo } from "../../types/ipc.generated";
+import type { Project, ProcInfo, UpstreamPreset } from "../../types/ipc.generated";
 
 // Last path segment, ignoring trailing slashes.
 export function basename(p: string): string {
@@ -149,4 +149,15 @@ export function deviconClass(tech: TechKey): string {
 // (e.g. a string returned by the backend marker-file scan). Null if unrecognized.
 export function deviconClassByName(name: string): string | null {
   return (DEVICON as Record<string, string>)[name] ?? null;
+}
+
+// The preset actually serving traffic right now, mirroring the backend's own
+// fallback rule (see `Project.active_preset`'s doc comment): the preset whose
+// id matches `active_preset`, or the first preset in the list if that id is
+// null/stale, or null if there are no presets at all. Shared by the Project
+// screen (full proxy section) and the Home screen (danger badge), so both
+// agree on which preset counts as "active" without either re-deriving it.
+export function resolveActivePreset(project: Project): UpstreamPreset | null {
+  if (project.presets.length === 0) return null;
+  return project.presets.find((p) => p.id === project.active_preset) ?? project.presets[0];
 }

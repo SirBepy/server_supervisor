@@ -14,7 +14,9 @@ function openInBrowser(port: number, flutter: boolean) {
   void ipc.openPortUrl(`http://localhost:${port}`, flutter);
 }
 
-function copyPortUrl(port: number) {
+// Exported so the Project screen's proxy hub section can reuse it for the
+// hub's own copyable address (same clipboard idiom, different port source).
+export function copyPortUrl(port: number) {
   void navigator.clipboard?.writeText(`http://localhost:${port}`);
 }
 

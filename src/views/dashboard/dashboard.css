@@ -565,3 +565,25 @@
   color: #c4b5fd;
   background: color-mix(in srgb, #c4b5fd 16%, transparent);
 }
+
+/* Shared "dangerous proxy preset active" chip - used both inline on the
+   Project screen's preset rows and as Home's row-level informational badge
+   (never a button, never gated - see the proxy-hub danger sections in
+   project-screen.css/home-screen.css for the rest of the treatment). */
+.danger-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  border-radius: 4px;
+  padding: 1px 5px;
+  color: var(--danger, #f87171);
+  background: color-mix(in srgb, var(--danger, #f87171) 18%, transparent);
+  flex: 0 0 auto;
+}
+.danger-chip i {
+  font-size: 10px;
+}

@@ -7,7 +7,7 @@
 import { html, nothing, type TemplateResult } from "lit-html";
 import type { Group, Project } from "../../types/ipc.generated";
 import { ui, draw } from "./state";
-import { formatBytes } from "./helpers";
+import { formatBytes, resolveActivePreset } from "./helpers";
 import { statusClass, roleBadge, openCommandInProject, goToProject, resolveProjectIcon } from "./dashboard";
 import { groupMenu, setMouseAnchor } from "./menus";
 
@@ -320,6 +320,18 @@ function runningRow(project: Project, cmd: Project["commands"][number]): Templat
   `;
 }
 
+// Compact, informational-only badge for a project whose active proxy preset is
+// flagged dangerous - visible without drilling into the project, deliberately
+// not a button (no click handler, no new action on the row - the dev has
+// twice rejected adding row-level action buttons on Home).
+function dangerBadge(project: Project): TemplateResult | typeof nothing {
+  const active = resolveActivePreset(project);
+  if (!active?.danger) return nothing;
+  return html`<span class="meta-chip danger-chip" title="Active preset &quot;${active.name}&quot; is marked dangerous">
+    <i class="ph ph-warning"></i>danger
+  </span>`;
+}
+
 function projectBrowseRow(project: Project): TemplateResult {
   const running = runningCount(project);
   return html`
@@ -338,6 +350,7 @@ function projectBrowseRow(project: Project): TemplateResult {
       ${projectIconTemplate(project)}
       <span class="proj-browse-name" title=${project.name}>${project.name}</span>
       <span class="proj-browse-meta">
+        ${dangerBadge(project)}
         <span
           class="meta-chip"
           title="${project.commands.length} command${project.commands.length === 1 ? "" : "s"}"
