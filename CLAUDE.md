@@ -2,7 +2,7 @@
 
 # server_supervisor
 
-A local process supervisor. One headless owner (the Tauri Rust backend) launches and owns dev servers across projects (Flutter, Node, etc.), survives window close (runs in the tray), and by default leaves its children running across a quit or self-update, re-adopting them on the next launch. A webview dashboard is the human UI; a localhost HTTP+WS API (bearer-token) lets an AI agent list / start / stop / restart processes and read logs.
+A local process supervisor. One headless owner (the Tauri Rust backend) launches and owns dev servers across projects (Flutter, Node, etc.), survives window close (runs in the tray), and by default leaves its children running across a quit or self-update, re-adopting them on the next launch. A webview dashboard is the human UI; a localhost HTTP API (bearer-token; plus one SSE endpoint inside the per-process reload proxy) lets an AI agent list / start / stop / restart processes and read logs.
 
 ## Stack
 
