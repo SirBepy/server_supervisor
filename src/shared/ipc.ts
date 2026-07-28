@@ -12,6 +12,8 @@ import type {
   VersionInfo,
   Role,
   SystemStats,
+  UpstreamPreset,
+  RequestLogEntry,
 } from "../types/ipc.generated";
 
 // Runtime control (composite "projectId:commandId" ids).
@@ -81,6 +83,19 @@ export const updateCommand = (
   });
 export const removeCommand = (projectId: string, commandId: string) =>
   invoke<void>("remove_command", { projectId, commandId });
+
+// Reverse-proxy hub: one fixed loopback listener per project, forwarding to
+// whichever upstream preset is active. See supervisor::proxy_hub.
+export const getHubPort = (projectId: string) =>
+  invoke<number>("get_hub_port", { projectId });
+export const addPreset = (projectId: string, name: string, baseUrl: string, danger = false) =>
+  invoke<UpstreamPreset>("add_preset", { projectId, name, baseUrl, danger });
+export const removePreset = (projectId: string, presetId: string) =>
+  invoke<void>("remove_preset", { projectId, presetId });
+export const setActivePreset = (projectId: string, presetId: string) =>
+  invoke<void>("set_active_preset", { projectId, presetId });
+export const getHubLog = (projectId: string) =>
+  invoke<RequestLogEntry[]>("get_hub_log", { projectId });
 export const detectCommands = (path: string) =>
   invoke<DetectedCommand[]>("detect_commands", { path });
 // Advisory, non-blocking executable-resolution check (never runs the command).

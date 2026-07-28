@@ -145,6 +145,8 @@ fn migrate(specs: Vec<ProcSpec>) -> Vec<Project> {
                 name: spec.project,
                 root: spec.cwd,
                 commands: vec![cmd],
+                presets: Vec::new(),
+                active_preset: None,
             });
         }
     }

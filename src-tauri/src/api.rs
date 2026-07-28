@@ -9,6 +9,7 @@
 //! doubly here.
 
 use crate::ports::{PortEntry, PortRegistry};
+use crate::supervisor::proxy_hub::RequestLogEntry;
 use crate::supervisor::Supervisor;
 use crate::types::{Command, ProcInfo, ProcKind};
 use axum::{
@@ -88,6 +89,15 @@ struct AddCommandBody {
     port: Option<u16>,
     #[serde(default)]
     env: Option<String>,
+}
+
+/// Body for `POST /projects/:project_id/presets`.
+#[derive(Deserialize)]
+struct AddPresetBody {
+    name: String,
+    base_url: String,
+    #[serde(default)]
+    danger: bool,
 }
 
 /// Body for `PATCH /projects/:project_id/commands/:command_id`. Mirrors the IPC
@@ -215,6 +225,16 @@ pub fn router(sup: Arc<Supervisor>, ports: Arc<PortRegistry>, token: String, ai_
         .route("/groups", get(list_groups_api).post(create_group_api))
         .route("/groups/:id", put(update_group_api).delete(delete_group_api))
         .route("/projects/:project_id/group", patch(set_project_group_api))
+        .route(
+            "/projects/:project_id/presets",
+            get(list_presets_api).post(add_preset_api),
+        )
+        .route("/projects/:project_id/presets/:preset_id", delete(remove_preset_api))
+        .route(
+            "/projects/:project_id/presets/:preset_id/activate",
+            post(activate_preset_api),
+        )
+        .route("/projects/:project_id/proxy-log", get(proxy_log_api))
         .route_layer(middleware::from_fn_with_state(state.clone(), auth))
         // /health is added after the auth layer, so it stays unauthenticated.
         .route("/health", get(health))
@@ -433,6 +453,47 @@ async fn restart_proc(State(s): State<ApiState>, Path(id): Path<String>) -> Resp
 async fn reload_proc(State(s): State<ApiState>, Path(id): Path<String>) -> Response {
     // Try the flutter daemon hot restart; registry falls back to a full restart if the daemon is not ready.
     unit_result(s.sup.reload(&id, true))
+}
+
+// --- reverse-proxy hub handlers ---
+
+async fn list_presets_api(State(s): State<ApiState>, Path(project_id): Path<String>) -> Response {
+    match s.sup.list_projects().into_iter().find(|p| p.id == project_id) {
+        Some(p) => Json(p.presets).into_response(),
+        None => (StatusCode::NOT_FOUND, format!("unknown project: {project_id}")).into_response(),
+    }
+}
+
+async fn add_preset_api(
+    State(s): State<ApiState>,
+    Path(project_id): Path<String>,
+    Json(b): Json<AddPresetBody>,
+) -> Response {
+    match s.sup.add_preset(&project_id, b.name, b.base_url, b.danger) {
+        Ok(preset) => Json(preset).into_response(),
+        Err(e) => (StatusCode::BAD_REQUEST, e).into_response(),
+    }
+}
+
+async fn remove_preset_api(
+    State(s): State<ApiState>,
+    Path((project_id, preset_id)): Path<(String, String)>,
+) -> Response {
+    unit_result(s.sup.remove_preset(&project_id, &preset_id))
+}
+
+async fn activate_preset_api(
+    State(s): State<ApiState>,
+    Path((project_id, preset_id)): Path<(String, String)>,
+) -> Response {
+    unit_result(s.sup.set_active_preset(&project_id, &preset_id))
+}
+
+async fn proxy_log_api(
+    State(s): State<ApiState>,
+    Path(project_id): Path<String>,
+) -> Json<Vec<RequestLogEntry>> {
+    Json(s.sup.hub_log(&project_id))
 }
 
 async fn get_logs(State(s): State<ApiState>, Path(id): Path<String>) -> Response {

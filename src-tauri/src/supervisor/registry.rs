@@ -1,5 +1,6 @@
 use super::config;
 use super::proc::ManagedProc;
+use super::proxy_hub::ProxyHub;
 use super::reaper::{self, PidEntry};
 use crate::ports::PortRegistry;
 use crate::types::{LogLine, ProcInfo, ProcSpec, Project};
@@ -20,6 +21,10 @@ pub struct Supervisor {
     pub(super) procs: Mutex<HashMap<String, ManagedProc>>,
     pub(super) data_dir: PathBuf,
     pub(super) ports: Arc<PortRegistry>,
+    /// One reverse-proxy hub listener per project that has upstream presets
+    /// configured (see `proxy_hub`), keyed by project id. Populated lazily
+    /// (first preset added) and at startup via `init_hubs`.
+    pub(super) hubs: Mutex<HashMap<String, ProxyHub>>,
     /// Persists across `sample_tick` calls (unlike the one-shot `sysstats`
     /// sampler) so per-process CPU usage has a prior reading to diff against -
     /// see `sampler.rs` module docs.
@@ -39,6 +44,7 @@ impl Supervisor {
             procs: Mutex::new(map),
             data_dir,
             ports,
+            hubs: Mutex::new(HashMap::new()),
             sampler_sys: Mutex::new(System::new()),
         }
     }

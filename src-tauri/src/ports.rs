@@ -20,6 +20,17 @@ const BLOCK_SIZE: u16 = 10;
 /// `block_owner`). Never collides with a real command's owner
 /// (`project:command`, which never contains `:` before the project id).
 const BLOCK_PREFIX: &str = "__portblock__:";
+/// Offset within a project's first port block reserved for its reverse-proxy
+/// hub listener (the top slot: `base+9`, one past the last regular command
+/// offset). See `PortRegistry::project_hub_port`.
+const HUB_OFFSET: u16 = BLOCK_SIZE - 1;
+
+/// Owner label for a project's proxy-hub port reservation. Starts with
+/// `{project_id}:`, so `release_project` (which strips everything prefixed
+/// `{project_id}:`) reclaims it along with every command's slot.
+fn hub_owner(project_id: &str) -> String {
+    format!("{project_id}:__proxyhub__")
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 pub struct PortEntry {
@@ -177,6 +188,63 @@ impl PortRegistry {
         let p = self.block_slot(project_id)?;
         self.set_owner_port(owner, p, "project port block");
         Ok(p)
+    }
+
+    /// Resolve (and persist) the FIXED port for a project's reverse-proxy hub
+    /// listener (see `supervisor::proxy_hub`): offset `HUB_OFFSET` (the top
+    /// slot) of the project's FIRST allocated port block, i.e. `base+9`. A
+    /// dev app bakes this address in at compile time, so it must never move -
+    /// once assigned it is a real owner reservation (`project:__proxyhub__`,
+    /// not a `BLOCK_PREFIX` marker), which also blocks a regular command from
+    /// later claiming that same offset via `block_slot`.
+    ///
+    /// Idempotent: a project that already has a hub port keeps it. Ensures a
+    /// block exists (allocating the project's first one if this is the very
+    /// first port it has ever claimed). Errors if the offset is already held
+    /// by a different real owner - e.g. a project with a full 10-command
+    /// block that predates this feature; a rare edge case left as a clear
+    /// error rather than silently reassigning someone else's port.
+    pub fn project_hub_port(&self, project_id: &str) -> Result<u16, String> {
+        let owner = hub_owner(project_id);
+        if let Some(p) = self.owner_port(&owner) {
+            return Ok(p);
+        }
+        let base = self.first_block_base(project_id)?;
+        let port = base + HUB_OFFSET;
+        {
+            let g = self.reserved.lock().unwrap();
+            if let Some(clash) = g
+                .iter()
+                .find(|e| e.port == port && e.owner != owner && !e.owner.starts_with(BLOCK_PREFIX))
+            {
+                return Err(format!(
+                    "proxy hub port {port} is already claimed by {}",
+                    clash.owner
+                ));
+            }
+        }
+        self.set_owner_port(&owner, port, "proxy hub");
+        Ok(port)
+    }
+
+    /// The base port of `project_id`'s first allocated block, creating one
+    /// (via `block_slot`, which on an empty project always lands offset 0 of
+    /// a freshly allocated block - exactly the base) if it doesn't exist yet.
+    fn first_block_base(&self, project_id: &str) -> Result<u16, String> {
+        let prefix = block_owner_prefix(project_id);
+        {
+            let g = self.reserved.lock().unwrap();
+            let mut bases: Vec<u16> = g
+                .iter()
+                .filter(|e| e.owner.starts_with(&prefix))
+                .map(|e| e.port)
+                .collect();
+            bases.sort_unstable();
+            if let Some(&b) = bases.first() {
+                return Ok(b);
+            }
+        }
+        self.block_slot(project_id)
     }
 
     /// Drop a single owner's port reservation (its project-block slot or
@@ -686,6 +754,41 @@ Active Connections
         // A different project can now claim the same freed range.
         let reclaimed = reg.project_port("other", "other:c0", None).unwrap();
         assert_eq!(reclaimed, p0);
+    }
+
+    #[test]
+    fn project_hub_port_is_base_plus_nine_and_stable() {
+        let dir = tempfile::tempdir().unwrap();
+        let reg = PortRegistry::new(dir.path().to_path_buf());
+        let hub = reg.project_hub_port("proj").unwrap();
+        assert_eq!(hub, BASE + (BLOCK_SIZE - 1), "hub claims the block's top slot");
+        // Idempotent: re-asking returns the identical port.
+        assert_eq!(reg.project_hub_port("proj").unwrap(), hub);
+        // A command allocated afterward must skip the offset the hub owns.
+        let cmd_port = reg.project_port("proj", "proj:c0", None).unwrap();
+        assert_ne!(cmd_port, hub, "a command must not collide with the hub's reserved offset");
+    }
+
+    #[test]
+    fn project_hub_port_survives_reload_and_ten_full_commands_skip_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let hub;
+        {
+            let reg = PortRegistry::new(dir.path().to_path_buf());
+            hub = reg.project_hub_port("proj").unwrap();
+            // Fill the rest of the block: 9 commands should fit in the 9
+            // remaining offsets (0..8), the 10th must overflow to a new block
+            // rather than colliding with the hub's offset 9.
+            for i in 0..9u16 {
+                let p = reg.project_port("proj", &format!("proj:c{i}"), None).unwrap();
+                assert_ne!(p, hub);
+            }
+            let overflow = reg.project_port("proj", "proj:c9", None).unwrap();
+            assert_ne!(overflow, hub);
+            assert_eq!(overflow % BLOCK_SIZE, 0, "the 10th command overflows into a fresh aligned block");
+        }
+        let reg2 = PortRegistry::new(dir.path().to_path_buf());
+        assert_eq!(reg2.project_hub_port("proj").unwrap(), hub, "hub port survives reload");
     }
 
     #[cfg(windows)]

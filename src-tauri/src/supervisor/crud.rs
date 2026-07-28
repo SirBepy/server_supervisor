@@ -33,6 +33,8 @@ impl Supervisor {
             name,
             root,
             commands: Vec::new(),
+            presets: Vec::new(),
+            active_preset: None,
         };
         projects.push(project.clone());
         config::save(&self.data_dir, &projects);
@@ -75,6 +77,9 @@ impl Supervisor {
             }
         }
         drop(map);
+        // Stop the project's reverse-proxy hub listener (if any) before
+        // reclaiming its port - see `proxy_hub::Supervisor::stop_hub`.
+        self.stop_hub(&removed.id);
         // Reclaim the whole port block (and any per-command overrides) so a
         // future project can reuse it instead of it staying reserved forever.
         self.ports.release_project(&removed.id);
@@ -422,7 +427,7 @@ fn smart_project_name(root: &str) -> String {
     folder
 }
 
-fn unique_id(base: &str, taken: &dyn Fn(&str) -> bool) -> String {
+pub(super) fn unique_id(base: &str, taken: &dyn Fn(&str) -> bool) -> String {
     let b = config::slug(base);
     if !taken(&b) {
         return b;

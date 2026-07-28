@@ -60,6 +60,11 @@ pub fn run() {
             ipc::commands::list_ports,
             ipc::commands::reserve_port,
             ipc::commands::get_api_token,
+            ipc::commands::get_hub_port,
+            ipc::commands::add_preset,
+            ipc::commands::remove_preset,
+            ipc::commands::set_active_preset,
+            ipc::commands::get_hub_log,
             icons::get_project_icon,
             icons::get_project_tech,
             ipc::commands::list_groups,
@@ -89,6 +94,9 @@ pub fn run() {
                 std::sync::Arc::new(supervisor::Supervisor::new(data_dir.clone(), ports.clone()));
             supervisor.readopt_orphans();
             supervisor.start_autostart();
+            // Reverse-proxy hub listeners for every project that already has
+            // upstream presets configured (see supervisor::proxy_hub).
+            supervisor.init_hubs();
 
             // Backend crash-detection timer. list() is the only thing that
             // refreshes proc state + releases ports, but it only runs on a UI/API

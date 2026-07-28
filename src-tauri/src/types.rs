@@ -216,6 +216,22 @@ pub struct Command {
     pub role: Option<Role>,
 }
 
+/// A named upstream target for a project's reverse-proxy hub (see
+/// `supervisor::proxy_hub`). The dashboard/AI-agent picks one preset as
+/// active; the hub forwards every request to whichever one is active, without
+/// ever rebinding its listener.
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+pub struct UpstreamPreset {
+    pub id: String,
+    pub name: String,
+    /// e.g. `http://localhost:9000` or `https://staging.example.com`. No
+    /// trailing slash required; the hub strips one if present.
+    pub base_url: String,
+    /// The dev sets this explicitly for a prod-like target, so the dashboard
+    /// can warn before a swap - purely advisory, never enforced backend-side.
+    pub danger: bool,
+}
+
 /// A project: a named root folder with a set of runnable commands. This is the
 /// source-of-truth config the user edits (persisted to `projects.json`).
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
@@ -226,6 +242,14 @@ pub struct Project {
     pub root: String,
     #[serde(default)]
     pub commands: Vec<Command>,
+    /// Reverse-proxy hub upstream presets (see `supervisor::proxy_hub`).
+    /// Empty = no hub listener for this project.
+    #[serde(default)]
+    pub presets: Vec<UpstreamPreset>,
+    /// The currently active preset's `id`. `None`, or an id no longer present
+    /// in `presets`, falls back to the first preset in the list.
+    #[serde(default)]
+    pub active_preset: Option<String>,
 }
 
 /// A command candidate surfaced by auto-detection, before the user accepts it.

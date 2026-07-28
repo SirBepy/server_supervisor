@@ -44,7 +44,7 @@ const HOP_BY_HOP: &[&str] = &[
     "trailer",
 ];
 
-fn is_hop_by_hop(name: &str) -> bool {
+pub(crate) fn is_hop_by_hop(name: &str) -> bool {
     HOP_BY_HOP.iter().any(|h| name.eq_ignore_ascii_case(h))
 }
 
