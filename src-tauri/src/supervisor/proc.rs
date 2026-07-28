@@ -1,5 +1,5 @@
 use super::proxy;
-use crate::types::{LogLine, ProcInfo, ProcKind, ProcSpec, ProcStatus};
+use crate::types::{EnvVar, LogLine, ProcInfo, ProcKind, ProcSpec, ProcStatus};
 use std::collections::VecDeque;
 use std::io::Write;
 use std::process::{Child, ChildStdin, Command, Stdio};
@@ -69,6 +69,13 @@ pub struct ManagedProc {
     /// of its usual stable project-block/override port. Set by the supervisor
     /// right after a successful spawn (`set_fallback_port`); read by `info()`.
     fallback_port: bool,
+    /// The env overrides actually applied to the current run's child, captured
+    /// in `start()` from `spawn_env::parse_env(&spec.env)` plus the injected
+    /// `PORT` - not the full inherited environment. `Some` only while a real
+    /// spawn's values are known for this app instance; cleared on `stop()`, on
+    /// a self-detected exit (`refresh()`), and never set for an adopted proc
+    /// (its spawn-time env belonged to a prior app instance and is unknown).
+    resolved_env: Option<Vec<EnvVar>>,
 }
 
 impl ManagedProc {
@@ -92,6 +99,7 @@ impl ManagedProc {
             sampled_cpu_pct: None,
             sampled_port: None,
             fallback_port: false,
+            resolved_env: None,
         }
     }
 
@@ -156,6 +164,8 @@ impl ManagedProc {
         self.crashed_at = None;
         self.acquired_port = port;
         self.adopted = true;
+        // The prior app instance's resolved env died with it - unknown here.
+        self.resolved_env = None;
         self.push_log(
             "stdout",
             "[supervisor] re-adopted after restart - live logs paused until you restart this process".to_string(),
@@ -179,6 +189,8 @@ impl ManagedProc {
             cpu_pct: self.sampled_cpu_pct,
             started_at: self.started_at,
             fallback_port: self.fallback_port,
+            resolved_env: self.resolved_env.clone(),
+            env_unknown: self.adopted,
         }
     }
 
@@ -204,6 +216,10 @@ impl ManagedProc {
                 self.sampled_mem = None;
                 self.sampled_cpu_pct = None;
                 self.sampled_port = None;
+                // The run that owned this env just ended: drop it so a later
+                // adopt (after a future restart) or a stopped view never shows
+                // this run's stale values.
+                self.resolved_env = None;
                 // fallback_port, like acquired_port, is deliberately left as-is
                 // here (not reset) - it mirrors the last run's port situation
                 // until the next explicit start()/stop(), same as acquired_port
@@ -352,12 +368,21 @@ impl ManagedProc {
         // Per-command env overrides (applied before PORT so a dynamic port still
         // wins). A `PATH=` here is now a fallback/override on top of the resolved
         // PATH above, not the only way to reach a junction-installed toolchain.
-        for (k, v) in super::spawn_env::parse_env(&self.spec.env) {
+        // Parsed once and kept (not re-derived) so `resolved_env` below reflects
+        // exactly what was applied to the child - the resolved values, not the
+        // raw unexpanded `spec.env` text.
+        let env_pairs = super::spawn_env::parse_env(&self.spec.env);
+        for (k, v) in &env_pairs {
             command.env(k, v);
         }
+        let mut resolved_env: Vec<EnvVar> = env_pairs
+            .into_iter()
+            .map(|(k, v)| EnvVar::new(k, v))
+            .collect();
 
         if let Some(p) = child_port {
             command.env("PORT", p.to_string()); // env channel for process.env.PORT tools
+            resolved_env.push(EnvVar::new("PORT".to_string(), p.to_string()));
         }
 
         #[cfg(windows)]
@@ -408,6 +433,7 @@ impl ManagedProc {
         self.started_at = Some(now_ms());
         self.crashed_at = None;
         self.status = ProcStatus::Running;
+        self.resolved_env = Some(resolved_env);
         Ok(pid)
     }
 
@@ -432,6 +458,7 @@ impl ManagedProc {
         self.sampled_cpu_pct = None;
         self.sampled_port = None;
         self.fallback_port = false;
+        self.resolved_env = None;
         *self.app_id.lock().unwrap() = None;
         self.push_log("stdout", "[supervisor] stopped".to_string());
     }
@@ -475,6 +502,10 @@ impl ManagedProc {
 mod tests {
     use super::ManagedProc;
     use crate::types::{ProcKind, ProcSpec, ProcStatus};
+
+    fn find_env<'a>(env: &'a [crate::types::EnvVar], key: &str) -> Option<&'a crate::types::EnvVar> {
+        env.iter().find(|e| e.key == key)
+    }
 
     fn test_spec() -> ProcSpec {
         ProcSpec {
@@ -576,5 +607,62 @@ mod tests {
         spec.kind = ProcKind::Generic;
         spec.cmd = "npm run dev -- --port {PORT}".to_string();
         assert!(!ManagedProc::new(spec).wants_proxy());
+    }
+
+    #[test]
+    fn start_captures_resolved_env_with_port_and_secret_flags() {
+        let mut spec = test_spec();
+        spec.kind = ProcKind::Generic;
+        spec.cmd = "cmd /C exit 0".to_string(); // trivial, exits instantly
+        spec.env = "BACKEND_URL=http://localhost:9000\nAPI_TOKEN=abc123".to_string();
+        let mut p = ManagedProc::new(spec);
+        let _ = p.start(Some(4321), None);
+
+        let env = p.resolved_env.clone().expect("resolved_env set after a real spawn");
+        let url = find_env(&env, "BACKEND_URL").expect("BACKEND_URL captured");
+        assert_eq!(url.value, "http://localhost:9000");
+        assert!(!url.secret, "URL-ish var must stay visible");
+
+        let token = find_env(&env, "API_TOKEN").expect("API_TOKEN captured");
+        assert_eq!(token.value, "abc123");
+        assert!(token.secret, "TOKEN-named key must be masked");
+
+        let port = find_env(&env, "PORT").expect("injected PORT captured");
+        assert_eq!(port.value, "4321");
+        assert!(!port.secret);
+
+        // info() must expose the same, with env_unknown false (a real spawn,
+        // not an adopted one).
+        let info = p.info();
+        assert!(!info.env_unknown);
+        assert_eq!(info.resolved_env.expect("info exposes resolved_env").len(), 3);
+    }
+
+    #[test]
+    fn adopted_process_reports_env_unknown_not_stale_or_empty() {
+        let mut p = ManagedProc::new(test_spec());
+        p.adopt(4321, 1_000, None);
+        // No live handle, so the spawn-time env cannot be known.
+        assert!(p.resolved_env.is_none());
+        let info = p.info();
+        assert!(info.env_unknown, "adopted proc must flag env as unknown");
+        assert!(info.resolved_env.is_none(), "adopted proc must not show a stale/empty env block");
+    }
+
+    #[test]
+    fn stopped_process_shows_no_env() {
+        let mut spec = test_spec();
+        spec.kind = ProcKind::Generic;
+        spec.cmd = "cmd /C exit 0".to_string();
+        spec.env = "FOO=bar".to_string();
+        let mut p = ManagedProc::new(spec);
+        let _ = p.start(None, None);
+        assert!(p.resolved_env.is_some(), "sanity: a real run captures env");
+
+        p.stop();
+        assert!(p.resolved_env.is_none(), "stop() must drop the previous run's env");
+        let info = p.info();
+        assert!(!info.env_unknown, "stopped is a distinct, known state, not 'unknown'");
+        assert!(info.resolved_env.is_none(), "stopped proc must not show a stale env");
     }
 }

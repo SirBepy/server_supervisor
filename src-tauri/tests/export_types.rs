@@ -11,7 +11,8 @@ use server_supervisor_lib::ports::PortEntry;
 use server_supervisor_lib::settings::Settings;
 use server_supervisor_lib::supervisor::validate::CommandCheck;
 use server_supervisor_lib::types::{
-    Command, DetectedCommand, LogLine, ProcInfo, ProcKind, ProcSpec, ProcStatus, Project, Role,
+    Command, DetectedCommand, EnvVar, LogLine, ProcInfo, ProcKind, ProcSpec, ProcStatus, Project,
+    Role,
 };
 use std::fs;
 use std::path::PathBuf;
@@ -39,6 +40,7 @@ fn emit_ipc_types() {
     out.push_str(&decl::<ProcStatus>());
     out.push_str(&decl::<Role>());
     out.push_str(&decl::<ProcSpec>());
+    out.push_str(&decl::<EnvVar>());
     out.push_str(&decl::<ProcInfo>());
     out.push_str(&decl::<LogLine>());
     out.push_str(&decl::<Command>());

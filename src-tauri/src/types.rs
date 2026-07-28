@@ -80,6 +80,38 @@ pub struct ProcSpec {
     pub env: String,
 }
 
+/// One resolved env var actually applied to a spawned child (the parsed
+/// `KEY=VALUE`/`Command::env` pair, not the raw unexpanded `spec.env` line).
+/// `secret` is true when `key` case-insensitively matches
+/// `TOKEN|SECRET|KEY|PASSWORD|PASSWD|CREDENTIAL`, so the frontend renders the
+/// value masked behind a click-to-reveal instead of plainly; URL-ish vars
+/// (what a dev actually needs, to see which backend a running process is
+/// pointed at) never match and stay visible. The classification lives here,
+/// not duplicated in TS, so there is one source of truth for "secret-looking".
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+pub struct EnvVar {
+    pub key: String,
+    pub value: String,
+    pub secret: bool,
+}
+
+impl EnvVar {
+    pub fn new(key: String, value: String) -> Self {
+        let secret = is_secret_key(&key);
+        Self { key, value, secret }
+    }
+}
+
+/// Case-insensitive substring match against the secret-looking key patterns.
+/// A false positive (e.g. a key that happens to contain "KEY" but isn't
+/// actually sensitive) just costs an extra click to reveal - acceptable; a
+/// false negative would leak a real secret in the clear, which is not.
+fn is_secret_key(key: &str) -> bool {
+    const PATTERNS: [&str; 6] = ["TOKEN", "SECRET", "KEY", "PASSWORD", "PASSWD", "CREDENTIAL"];
+    let upper = key.to_uppercase();
+    PATTERNS.iter().any(|p| upper.contains(p))
+}
+
 /// Dashboard / API view of one supervised process.
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 pub struct ProcInfo {
@@ -111,6 +143,24 @@ pub struct ProcInfo {
     /// something unrelated squatting it). Always false when stopped.
     #[serde(default)]
     pub fallback_port: bool,
+    /// The resolved per-command env overrides (parsed `spec.env` plus the
+    /// injected `PORT`) actually applied to the child at spawn time - scoped
+    /// to those overrides only, NOT the full inherited Windows environment
+    /// (hundreds of vars, pure noise), and NOT including PATH (routinely
+    /// thousands of characters). `Some` (even `Some(vec![])`, meaning zero
+    /// overrides were configured) only while a real spawn's values are known
+    /// for this app instance; `None` when stopped, or when re-adopted after a
+    /// restart (see `env_unknown`).
+    #[serde(default)]
+    pub resolved_env: Option<Vec<EnvVar>>,
+    /// True only for a re-adopted process: it is Running but its spawn-time
+    /// env was never observed by this app instance (no live Child, no stdio -
+    /// the prior instance had it, and it died with that instance). The
+    /// frontend must render an explicit "unknown, re-adopted after restart"
+    /// state rather than an empty block or a stale value from a previous run.
+    /// Always false once stopped, or once a real restart supersedes adoption.
+    #[serde(default)]
+    pub env_unknown: bool,
 }
 
 /// Composite runtime id for a (project, command) pair. Uses `:` (never emitted
@@ -209,5 +259,25 @@ mod tests {
         assert_eq!(ProcKind::infer("npm run dev"), ProcKind::Generic);
         assert_eq!(ProcKind::infer("node server.js"), ProcKind::Generic);
         assert_eq!(ProcKind::infer("cargo run"), ProcKind::Generic);
+    }
+
+    #[test]
+    fn env_var_masks_secret_looking_keys() {
+        assert!(EnvVar::new("API_TOKEN".to_string(), "x".to_string()).secret);
+        assert!(EnvVar::new("DB_PASSWORD".to_string(), "x".to_string()).secret);
+        assert!(EnvVar::new("SECRET_KEY".to_string(), "x".to_string()).secret);
+        assert!(EnvVar::new("PASSWD".to_string(), "x".to_string()).secret);
+        assert!(EnvVar::new("AWS_CREDENTIAL_PROFILE".to_string(), "x".to_string()).secret);
+        // Case-insensitive.
+        assert!(EnvVar::new("password".to_string(), "x".to_string()).secret);
+        assert!(EnvVar::new("apiKey".to_string(), "x".to_string()).secret);
+    }
+
+    #[test]
+    fn env_var_keeps_url_and_plain_vars_visible() {
+        assert!(!EnvVar::new("BACKEND_URL".to_string(), "http://localhost:9000".to_string()).secret);
+        assert!(!EnvVar::new("API_BASE_URL".to_string(), "https://api.example.com".to_string()).secret);
+        assert!(!EnvVar::new("PORT".to_string(), "3000".to_string()).secret);
+        assert!(!EnvVar::new("NODE_ENV".to_string(), "development".to_string()).secret);
     }
 }

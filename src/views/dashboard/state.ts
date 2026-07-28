@@ -184,6 +184,15 @@ export const ui = {
   // "New project in group" before opening the add-project wizard. Cleared on
   // assignment or modal cancel.
   pendingGroupId: null as string | null,
+  // Command ids (`project:command`) whose Project-screen "Environment" block is
+  // expanded. Absent = collapsed, which is the default (matches the dev's
+  // stated preference: collapsible sections start collapsed, not expanded).
+  envSectionOpen: new Set<string>(),
+  // `${id}::${key}` pairs whose masked (secret-looking) env value has been
+  // clicked to reveal. Absent = masked, which is the default for any key
+  // matching TOKEN|SECRET|KEY|PASSWORD|PASSWD|CREDENTIAL (see `EnvVar.secret`,
+  // computed once in Rust so the classification isn't duplicated here).
+  envRevealed: new Set<string>(),
 };
 
 // draw() indirection: dashboard.ts owns the top-level render and registers it

@@ -134,3 +134,85 @@
   font-weight: 600;
   margin-right: 4px;
 }
+
+/* ----- Project screen: collapsed-by-default "Environment" block below the
+   logs pane - the resolved env overrides actually applied to the current run
+   (never the full inherited environment or PATH). ----- */
+
+.env-section {
+  margin-top: 10px;
+  padding-top: 9px;
+  border-top: 1px solid var(--border);
+}
+.env-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.env-toggle:hover {
+  color: var(--fg);
+}
+.env-body {
+  margin-top: 8px;
+}
+.env-empty {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+.env-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.env-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-family: "Cascadia Code", Consolas, monospace;
+  font-size: 12px;
+  padding: 4px 8px;
+  border-radius: 6px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+}
+.env-key {
+  color: var(--muted);
+  flex: 0 0 auto;
+  max-width: 40%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.env-value {
+  color: var(--fg);
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  word-break: break-all;
+}
+.env-value.env-masked {
+  color: var(--muted);
+  letter-spacing: 0.1em;
+}
+.env-reveal {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--muted);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+}
+.env-reveal:hover {
+  color: var(--accent);
+}
