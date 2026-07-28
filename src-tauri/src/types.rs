@@ -67,6 +67,12 @@ pub struct ProcSpec {
     pub autostart: bool,
     #[serde(default)]
     pub use_dynamic_port: bool,
+    /// Manual override for this command's port, entered on the dashboard.
+    /// `None` = auto-assign from the owning project's port block (see
+    /// `ports::PortRegistry::project_port`). Ignored when `use_dynamic_port`
+    /// is false.
+    #[serde(default)]
+    pub fixed_port: Option<u16>,
     /// Per-command environment overrides, one `KEY=VALUE` per line. Values may
     /// reference existing vars via `${NAME}` / `%NAME%` (e.g.
     /// `PATH=C:\node;%PATH%` to prepend a real node dir past the nvm symlink).
@@ -99,6 +105,12 @@ pub struct ProcInfo {
     /// "started N ago" uptime line. `None` when stopped.
     #[serde(default)]
     pub started_at: Option<u64>,
+    /// True when this run is bound to a fallback dynamic port instead of its
+    /// usual stable project-block/override port, because the usual port was
+    /// occupied at spawn time (e.g. a second instance of the same project, or
+    /// something unrelated squatting it). Always false when stopped.
+    #[serde(default)]
+    pub fallback_port: bool,
 }
 
 /// Composite runtime id for a (project, command) pair. Uses `:` (never emitted
@@ -119,6 +131,7 @@ impl ProcSpec {
             kind: command.kind.clone(),
             autostart: command.autostart,
             use_dynamic_port: command.use_dynamic_port,
+            fixed_port: command.fixed_port,
             env: command.env.clone(),
         }
     }
@@ -137,6 +150,11 @@ pub struct Command {
     pub autostart: bool,
     #[serde(default)]
     pub use_dynamic_port: bool,
+    /// Manual port override, editable on the dashboard's add/edit-command
+    /// modal. `None` (the field left empty) means auto-assign from the
+    /// project's port block; ignored when `use_dynamic_port` is false.
+    #[serde(default)]
+    pub fixed_port: Option<u16>,
     /// Per-command environment overrides, one `KEY=VALUE` per line. Values may
     /// reference existing vars via `${NAME}` / `%NAME%`.
     #[serde(default)]

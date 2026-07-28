@@ -31,6 +31,8 @@ export async function startAddCommand(projectId: string, root: string) {
     name: "",
     cmd: "",
     useDynamicPort: true,
+    port: "",
+    portError: null,
     env: "",
     role: null,
     query: "",
@@ -41,16 +43,51 @@ export async function startAddCommand(projectId: string, root: string) {
   draw();
 }
 
+// Parse a modal's raw port-field text into an override for the IPC call.
+// Empty text = auto-assign (null). A non-numeric entry is rejected locally
+// (inline, via `portError`) before ever reaching the backend; range and
+// collision checks are the backend's job (`ports::PortRegistry::project_port`)
+// since only it knows what's currently reserved.
+function parsePortField(m: CmdModal): { fixedPort: number | null; ok: true } | { ok: false } {
+  const text = m.port.trim();
+  if (!text) return { fixedPort: null, ok: true };
+  const n = Number(text);
+  if (!Number.isInteger(n) || n < 1 || n > 65535) {
+    m.portError = "port must be a whole number between 1 and 65535";
+    return { ok: false };
+  }
+  return { fixedPort: n, ok: true };
+}
+
+// Route a rejected add/edit-command call to the port field's inline error
+// when it's plausibly about the port (the backend's only other rejections are
+// the name/cmd-required checks, already guarded client-side above); anything
+// else falls back to the shared error banner.
+function reportCommandError(m: CmdModal, portRequested: boolean, e: unknown) {
+  const msg = String(e);
+  if (portRequested && /port/i.test(msg)) {
+    m.portError = msg;
+  } else {
+    ui.error = msg;
+  }
+}
+
 async function confirmAddCommand() {
   if (ui.modal?.t !== "addCommand") return;
   const m = ui.modal;
   const name = m.name.trim() || deriveName(m.cmd);
+  const parsed = parsePortField(m);
+  if (!parsed.ok) {
+    draw();
+    return;
+  }
+  m.portError = null;
   try {
-    await ipc.addCommand(m.projectId, name, m.cmd, false, m.useDynamicPort, m.env, m.role);
+    await ipc.addCommand(m.projectId, name, m.cmd, false, m.useDynamicPort, m.env, m.role, parsed.fixedPort);
     ui.error = null;
     ui.modal = null;
   } catch (e) {
-    ui.error = String(e);
+    reportCommandError(m, parsed.fixedPort != null, e);
   }
   await refresh();
 }
@@ -65,12 +102,28 @@ async function confirmEditCommand() {
     return;
   }
   const name = m.name.trim() || deriveName(cmd);
+  const parsed = parsePortField(m);
+  if (!parsed.ok) {
+    draw();
+    return;
+  }
+  m.portError = null;
   try {
-    await ipc.updateCommand(m.projectId, m.commandId, name, cmd, m.autostart, m.useDynamicPort, m.env, m.role);
+    await ipc.updateCommand(
+      m.projectId,
+      m.commandId,
+      name,
+      cmd,
+      m.autostart,
+      m.useDynamicPort,
+      m.env,
+      m.role,
+      parsed.fixedPort,
+    );
     ui.error = null;
     ui.modal = null;
   } catch (e) {
-    ui.error = String(e);
+    reportCommandError(m, parsed.fixedPort != null, e);
   }
   await refresh();
 }
@@ -100,6 +153,36 @@ function envField(m: CmdModal): TemplateResult {
         @input=${(e: Event) => (m.env = (e.target as HTMLTextAreaElement).value)}
       ></textarea>
     </div>
+  `;
+}
+
+// Manual port override, shown next to the "assign a dynamic port" checkbox on
+// both add and edit command modals (only while that checkbox is on - the
+// field is meaningless otherwise). Empty = auto-assign from the project's
+// port block; a typed value is validated by the backend (range + not already
+// reserved by a different command) and any rejection surfaces right below
+// the field via `portError`, rather than the shared error banner.
+function portField(m: CmdModal): TemplateResult {
+  return html`
+    <div class="field-row">
+      <label>Port</label>
+      <input
+        placeholder="auto"
+        inputmode="numeric"
+        .value=${m.port}
+        @input=${(e: Event) => {
+          m.port = (e.target as HTMLInputElement).value;
+          m.portError = null;
+          draw();
+        }}
+      />
+    </div>
+    ${m.portError
+      ? html`<div class="field-error">
+          <i class="ph ph-warning"></i>
+          <span>${m.portError}</span>
+        </div>`
+      : nothing}
   `;
 }
 
@@ -218,10 +301,14 @@ function addCommandModal(m: Extract<Modal, { t: "addCommand" }>): TemplateResult
           <input
             type="checkbox"
             .checked=${m.useDynamicPort}
-            @change=${(e: Event) => (m.useDynamicPort = (e.target as HTMLInputElement).checked)}
+            @change=${(e: Event) => {
+              m.useDynamicPort = (e.target as HTMLInputElement).checked;
+              draw();
+            }}
           />
           <span>Assign a dynamic port</span>
         </label>
+        ${m.useDynamicPort ? portField(m) : nothing}
         ${roleField(m)}
         ${envField(m)}
         <div class="dialog-actions">
@@ -269,10 +356,14 @@ function editCommandModal(m: Extract<Modal, { t: "editCommand" }>): TemplateResu
           <input
             type="checkbox"
             .checked=${m.useDynamicPort}
-            @change=${(e: Event) => (m.useDynamicPort = (e.target as HTMLInputElement).checked)}
+            @change=${(e: Event) => {
+              m.useDynamicPort = (e.target as HTMLInputElement).checked;
+              draw();
+            }}
           />
           <span>Assign a dynamic port</span>
         </label>
+        ${m.useDynamicPort ? portField(m) : nothing}
         <label class="detect-row">
           <input
             type="checkbox"

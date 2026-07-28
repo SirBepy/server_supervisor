@@ -397,6 +397,8 @@ function cmdMenuContent(
                 cmd: cmd.cmd,
                 autostart: cmd.autostart,
                 useDynamicPort: cmd.use_dynamic_port,
+                port: cmd.fixed_port != null ? String(cmd.fixed_port) : "",
+                portError: null,
                 env: cmd.env,
                 role: cmd.role,
                 check: null,

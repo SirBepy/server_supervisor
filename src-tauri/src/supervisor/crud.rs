@@ -74,6 +74,10 @@ impl Supervisor {
                 proc.stop();
             }
         }
+        drop(map);
+        // Reclaim the whole port block (and any per-command overrides) so a
+        // future project can reuse it instead of it staying reserved forever.
+        self.ports.release_project(&removed.id);
         Ok(())
     }
 
@@ -88,6 +92,7 @@ impl Supervisor {
         kind: Option<ProcKind>,
         autostart: bool,
         use_dynamic_port: bool,
+        fixed_port: Option<u16>,
         env: String,
         role: Option<Role>,
     ) -> Result<Command, String> {
@@ -109,6 +114,13 @@ impl Supervisor {
             return Ok(existing.clone());
         }
         let cid = unique_id(&name, &|cand| project.commands.iter().any(|c| c.id == cand));
+        // Claim this command's stable port slot eagerly, in creation order, so
+        // "base+0, base+1, ..." reflects declared order rather than start
+        // order, and a bad manual override is rejected right here instead of
+        // silently at spawn time.
+        if use_dynamic_port {
+            self.ports.project_port(project_id, &unit_id(project_id, &cid), fixed_port)?;
+        }
         let command = Command {
             id: cid,
             name,
@@ -116,6 +128,7 @@ impl Supervisor {
             kind,
             autostart,
             use_dynamic_port,
+            fixed_port,
             env,
             role,
         };
@@ -141,6 +154,7 @@ impl Supervisor {
         name: Option<String>,
         kind: Option<ProcKind>,
         use_dynamic_port: bool,
+        fixed_port: Option<u16>,
         env: String,
     ) -> Result<ProcInfo, String> {
         let project_name = smart_project_name(root);
@@ -153,6 +167,7 @@ impl Supervisor {
             kind,
             false,
             use_dynamic_port,
+            fixed_port,
             env,
             None,
         )?;
@@ -226,6 +241,7 @@ impl Supervisor {
         cmd: String,
         autostart: bool,
         use_dynamic_port: bool,
+        fixed_port: Option<u16>,
         env: String,
         role: Option<Role>,
     ) -> Result<Command, String> {
@@ -259,11 +275,21 @@ impl Supervisor {
                 .iter_mut()
                 .find(|c| c.id == command_id)
                 .ok_or_else(|| format!("unknown command: {command_id}"))?;
+            // Re-resolve (or drop) this command's port reservation now that we
+            // know it genuinely exists, before mutating/saving anything, so a
+            // bad manual override is rejected cleanly rather than half-applied.
+            let owner = unit_id(project_id, command_id);
+            if use_dynamic_port {
+                self.ports.project_port(project_id, &owner, fixed_port)?;
+            } else {
+                self.ports.release_owner(&owner);
+            }
             command.name = name;
             command.cmd = cmd;
             command.kind = kind;
             command.autostart = autostart;
             command.use_dynamic_port = use_dynamic_port;
+            command.fixed_port = fixed_port;
             command.env = env;
             command.role = role;
             let updated = command.clone();
@@ -282,6 +308,7 @@ impl Supervisor {
                         || proc.spec.cwd != new_spec.cwd
                         || proc.spec.kind != new_spec.kind
                         || proc.spec.use_dynamic_port != new_spec.use_dynamic_port
+                        || proc.spec.fixed_port != new_spec.fixed_port
                         || proc.spec.env != new_spec.env;
                     let running = proc.pid.is_some();
                     proc.spec = new_spec;
@@ -325,7 +352,8 @@ impl Supervisor {
         }
         // Auto-remove the project once its last command is gone (there is no
         // manual project delete; an empty project cleans itself up).
-        if project.commands.is_empty() {
+        let project_emptied = project.commands.is_empty();
+        if project_emptied {
             projects.retain(|p| p.id != project_id);
         }
         config::save(&self.data_dir, &projects);
@@ -334,6 +362,15 @@ impl Supervisor {
         let mut map = self.procs.lock().unwrap();
         if let Some(mut proc) = map.remove(&unit_id(project_id, command_id)) {
             proc.stop();
+        }
+        drop(map);
+        // Reclaim this command's port slot - or, if the project emptied out
+        // and auto-removed itself, the whole block - rather than leaving it
+        // reserved forever.
+        if project_emptied {
+            self.ports.release_project(project_id);
+        } else {
+            self.ports.release_owner(&unit_id(project_id, command_id));
         }
         Ok(())
     }

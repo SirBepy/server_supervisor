@@ -376,6 +376,14 @@
   color: var(--fg);
   font-variant-numeric: tabular-nums;
 }
+/* Flags a port that isn't the command's usual project-block/override port
+   (its usual one was occupied at spawn time - see ProcInfo.fallback_port). */
+.port-fallback-icon {
+  margin-left: 3px;
+  color: #c9923a;
+  font-size: 11px;
+  vertical-align: -1px;
+}
 
 .controls {
   position: absolute;

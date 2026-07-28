@@ -55,6 +55,10 @@ export type Modal =
       name: string;
       cmd: string;
       useDynamicPort: boolean;
+      // Raw text of the port override field. Empty = auto-assign from the
+      // project's port block.
+      port: string;
+      portError: string | null;
       env: string;
       role: Role | null;
       query: string;
@@ -70,6 +74,10 @@ export type Modal =
       cmd: string;
       autostart: boolean;
       useDynamicPort: boolean;
+      // Raw text of the port override field. Empty = auto-assign from the
+      // project's port block.
+      port: string;
+      portError: string | null;
       env: string;
       role: Role | null;
       check: CommandCheck | null;

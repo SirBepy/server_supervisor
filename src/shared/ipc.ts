@@ -43,6 +43,8 @@ export const addCommand = (
   useDynamicPort: boolean,
   env = "",
   role: Role | null = null,
+  // Manual port override; null = auto-assign from the project's port block.
+  fixedPort: number | null = null,
 ) =>
   invoke<Command>("add_command", {
     projectId,
@@ -50,6 +52,7 @@ export const addCommand = (
     cmd,
     autostart,
     useDynamicPort,
+    fixedPort,
     env,
     role,
   });
@@ -62,6 +65,8 @@ export const updateCommand = (
   useDynamicPort: boolean,
   env = "",
   role: Role | null = null,
+  // Manual port override; null = auto-assign from the project's port block.
+  fixedPort: number | null = null,
 ) =>
   invoke<Command>("update_command", {
     projectId,
@@ -70,6 +75,7 @@ export const updateCommand = (
     cmd,
     autostart,
     useDynamicPort,
+    fixedPort,
     env,
     role,
   });

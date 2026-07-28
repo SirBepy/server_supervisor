@@ -19,7 +19,7 @@ pub struct Supervisor {
     pub(super) projects: Mutex<Vec<Project>>,
     pub(super) procs: Mutex<HashMap<String, ManagedProc>>,
     pub(super) data_dir: PathBuf,
-    ports: Arc<PortRegistry>,
+    pub(super) ports: Arc<PortRegistry>,
     /// Persists across `sample_tick` calls (unlike the one-shot `sysstats`
     /// sampler) so per-process CPU usage has a prior reading to diff against -
     /// see `sampler.rs` module docs.
@@ -213,7 +213,7 @@ impl Supervisor {
         // error - permanently leaking 1 port (generic) or 2 (proxied flutter) per
         // redundant start. Check status under the same procs lock used for lookup,
         // and return early BEFORE any acquire so the acquired set is unchanged.
-        let (want_dynamic, wants_proxy) = {
+        let (want_dynamic, wants_proxy, fixed_port) = {
             let mut guard = self.procs.lock().unwrap();
             let p = guard
                 .get_mut(id)
@@ -227,20 +227,20 @@ impl Supervisor {
             ) {
                 return Ok(()); // already up: zero net port acquires
             }
-            (p.spec.use_dynamic_port, p.wants_proxy())
+            (p.spec.use_dynamic_port, p.wants_proxy(), p.spec.fixed_port)
         };
-        // Acquire a probed, free port if this command opts in (before locking
-        // procs, since acquire does OS work; reserve-before-spawn prevents races).
+        // Resolve the port this command should bind (before locking procs,
+        // since this does OS work; reserve-before-spawn prevents races).
         // `port` is the port the child binds (`{PORT}`/PORT env). `public` is the
         // port the dashboard advertises. For a normal proc they are the same. For
         // a proxied flutter web-server, the child binds a fresh INTERNAL port and
         // the live-reload proxy fronts it on the public dynamic port - so we keep
         // the original dynamic port as the proxy's public port and acquire a
         // second ephemeral port for flutter itself.
-        let port = if want_dynamic {
-            Some(self.acquire_free_port(id)?)
+        let (port, fallback) = if want_dynamic {
+            self.resolve_project_port(id, fixed_port)?
         } else {
-            None
+            (None, false)
         };
         let proxy_public = if wants_proxy && want_dynamic {
             // Re-route: the originally-acquired `port` becomes the PUBLIC port; a
@@ -265,7 +265,11 @@ impl Supervisor {
             let p = guard
                 .get_mut(id)
                 .ok_or_else(|| format!("unknown process id: {id}"))?;
-            p.start(child_port, public_port).map_err(|e| e.to_string())
+            let r = p.start(child_port, public_port).map_err(|e| e.to_string());
+            if r.is_ok() {
+                p.set_fallback_port(fallback);
+            }
+            r
         };
         if res.is_err() {
             if let Some(p) = child_port {
@@ -323,7 +327,16 @@ impl Supervisor {
                 let retry_res = {
                     let mut guard = self.procs.lock().unwrap();
                     if let Some(proc) = guard.get_mut(id) {
-                        proc.start(Some(retry), public_port).map_err(|e| e.to_string())
+                        let r = proc.start(Some(retry), public_port).map_err(|e| e.to_string());
+                        if r.is_ok() && public_port.is_none() {
+                            // Non-proxied: child_port IS the advertised port, and it
+                            // just changed to a fresh ephemeral acquisition - flag
+                            // this run as not on its usual port. (Proxied: only the
+                            // hidden internal port retried, the public port and its
+                            // fallback status are unaffected.)
+                            proc.set_fallback_port(true);
+                        }
+                        r
                     } else {
                         Ok(0)
                     }
@@ -416,6 +429,25 @@ impl Supervisor {
         reaper::write_pids(&self.data_dir, &[]);
     }
 
+    /// Resolve the port a dynamic-port command should bind: its stable
+    /// project-block (or manually overridden) port, falling back to the
+    /// existing ephemeral `acquire()` path if that port is occupied right now
+    /// - e.g. a second instance of the same project, or something unrelated
+    /// squatting it - so the command still starts rather than failing. The
+    /// bool is true exactly when the fallback path was taken.
+    fn resolve_project_port(&self, id: &str, fixed_port: Option<u16>) -> Result<(Option<u16>, bool), String> {
+        let project_id = id.split(':').next().unwrap_or(id);
+        let usual = self.ports.project_port(project_id, id, fixed_port)?;
+        if self.ports.is_os_port_free(usual) {
+            Ok((Some(usual), false))
+        } else {
+            log::warn!(
+                "supervisor: {id}'s usual port {usual} is occupied; falling back to a dynamic port"
+            );
+            Ok((Some(self.acquire_free_port(id)?), true))
+        }
+    }
+
     /// Acquire a free port from the registry, logging if the OS reports it as
     /// held by another process despite the registry's bind-probe (rare race).
     fn acquire_free_port(&self, id: &str) -> Result<u16, String> {
@@ -462,6 +494,7 @@ mod tests {
             kind: ProcKind::Generic,
             autostart: false,
             use_dynamic_port: false,
+            fixed_port: None,
             env: String::new(),
         }
     }
@@ -538,6 +571,36 @@ mod tests {
         // pids.json must not keep the dead proc's PID around to be re-adopted.
         let pids = std::fs::read_to_string(dir.path().join("pids.json")).unwrap_or_default();
         assert!(!pids.contains("p:c"), "stale pid must be pruned from pids.json");
+    }
+
+    #[test]
+    fn start_falls_back_to_a_dynamic_port_when_the_usual_one_is_occupied() {
+        let dir = tempfile::tempdir().unwrap();
+        let ports = Arc::new(PortRegistry::new(dir.path().to_path_buf()));
+        let sup = Supervisor::new(dir.path().to_path_buf(), Arc::clone(&ports));
+
+        let mut spec = fast_exit_spec("p:c");
+        spec.use_dynamic_port = true;
+        {
+            let mut map = sup.procs.lock().unwrap();
+            map.insert("p:c".to_string(), ManagedProc::new(spec));
+        }
+        // Learn the project's usual port the same way start() will - fetched
+        // up front rather than assumed, so this test survives if the
+        // allocator's search order ever changes.
+        let usual = ports.project_port("p", "p:c", None).unwrap();
+
+        // Occupy it so `is_os_port_free` reports it taken, forcing the
+        // fallback path. An IPv4 bind alone is enough: `port_free` requires
+        // BOTH loopbacks to succeed.
+        use std::net::{Ipv4Addr, TcpListener};
+        let _hold = TcpListener::bind((Ipv4Addr::LOCALHOST, usual)).unwrap();
+
+        sup.start("p:c").unwrap();
+
+        let info = sup.list().into_iter().find(|p| p.id == "p:c").unwrap();
+        assert_ne!(info.port, Some(usual), "must not have bound the occupied usual port");
+        assert!(info.fallback_port, "dashboard must be told this is not the usual port");
     }
 }
 

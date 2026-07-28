@@ -309,3 +309,16 @@
   margin: 0;
   font-size: 13px;
 }
+
+/* ----- blocking field-level validation error (e.g. the port override) ----- */
+.field-error {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin: 4px 0 0;
+  color: #ffb4ad;
+  font-size: 12px;
+}
+.field-error i {
+  font-size: 13px;
+}

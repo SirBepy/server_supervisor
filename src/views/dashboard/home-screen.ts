@@ -308,7 +308,9 @@ function runningRow(project: Project, cmd: Project["commands"][number]): Templat
               ? html`<span class="cell"><span class="k">RAM</span><span class="v">${formatBytes(info.mem_bytes)}</span></span>`
               : nothing}
             ${ui.showPort && info?.port != null
-              ? html`<span class="cell"><span class="k">Port</span><span class="v">${info.port}</span></span>`
+              ? html`<span class="cell" title=${info.fallback_port ? "not this command's usual port - its usual one was occupied at launch" : ""}>
+                  <span class="k">Port</span><span class="v">${info.port}${info.fallback_port ? html`<i class="ph ph-warning port-fallback-icon"></i>` : nothing}</span>
+                </span>`
               : nothing}
           </div>
           <i class="ph ph-caret-right row-goto"></i>

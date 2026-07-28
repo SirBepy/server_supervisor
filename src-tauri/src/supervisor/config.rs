@@ -133,6 +133,7 @@ fn migrate(specs: Vec<ProcSpec>) -> Vec<Project> {
             kind: spec.kind,
             autostart: spec.autostart,
             use_dynamic_port: spec.use_dynamic_port,
+            fixed_port: spec.fixed_port,
             env: spec.env,
             role: None,
         };

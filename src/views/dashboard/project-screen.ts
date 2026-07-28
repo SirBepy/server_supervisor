@@ -25,16 +25,20 @@ function projectIconTemplateLg(project: Project): TemplateResult {
 }
 
 // The expanded-card header: pid + RAM + port + uptime, in one muted line.
+// `fallbackPort` flags a port that isn't the command's usual project-block/
+// override port (its usual one was occupied at spawn time - see
+// `ProcInfo.fallback_port`), so the dev isn't surprised the URL moved.
 function drawerHeader(
   pid: number | null | undefined,
   mem: bigint | number | null | undefined,
   port: number | null | undefined,
   startedAt: bigint | number | null | undefined,
+  fallbackPort: boolean | undefined,
 ): string {
   const parts: string[] = [];
   if (pid != null) parts.push(`pid ${pid}`);
   if (mem != null) parts.push(formatBytes(mem));
-  if (port != null) parts.push(`port ${port}`);
+  if (port != null) parts.push(fallbackPort ? `port ${port} (not usual)` : `port ${port}`);
   const up = formatUptime(startedAt);
   if (up) parts.push(`started ${up}`);
   return parts.length ? parts.join(" · ") : "no run info";
@@ -135,7 +139,7 @@ function detailPane(project: Project): TemplateResult {
     <div class="detail-pane">
       <div class="detail-cmdline"><i class="ph ph-caret-right"></i> ${cmd.cmd}</div>
       <div class="pidline">
-        ${status === "crashed" ? html`<span class="crashed-tag">crashed</span> ` : nothing}${drawerHeader(info?.pid, info?.mem_bytes, info?.port, info?.started_at)}
+        ${status === "crashed" ? html`<span class="crashed-tag">crashed</span> ` : nothing}${drawerHeader(info?.pid, info?.mem_bytes, info?.port, info?.started_at, info?.fallback_port)}
       </div>
       <pre class="logs">${ui.logText ? renderAnsi(ui.logText) : "(no output yet)"}</pre>
     </div>

@@ -65,6 +65,10 @@ pub struct ManagedProc {
     /// the old inline `fill_ports` computed). `info()` prefers this over the
     /// forced `acquired_port` so the dashboard shows the port actually bound.
     sampled_port: Option<u16>,
+    /// True when the current run is bound to a fallback dynamic port instead
+    /// of its usual stable project-block/override port. Set by the supervisor
+    /// right after a successful spawn (`set_fallback_port`); read by `info()`.
+    fallback_port: bool,
 }
 
 impl ManagedProc {
@@ -87,6 +91,7 @@ impl ManagedProc {
             sampled_mem: None,
             sampled_cpu_pct: None,
             sampled_port: None,
+            fallback_port: false,
         }
     }
 
@@ -117,6 +122,13 @@ impl ManagedProc {
     /// The dynamic port currently held for this run, if any.
     pub fn acquired_port(&self) -> Option<u16> {
         self.acquired_port
+    }
+
+    /// Flag whether the current run landed on a fallback (non-usual) dynamic
+    /// port rather than its stable project-block/override port. Called by the
+    /// supervisor right after a successful spawn.
+    pub fn set_fallback_port(&mut self, v: bool) {
+        self.fallback_port = v;
     }
 
     /// Dead-on-arrival: crashed within `DOA_WINDOW_MS` of starting, i.e. the
@@ -166,6 +178,7 @@ impl ManagedProc {
             mem_bytes: self.sampled_mem,
             cpu_pct: self.sampled_cpu_pct,
             started_at: self.started_at,
+            fallback_port: self.fallback_port,
         }
     }
 
@@ -191,6 +204,13 @@ impl ManagedProc {
                 self.sampled_mem = None;
                 self.sampled_cpu_pct = None;
                 self.sampled_port = None;
+                // fallback_port, like acquired_port, is deliberately left as-is
+                // here (not reset) - it mirrors the last run's port situation
+                // until the next explicit start()/stop(), same as acquired_port
+                // itself. Trivial/fast-exiting commands can reach this branch
+                // within the EADDRINUSE retry window's own refresh() call, and
+                // clearing it here would erase the flag before the dashboard
+                // ever saw it.
                 // The child died on its own. Drop the proxy so its TcpListener on
                 // the public port is freed immediately (otherwise it keeps serving
                 // 502s until an explicit stop/restart); dropping ProxyTask runs its
@@ -411,6 +431,7 @@ impl ManagedProc {
         self.sampled_mem = None;
         self.sampled_cpu_pct = None;
         self.sampled_port = None;
+        self.fallback_port = false;
         *self.app_id.lock().unwrap() = None;
         self.push_log("stdout", "[supervisor] stopped".to_string());
     }
@@ -465,6 +486,7 @@ mod tests {
             kind: ProcKind::Flutter,
             autostart: false,
             use_dynamic_port: true,
+            fixed_port: None,
             env: String::new(),
         }
     }

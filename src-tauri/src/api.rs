@@ -60,6 +60,10 @@ struct RunBody {
     kind: Option<ProcKind>,
     #[serde(default)]
     use_dynamic_port: Option<bool>,
+    /// Manual port override; omitted/`null` = auto-assign from the project's
+    /// port block (see `ports::PortRegistry::project_port`).
+    #[serde(default)]
+    port: Option<u16>,
     /// Per-command env overrides, one `KEY=VALUE` per line (see `Command::env`).
     #[serde(default)]
     env: Option<String>,
@@ -78,6 +82,10 @@ struct AddCommandBody {
     autostart: Option<bool>,
     #[serde(default)]
     use_dynamic_port: Option<bool>,
+    /// Manual port override; omitted/`null` = auto-assign from the project's
+    /// port block.
+    #[serde(default)]
+    port: Option<u16>,
     #[serde(default)]
     env: Option<String>,
 }
@@ -94,6 +102,10 @@ struct UpdateCommandBody {
     autostart: Option<bool>,
     #[serde(default)]
     use_dynamic_port: Option<bool>,
+    /// Manual port override; omitted/`null` = auto-assign from the project's
+    /// port block.
+    #[serde(default)]
+    port: Option<u16>,
     #[serde(default)]
     env: Option<String>,
 }
@@ -312,6 +324,7 @@ async fn run(State(s): State<ApiState>, Json(b): Json<RunBody>) -> Response {
         // Omitted kind -> inferred from the command; an explicit kind overrides.
         b.kind,
         b.use_dynamic_port.unwrap_or(true),
+        b.port,
         b.env.unwrap_or_default(),
     ) {
         Ok(info) => Json(info).into_response(),
@@ -346,6 +359,7 @@ async fn add_command(
         b.kind,
         b.autostart.unwrap_or(false),
         b.use_dynamic_port.unwrap_or(true),
+        b.port,
         b.env.unwrap_or_default(),
         // The localhost API has no `role` field on its request body (FE/BE
         // badging is a dashboard-only concept); commands it creates start unset.
@@ -365,6 +379,7 @@ async fn update_command(
         b.cmd,
         b.autostart.unwrap_or(false),
         b.use_dynamic_port.unwrap_or(true),
+        b.port,
         b.env.unwrap_or_default(),
         // Same rationale as add_command: no `role` on the API body, and this
         // endpoint already fully replaces the mutable fields rather than
