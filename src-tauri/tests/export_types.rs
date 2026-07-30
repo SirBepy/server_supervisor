@@ -6,7 +6,8 @@
 
 use server_supervisor_lib::groups::Group;
 use server_supervisor_lib::icons::ProjectIcon;
-use server_supervisor_lib::ipc::commands::{SystemStats, VersionInfo};
+use server_supervisor_lib::ipc::commands::SystemStats;
+use server_supervisor_lib::ipc::version::VersionInfo;
 use server_supervisor_lib::ports::PortEntry;
 use server_supervisor_lib::settings::Settings;
 use server_supervisor_lib::supervisor::proxy_hub::RequestLogEntry;

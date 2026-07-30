@@ -73,7 +73,7 @@ pub fn run() {
             ipc::commands::update_group,
             ipc::commands::delete_group,
             ipc::commands::set_project_group,
-            ipc::commands::get_version_info,
+            ipc::version::get_version_info,
         ])
         .setup(|app| {
             let handle = app.handle().clone();
