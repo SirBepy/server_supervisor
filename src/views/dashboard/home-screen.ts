@@ -76,6 +76,15 @@ function searchBox(): TemplateResult {
   `;
 }
 
+// Quiet identifier chip for a project registered from a throwaway root (git
+// worktree / scratch dir, never written to projects.json - see
+// `Project.transient` and `supervisor::config::save`) so repeat runs of the
+// same command are distinguishable by branch/worktree name.
+function transientChip(project: Project): TemplateResult | typeof nothing {
+  if (!project.transient || !project.transient_label) return nothing;
+  return html`<span class="transient-chip" title="Running from a throwaway location, not saved as a project">${project.transient_label}</span>`;
+}
+
 function runningRow(project: Project, cmd: Project["commands"][number]): TemplateResult {
   const id = `${project.id}:${cmd.id}`;
   const info = ui.statusById[id];
@@ -87,7 +96,7 @@ function runningRow(project: Project, cmd: Project["commands"][number]): Templat
       <div class="row">
         ${projectIconTemplate(project)}
         <div class="row-namecol">
-          <span class="row-title">${project.name} ${roleBadge(cmd.role)}</span>
+          <span class="row-title">${project.name} ${roleBadge(cmd.role)} ${transientChip(project)}</span>
           <span class="row-cmdtext">${cmd.cmd}</span>
         </div>
         ${status === "crashed" ? html`<span class="statusword">crashed</span>` : nothing}

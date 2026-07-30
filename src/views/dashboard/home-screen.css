@@ -180,6 +180,18 @@
 .meta-chip-running {
   color: var(--success, #34d399);
 }
+/* Quiet identifier, not a warning - sized like .role-badge (dashboard.css)
+   but muted, since it's a label not a status. */
+.transient-chip {
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--muted);
+  background: color-mix(in srgb, var(--muted) 14%, transparent);
+  border-radius: 4px;
+  padding: 1px 5px;
+  flex: 0 0 auto;
+}
 .row-goto {
   color: var(--muted);
   font-size: 13px;

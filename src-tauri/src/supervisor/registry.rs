@@ -3,7 +3,7 @@ use super::proc::ManagedProc;
 use super::proxy_hub::ProxyHub;
 use super::reaper::{self, PidEntry};
 use crate::ports::PortRegistry;
-use crate::types::{LogLine, ProcInfo, ProcSpec, Project};
+use crate::types::{unit_id, LogLine, ProcInfo, ProcSpec, Project};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -73,6 +73,35 @@ impl Supervisor {
         }
         // Rewrite pids.json from the live (now-adopted) set.
         self.persist_pids();
+        self.prune_dead_transients();
+    }
+
+    /// A transient project (worktree/scratch run, see `Project::transient`)
+    /// with no live process is a dead entry from a prior instance - drop it so
+    /// it doesn't linger forever in `transient_projects.json`. One with a live
+    /// process (just re-adopted above) survives, so it stays stoppable.
+    fn prune_dead_transients(&self) {
+        let mut projects = self.projects.lock().unwrap();
+        let procs = self.procs.lock().unwrap();
+        let mut dropped: Vec<String> = Vec::new();
+        projects.retain(|p| {
+            let keep = !p.transient
+                || p.commands
+                    .iter()
+                    .any(|c| procs.get(&unit_id(&p.id, &c.id)).map_or(false, |proc| proc.pid.is_some()));
+            if !keep {
+                dropped.push(p.id.clone());
+            }
+            keep
+        });
+        drop(procs);
+        // Same reclaim remove_project does: a dropped project's block marker and
+        // per-command slots would otherwise stay reserved forever, and a throwaway
+        // worktree mints a fresh project id every run.
+        for id in &dropped {
+            self.ports.release_project(id);
+        }
+        config::save(&self.data_dir, &projects);
     }
 
     /// Stop every running process but keep the app alive (tray "Close Processes").
@@ -488,7 +517,8 @@ impl Supervisor {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::{ProcKind, ProcSpec};
+    use crate::types::{Command, ProcKind, ProcSpec};
+    use std::fs;
 
     fn fast_exit_spec(id: &str) -> ProcSpec {
         ProcSpec {
@@ -607,6 +637,61 @@ mod tests {
         let info = sup.list().into_iter().find(|p| p.id == "p:c").unwrap();
         assert_ne!(info.port, Some(usual), "must not have bound the occupied usual port");
         assert!(info.fallback_port, "dashboard must be told this is not the usual port");
+    }
+
+    fn transient_project(id: &str, cmd_id: &str) -> Project {
+        Project {
+            id: id.to_string(),
+            name: id.to_string(),
+            root: ".".to_string(),
+            commands: vec![Command {
+                id: cmd_id.to_string(),
+                name: cmd_id.to_string(),
+                cmd: "cmd /C exit 0".to_string(),
+                kind: ProcKind::Generic,
+                autostart: false,
+                use_dynamic_port: false,
+                fixed_port: None,
+                env: String::new(),
+                role: None,
+            }],
+            presets: Vec::new(),
+            active_preset: None,
+            transient: true,
+            transient_label: Some(id.to_string()),
+        }
+    }
+
+    #[test]
+    fn readopt_orphans_prunes_dead_transients_but_keeps_live_ones() {
+        let dir = tempfile::tempdir().unwrap();
+        let ports = Arc::new(PortRegistry::new(dir.path().to_path_buf()));
+        let sup = Supervisor::new(dir.path().to_path_buf(), Arc::clone(&ports));
+
+        let dead = transient_project("dead", "c");
+        let alive = transient_project("alive", "c");
+        {
+            let mut projects = sup.projects.lock().unwrap();
+            projects.push(dead);
+            projects.push(alive.clone());
+        }
+        {
+            let mut map = sup.procs.lock().unwrap();
+            let spec = ProcSpec::from_unit(&alive, &alive.commands[0]);
+            let mut p = ManagedProc::new(spec);
+            p.pid = Some(999); // stand-in for a still-alive re-adopted process
+            map.insert(unit_id("alive", "c"), p);
+        }
+
+        sup.readopt_orphans();
+
+        let projects = sup.list_projects();
+        assert!(!projects.iter().any(|p| p.id == "dead"), "dead transient with no live process is pruned");
+        assert!(projects.iter().any(|p| p.id == "alive"), "transient with a live process survives");
+
+        let transient_file = fs::read_to_string(dir.path().join("transient_projects.json")).unwrap();
+        assert!(transient_file.contains("\"alive\""));
+        assert!(!transient_file.contains("\"dead\""));
     }
 }
 

@@ -18,6 +18,7 @@ pub mod registry;
 pub mod sampler;
 pub mod spawn_env;
 pub mod sysstats;
+pub mod transient;
 pub mod validate;
 
 pub use registry::Supervisor;

@@ -16,6 +16,19 @@ impl Supervisor {
     }
 
     pub fn add_project(&self, name: String, root: String) -> Result<Project, String> {
+        self.add_project_inner(name, root, false, None)
+    }
+
+    /// Shared by `add_project` (always non-transient: the UI's manual add-project
+    /// flow) and `ensure_and_run` (which detects transience first). Transience is
+    /// set once here, at registration, and never re-derived afterward.
+    fn add_project_inner(
+        &self,
+        name: String,
+        root: String,
+        transient: bool,
+        transient_label: Option<String>,
+    ) -> Result<Project, String> {
         let name = name.trim().to_string();
         let root = root.trim().to_string();
         if name.is_empty() || root.is_empty() {
@@ -35,6 +48,8 @@ impl Supervisor {
             commands: Vec::new(),
             presets: Vec::new(),
             active_preset: None,
+            transient,
+            transient_label,
         };
         projects.push(project.clone());
         config::save(&self.data_dir, &projects);
@@ -163,7 +178,13 @@ impl Supervisor {
         env: String,
     ) -> Result<ProcInfo, String> {
         let project_name = smart_project_name(root);
-        let project = self.add_project(project_name, root.to_string())?;
+        let detected = super::transient::detect(std::path::Path::new(root));
+        let project = self.add_project_inner(
+            project_name,
+            root.to_string(),
+            detected.transient,
+            detected.label,
+        )?;
         let command_name = name.unwrap_or_else(|| derive_name(cmd));
         let command = self.add_command(
             &project.id,

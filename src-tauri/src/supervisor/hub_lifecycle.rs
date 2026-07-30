@@ -211,6 +211,8 @@ mod tests {
             commands: vec![],
             presets: vec![p1.clone(), p2.clone()],
             active_preset: None,
+            transient: false,
+            transient_label: None,
         };
         assert_eq!(resolve_active_preset(&project).unwrap().id, "a", "unset falls back to first");
 

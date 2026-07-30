@@ -6,6 +6,11 @@ use std::path::Path;
 
 const CONFIG_FILE: &str = "projects.json";
 const LEGACY_FILE: &str = "procs.json";
+/// Side file for `Project::transient` entries (worktrees/scratch runs) - kept
+/// out of `projects.json` so they never permanently pollute the project list,
+/// but still tracked here so a still-alive one survives a restart and can be
+/// re-adopted (see `registry::readopt_orphans`'s post-adopt prune).
+const TRANSIENT_FILE: &str = "transient_projects.json";
 
 /// Slugify a name into a stable id fragment.
 pub fn slug(name: &str) -> String {
@@ -27,9 +32,33 @@ pub fn slug(name: &str) -> String {
     }
 }
 
-/// Load the project list. Falls back to migrating a legacy flat `procs.json`,
-/// otherwise writes an empty `projects.json`.
+/// Load the project list: persisted projects plus any still-tracked transient
+/// ones, merged so `ensure_procs` seeds runtime entries for both.
 pub fn load(data_dir: &Path) -> Vec<Project> {
+    let mut projects = load_persistent(data_dir);
+    projects.extend(load_transient(data_dir));
+    projects
+}
+
+/// Transient side file is self-healing (repopulated from live processes on
+/// each run), so a parse failure just logs and drops it rather than the
+/// corrupt-backup dance `load_persistent` does for the primary config.
+fn load_transient(data_dir: &Path) -> Vec<Project> {
+    let Ok(text) = std::fs::read_to_string(data_dir.join(TRANSIENT_FILE)) else {
+        return Vec::new();
+    };
+    match serde_json::from_str::<Vec<Project>>(&text) {
+        Ok(projects) => projects,
+        Err(e) => {
+            log::warn!("supervisor: failed to parse {TRANSIENT_FILE}: {e}");
+            Vec::new()
+        }
+    }
+}
+
+/// Falls back to migrating a legacy flat `procs.json`, otherwise writes an
+/// empty `projects.json`.
+fn load_persistent(data_dir: &Path) -> Vec<Project> {
     let path = data_dir.join(CONFIG_FILE);
     if let Ok(text) = std::fs::read_to_string(&path) {
         match serde_json::from_str::<Vec<Project>>(&text) {
@@ -71,15 +100,24 @@ pub fn load(data_dir: &Path) -> Vec<Project> {
     Vec::new()
 }
 
+/// The one choke point for persistence: splits `transient` projects out to
+/// `TRANSIENT_FILE` so no mutator can accidentally write one into the
+/// permanent `projects.json`.
 pub fn save(data_dir: &Path, projects: &[Project]) {
+    let (persistent, transient): (Vec<&Project>, Vec<&Project>) =
+        projects.iter().partition(|p| !p.transient);
+    write_json(data_dir, CONFIG_FILE, &persistent);
+    write_json(data_dir, TRANSIENT_FILE, &transient);
+}
+
+fn write_json(data_dir: &Path, file: &str, projects: &[&Project]) {
     match serde_json::to_string_pretty(projects) {
         Ok(text) => {
-            if let Err(e) = crate::fsutil::write_atomic(&data_dir.join(CONFIG_FILE), text.as_bytes())
-            {
-                log::error!("supervisor: failed to write {CONFIG_FILE}: {e}");
+            if let Err(e) = crate::fsutil::write_atomic(&data_dir.join(file), text.as_bytes()) {
+                log::error!("supervisor: failed to write {file}: {e}");
             }
         }
-        Err(e) => log::error!("supervisor: failed to serialize {CONFIG_FILE}: {e}"),
+        Err(e) => log::error!("supervisor: failed to serialize {file}: {e}"),
     }
 }
 
@@ -119,6 +157,36 @@ mod tests {
         // The pre-existing backup is the source of truth and must survive.
         assert_eq!(fs::read(&corrupt).unwrap(), b"first-corruption");
     }
+
+    fn bare_project(id: &str, transient: bool) -> Project {
+        Project {
+            id: id.to_string(),
+            name: id.to_string(),
+            root: ".".to_string(),
+            commands: Vec::new(),
+            presets: Vec::new(),
+            active_preset: None,
+            transient,
+            transient_label: if transient { Some("wt1".to_string()) } else { None },
+        }
+    }
+
+    #[test]
+    fn save_round_trips_a_transient_project_via_the_side_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let normal = bare_project("n", false);
+        let scratch = bare_project("s", true);
+        save(dir.path(), &[normal, scratch]);
+
+        let persisted = fs::read_to_string(dir.path().join(CONFIG_FILE)).unwrap();
+        assert!(persisted.contains("\"n\""), "normal project stays in projects.json");
+        assert!(!persisted.contains("\"s\""), "transient project must not land in projects.json");
+
+        let loaded = load(dir.path());
+        let ids: Vec<&str> = loaded.iter().map(|p| p.id.as_str()).collect();
+        assert!(ids.contains(&"n"));
+        assert!(ids.contains(&"s"), "load() merges transient_projects.json back in");
+    }
 }
 
 /// Group flat specs by their `project` label into nested projects.
@@ -147,6 +215,8 @@ fn migrate(specs: Vec<ProcSpec>) -> Vec<Project> {
                 commands: vec![cmd],
                 presets: Vec::new(),
                 active_preset: None,
+                transient: false,
+                transient_label: None,
             });
         }
     }
