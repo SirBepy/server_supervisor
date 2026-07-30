@@ -151,6 +151,12 @@ export function deviconClassByName(name: string): string | null {
   return (DEVICON as Record<string, string>)[name] ?? null;
 }
 
+// Toggles `id`'s membership in `set` in place (add if absent, delete if present).
+export function toggleSetMember(set: Set<string>, id: string): void {
+  if (set.has(id)) set.delete(id);
+  else set.add(id);
+}
+
 // The preset actually serving traffic right now, mirroring the backend's own
 // fallback rule (see `Project.active_preset`'s doc comment): the preset whose
 // id matches `active_preset`, or the first preset in the list if that id is

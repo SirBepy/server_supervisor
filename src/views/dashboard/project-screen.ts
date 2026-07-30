@@ -14,7 +14,7 @@ import { html, nothing, type TemplateResult } from "lit-html";
 import * as ipc from "../../shared/ipc";
 import type { EnvVar, ProcInfo, Project, RequestLogEntry, UpstreamPreset } from "../../types/ipc.generated";
 import { ui, act, draw } from "./state";
-import { formatBytes, formatUptime, displayName, resolveActivePreset } from "./helpers";
+import { formatBytes, formatUptime, displayName, resolveActivePreset, toggleSetMember } from "./helpers";
 import { statusClass, roleBadge, toggleSelectCmd, resolveProjectIcon } from "./dashboard";
 import { cmdMenu, setMouseAnchor, copyPortUrl } from "./menus";
 import { startAddPreset, startEditPreset } from "./modals";
@@ -129,14 +129,12 @@ function projectCmdRow(project: Project, cmd: Project["commands"][number]): Temp
 }
 
 function toggleEnvSection(id: string) {
-  if (ui.envSectionOpen.has(id)) ui.envSectionOpen.delete(id);
-  else ui.envSectionOpen.add(id);
+  toggleSetMember(ui.envSectionOpen, id);
   draw();
 }
 
 function toggleEnvReveal(revealKey: string) {
-  if (ui.envRevealed.has(revealKey)) ui.envRevealed.delete(revealKey);
-  else ui.envRevealed.add(revealKey);
+  toggleSetMember(ui.envRevealed, revealKey);
   draw();
 }
 
@@ -259,10 +257,9 @@ function presetRow(project: Project, preset: UpstreamPreset, activePreset: Upstr
 }
 
 function toggleHubLogSection(projectId: string) {
-  if (ui.hubLogOpen.has(projectId)) {
-    ui.hubLogOpen.delete(projectId);
-  } else {
-    ui.hubLogOpen.add(projectId);
+  const opening = !ui.hubLogOpen.has(projectId);
+  toggleSetMember(ui.hubLogOpen, projectId);
+  if (opening) {
     // Fetch right away on open so the first paint isn't empty until the next
     // poll tick; refresh() in state.ts keeps it live afterwards.
     void ipc.getHubLog(projectId).then((entries) => {

@@ -7,7 +7,7 @@
 import { html, nothing, type TemplateResult } from "lit-html";
 import type { Group, Project } from "../../types/ipc.generated";
 import { ui, draw } from "./state";
-import { formatBytes, resolveActivePreset } from "./helpers";
+import { formatBytes, resolveActivePreset, toggleSetMember } from "./helpers";
 import { statusClass, roleBadge, openCommandInProject, goToProject, resolveProjectIcon } from "./dashboard";
 import { groupMenu, setMouseAnchor } from "./menus";
 import { statsStrip } from "./stats-strip";
@@ -25,11 +25,7 @@ export function runningCount(project: Project): number {
 }
 
 function toggleGroupCollapse(id: string) {
-  if (ui.collapsedGroups.has(id)) {
-    ui.collapsedGroups.delete(id);
-  } else {
-    ui.collapsedGroups.add(id);
-  }
+  toggleSetMember(ui.collapsedGroups, id);
   draw();
 }
 
