@@ -9,7 +9,7 @@ import type { Group, Project } from "../../types/ipc.generated";
 import { ui, draw } from "./state";
 import { formatBytes, resolveActivePreset, toggleSetMember } from "./helpers";
 import { statusClass, roleBadge, openCommandInProject, goToProject, resolveProjectIcon } from "./dashboard";
-import { groupMenu, setMouseAnchor } from "./menus";
+import { groupMenu, setMouseAnchor, openInBrowser } from "./menus";
 import { statsStrip } from "./stats-strip";
 
 // "Running now" on Home caps at this many rows total (crashed counted toward
@@ -80,6 +80,8 @@ function runningRow(project: Project, cmd: Project["commands"][number]): Templat
   const id = `${project.id}:${cmd.id}`;
   const info = ui.statusById[id];
   const status = info?.status ?? "stopped";
+  const port = info?.port;
+  const isFlutter = cmd.kind === "flutter";
   return html`
     <div class="card run-row ${statusClass(status)}" @click=${() => openCommandInProject(project.id, id)}>
       <div class="row">
@@ -94,9 +96,13 @@ function runningRow(project: Project, cmd: Project["commands"][number]): Templat
             ${ui.showRam && info?.mem_bytes != null
               ? html`<span class="cell"><span class="k">RAM</span><span class="v">${formatBytes(info.mem_bytes)}</span></span>`
               : nothing}
-            ${ui.showPort && info?.port != null
-              ? html`<span class="cell" title=${info.fallback_port ? "not this command's usual port - its usual one was occupied at launch" : ""}>
-                  <span class="k">Port</span><span class="v">${info.port}${info.fallback_port ? html`<i class="ph ph-warning port-fallback-icon"></i>` : nothing}</span>
+            ${ui.showPort && port != null
+              ? html`<span class="cell" title=${info?.fallback_port ? "not this command's usual port - its usual one was occupied at launch" : ""}>
+                  <span class="k">Port</span>
+                  <span class="v port-value" title="Open in browser" @click=${(e: Event) => {
+                    e.stopPropagation();
+                    openInBrowser(port, isFlutter);
+                  }}>${port}${info?.fallback_port ? html`<i class="ph ph-warning port-fallback-icon"></i>` : nothing}</span>
                 </span>`
               : nothing}
           </div>

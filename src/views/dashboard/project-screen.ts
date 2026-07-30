@@ -16,7 +16,7 @@ import type { EnvVar, ProcInfo, Project, RequestLogEntry, UpstreamPreset } from 
 import { ui, act, draw } from "./state";
 import { formatBytes, formatUptime, displayName, resolveActivePreset, toggleSetMember, portUrl } from "./helpers";
 import { statusClass, roleBadge, toggleSelectCmd, resolveProjectIcon } from "./dashboard";
-import { cmdMenu, setMouseAnchor, copyPortUrl } from "./menus";
+import { cmdMenu, setMouseAnchor, copyPortUrl, openInBrowser } from "./menus";
 import { startAddPreset, startEditPreset } from "./modals";
 import { renderAnsi } from "../../shared/ansi";
 
@@ -51,6 +51,7 @@ function projectCmdRow(project: Project, cmd: Project["commands"][number]): Temp
   const status = info?.status ?? "stopped";
   const running = status === "running";
   const isFlutter = cmd.kind === "flutter";
+  const port = info?.port;
   // Only live/crashed processes have anything to select; stopped ones are inert
   // (no pointer cursor, no hover feedback, no click handler at all).
   const selectable = status !== "stopped";
@@ -78,6 +79,20 @@ function projectCmdRow(project: Project, cmd: Project["commands"][number]): Temp
         ${status === "crashed" ? html`<span class="statusword">crashed</span>` : nothing}
         ${status === "starting" ? html`<span class="statusword">starting</span>` : nothing}
         <div class="right">
+          ${running && ui.showPort && port != null
+            ? html`
+                <button
+                  class="meta-chip port-chip"
+                  title="Open :${port} in browser"
+                  @click=${(e: Event) => {
+                    e.stopPropagation();
+                    openInBrowser(port, isFlutter);
+                  }}
+                >
+                  <i class="ph ph-arrow-square-out"></i>${port}
+                </button>
+              `
+            : nothing}
           <div class="controls" @click=${(e: Event) => e.stopPropagation()}>
             ${running && isFlutter
               ? html`<button class="abtn" title="Hot restart" @click=${() => act(ipc.reloadProc(id))}>

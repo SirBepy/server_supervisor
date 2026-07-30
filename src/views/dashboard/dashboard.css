@@ -405,9 +405,9 @@
   opacity: 1;
   pointer-events: auto;
 }
-.card:hover .stats,
-.card.logs-open .stats,
-.card.cmd-menu-open .stats {
+.card:not(.run-row):hover .stats,
+.card.logs-open:not(.run-row) .stats,
+.card.cmd-menu-open:not(.run-row) .stats {
   opacity: 0;
 }
 
@@ -488,10 +488,9 @@
 /* ── Two-screen dashboard (Home / Project) ──────────────────────────
    Ported from the reviewed /mockup (mockup-cmd-visibility), renamed off its
    mk- scratch prefix. Reuses .card/.row/.right/.stats/.controls/.grow/.gname/
-   .gchev/.gbadge/.pidline/.logs as-is (unchanged above), so a hovered .card
-   still fades its .stats the same way it always has, even on rows that have
-   no .controls to reveal in their place (Home's running-now rows) - a minor
-   cosmetic quirk already present in the approved mockup, not introduced here. */
+   .gchev/.gbadge/.pidline/.logs as-is (unchanged above). Home's run-row cards
+   opt out of the hover-fade (.stats rule above): they have no .controls to
+   reveal in its place, so RAM/Port stay visible instead. */
 
 .dash-screen {
   padding: 14px 20px;

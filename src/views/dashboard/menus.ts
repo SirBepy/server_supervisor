@@ -11,7 +11,9 @@ import { startAddCommand } from "./modals";
 import { startAddProject } from "./add-project";
 import { portUrl } from "./helpers";
 
-function openInBrowser(port: number, flutter: boolean) {
+// Exported so Home's port cell and the Project screen's port chip can reuse
+// it to open the served page directly (same idiom as copyPortUrl below).
+export function openInBrowser(port: number, flutter: boolean) {
   void ipc.openPortUrl(portUrl(port), flutter);
 }
 

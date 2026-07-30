@@ -128,6 +128,15 @@
   border-color: rgba(56, 189, 248, 0.45);
 }
 
+/* Port number is clickable (opens the served page); hover feedback lives on
+   the number itself, not the row, which navigates to the project on click. */
+.port-value {
+  cursor: pointer;
+}
+.port-value:hover {
+  color: var(--accent);
+}
+
 /* ----- Home: project browser rows + group members ----- */
 
 .proj-browse-row {

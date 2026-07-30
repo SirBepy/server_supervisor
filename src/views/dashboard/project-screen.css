@@ -98,6 +98,20 @@
   background: color-mix(in srgb, var(--accent) 7%, var(--surface));
 }
 
+/* Always-visible port chip in .right, before .controls. Margin clears the
+   widest revealed control set (hot-restart+restart+stop+kebab = 4 x 28px
+   buttons + 3 x 6px gaps = 130px) so it never overlaps .controls on hover. */
+.port-chip {
+  background: none;
+  border: none;
+  padding: 0;
+  margin-right: 140px;
+  cursor: pointer;
+}
+.port-chip:hover {
+  color: var(--accent);
+}
+
 /* ----- Project screen: shared terminal/detail pane - one instance, below the
    WHOLE command block, reflecting whichever row is selected. ----- */
 
