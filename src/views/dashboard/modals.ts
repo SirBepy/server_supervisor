@@ -21,6 +21,17 @@ import { comboBox, filterDetected } from "./combobox";
 import { addProjectModal, detectInto } from "./add-project";
 import type { UpstreamPreset } from "../../types/ipc.generated";
 
+// Shared inline field-error row, used below both the command-port field and
+// the preset base-URL field.
+function fieldError(msg: string | null): TemplateResult | typeof nothing {
+  return msg
+    ? html`<div class="field-error">
+        <i class="ph ph-warning"></i>
+        <span>${msg}</span>
+      </div>`
+    : nothing;
+}
+
 // Open the add-command modal for a project, pre-loading detected commands.
 export async function startAddCommand(projectId: string, root: string) {
   const detected = await detectInto(root);
@@ -178,12 +189,7 @@ function portField(m: CmdModal): TemplateResult {
         }}
       />
     </div>
-    ${m.portError
-      ? html`<div class="field-error">
-          <i class="ph ph-warning"></i>
-          <span>${m.portError}</span>
-        </div>`
-      : nothing}
+    ${fieldError(m.portError)}
   `;
 }
 
@@ -416,15 +422,21 @@ function confirmDeleteCommandModal(
   `;
 }
 
+// Trims a required text field; returns the trimmed value, or null after
+// setting ui.error and redrawing (callers return immediately on null).
+function requireField(raw: string, errMsg: string): string | null {
+  const trimmed = raw.trim();
+  if (trimmed) return trimmed;
+  ui.error = errMsg;
+  draw();
+  return null;
+}
+
 async function confirmRenameProject() {
   if (ui.modal?.t !== "renameProject") return;
   const m = ui.modal;
-  const name = m.name.trim();
-  if (!name) {
-    ui.error = "project name is required";
-    draw();
-    return;
-  }
+  const name = requireField(m.name, "project name is required");
+  if (!name) return;
   try {
     await ipc.renameProject(m.projectId, name);
     ui.error = null;
@@ -513,12 +525,8 @@ function parseBaseUrlField(m: PresetModal): { baseUrl: string; ok: true } | { ok
 async function confirmAddPreset() {
   if (ui.modal?.t !== "addPreset") return;
   const m = ui.modal;
-  const name = m.name.trim();
-  if (!name) {
-    ui.error = "preset name is required";
-    draw();
-    return;
-  }
+  const name = requireField(m.name, "preset name is required");
+  if (!name) return;
   const parsed = parseBaseUrlField(m);
   if (!parsed.ok) {
     draw();
@@ -538,12 +546,8 @@ async function confirmAddPreset() {
 async function confirmEditPreset() {
   if (ui.modal?.t !== "editPreset") return;
   const m = ui.modal;
-  const name = m.name.trim();
-  if (!name) {
-    ui.error = "preset name is required";
-    draw();
-    return;
-  }
+  const name = requireField(m.name, "preset name is required");
+  if (!name) return;
   const parsed = parseBaseUrlField(m);
   if (!parsed.ok) {
     draw();
@@ -584,84 +588,64 @@ function presetDangerField(m: PresetModal): TemplateResult {
 }
 
 function presetUrlError(m: PresetModal): TemplateResult | typeof nothing {
-  return m.urlError
-    ? html`<div class="field-error">
-        <i class="ph ph-warning"></i>
-        <span>${m.urlError}</span>
-      </div>`
-    : nothing;
+  return fieldError(m.urlError);
+}
+
+// Shared body for the add/edit-preset modals, which differ only in title,
+// confirm callback, and primary button label.
+function presetModalBody(
+  m: PresetModal,
+  opts: { title: string; onConfirm: () => void; confirmLabel: string },
+): TemplateResult {
+  return html`
+    <div class="overlay">
+      <div class="dialog">
+        <h3>${opts.title}</h3>
+        <div class="field-row">
+          <label>Name</label>
+          <input
+            placeholder="staging"
+            .value=${m.name}
+            @input=${(e: Event) => (m.name = (e.target as HTMLInputElement).value)}
+          />
+        </div>
+        <div class="field-row">
+          <label>Base URL</label>
+          <input
+            placeholder="http://localhost:9000"
+            .value=${m.baseUrl}
+            @input=${(e: Event) => {
+              m.baseUrl = (e.target as HTMLInputElement).value;
+              m.urlError = null;
+              draw();
+            }}
+          />
+        </div>
+        ${presetUrlError(m)}
+        ${presetDangerField(m)}
+        <div class="dialog-actions">
+          <button @click=${closeModal}>Cancel</button>
+          <button class="primary" @click=${opts.onConfirm}>${opts.confirmLabel}</button>
+        </div>
+      </div>
+    </div>
+  `;
 }
 
 function addPresetModal(m: Extract<Modal, { t: "addPreset" }>): TemplateResult {
-  return html`
-    <div class="overlay">
-      <div class="dialog">
-        <h3>Add preset</h3>
-        <div class="field-row">
-          <label>Name</label>
-          <input
-            placeholder="staging"
-            .value=${m.name}
-            @input=${(e: Event) => (m.name = (e.target as HTMLInputElement).value)}
-          />
-        </div>
-        <div class="field-row">
-          <label>Base URL</label>
-          <input
-            placeholder="http://localhost:9000"
-            .value=${m.baseUrl}
-            @input=${(e: Event) => {
-              m.baseUrl = (e.target as HTMLInputElement).value;
-              m.urlError = null;
-              draw();
-            }}
-          />
-        </div>
-        ${presetUrlError(m)}
-        ${presetDangerField(m)}
-        <div class="dialog-actions">
-          <button @click=${closeModal}>Cancel</button>
-          <button class="primary" @click=${() => void confirmAddPreset()}>Add</button>
-        </div>
-      </div>
-    </div>
-  `;
+  return presetModalBody(m, {
+    title: "Add preset",
+    onConfirm: () => void confirmAddPreset(),
+    confirmLabel: "Add",
+  });
 }
 
 function editPresetModal(m: Extract<Modal, { t: "editPreset" }>): TemplateResult {
-  return html`
-    <div class="overlay">
-      <div class="dialog">
-        <h3>Edit preset</h3>
-        <div class="field-row">
-          <label>Name</label>
-          <input
-            placeholder="staging"
-            .value=${m.name}
-            @input=${(e: Event) => (m.name = (e.target as HTMLInputElement).value)}
-          />
-        </div>
-        <div class="field-row">
-          <label>Base URL</label>
-          <input
-            placeholder="http://localhost:9000"
-            .value=${m.baseUrl}
-            @input=${(e: Event) => {
-              m.baseUrl = (e.target as HTMLInputElement).value;
-              m.urlError = null;
-              draw();
-            }}
-          />
-        </div>
-        ${presetUrlError(m)}
-        ${presetDangerField(m)}
-        <div class="dialog-actions">
-          <button @click=${closeModal}>Cancel</button>
-          <button class="primary" @click=${() => void confirmEditPreset()}>Save</button>
-        </div>
-      </div>
-    </div>
-  `;
+  return presetModalBody(m, {
+    title: "Edit preset",
+    onConfirm: () => void confirmEditPreset(),
+    confirmLabel: "Save",
+  });
 }
 
 export function modalView(): TemplateResult | typeof nothing {
