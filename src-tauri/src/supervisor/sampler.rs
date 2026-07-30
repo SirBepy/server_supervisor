@@ -67,7 +67,7 @@ pub fn sample(sys: &mut System, running: &[(String, u32, Option<u16>)]) -> HashM
     let procmap = mem::snapshot(sys);
     let cpumap = cpu::snapshot(sys);
     let children = ports_detect::children_map(sys);
-    let listeners = crate::ports::listeners();
+    let listeners = crate::ports_os::listeners();
     let global: HashSet<u16> = listeners.iter().map(|(port, _)| *port).collect();
     // `Process::cpu_usage()` is normalized to one core; dividing the subtree
     // sum by core count puts it on the same 0-100 "fraction of total system

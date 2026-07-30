@@ -4,6 +4,7 @@ pub mod groups;
 pub mod icons;
 pub mod ipc;
 pub mod ports;
+pub mod ports_os;
 pub mod settings;
 pub mod state;
 pub mod supervisor;
