@@ -235,6 +235,7 @@ pub fn router(sup: Arc<Supervisor>, ports: Arc<PortRegistry>, token: String, ai_
             post(activate_preset_api),
         )
         .route("/projects/:project_id/proxy-log", get(proxy_log_api))
+        .route("/projects/:project_id/hub-port", get(hub_port_api))
         .route_layer(middleware::from_fn_with_state(state.clone(), auth))
         // /health is added after the auth layer, so it stays unauthenticated.
         .route("/health", get(health))
@@ -494,6 +495,19 @@ async fn proxy_log_api(
     Path(project_id): Path<String>,
 ) -> Json<Vec<RequestLogEntry>> {
     Json(s.sup.hub_log(&project_id))
+}
+
+async fn hub_port_api(State(s): State<ApiState>, Path(project_id): Path<String>) -> Response {
+    match s.sup.list_projects().into_iter().find(|p| p.id == project_id) {
+        Some(p) if p.presets.is_empty() => {
+            (StatusCode::NOT_FOUND, format!("no hub configured for project: {project_id}")).into_response()
+        }
+        Some(_) => match s.sup.hub_port(&project_id) {
+            Ok(port) => Json(port).into_response(),
+            Err(e) => (StatusCode::BAD_REQUEST, e).into_response(),
+        },
+        None => (StatusCode::NOT_FOUND, format!("unknown project: {project_id}")).into_response(),
+    }
 }
 
 async fn get_logs(State(s): State<ApiState>, Path(id): Path<String>) -> Response {

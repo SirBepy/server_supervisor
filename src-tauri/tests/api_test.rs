@@ -248,6 +248,57 @@ async fn command_crud_requires_token_and_round_trips() {
 }
 
 #[tokio::test]
+async fn hub_port_without_presets_is_404() {
+    let dir = tempfile::tempdir().unwrap();
+    write_procs(dir.path()); // project "test" has no presets
+    let base = spawn_api("secret", dir.path()).await;
+    let client = reqwest::Client::new();
+
+    let no_token = client
+        .get(format!("{base}/projects/test/hub-port"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(no_token.status(), 401);
+
+    let r = client
+        .get(format!("{base}/projects/test/hub-port"))
+        .bearer_auth("secret")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 404);
+}
+
+#[tokio::test]
+async fn hub_port_with_preset_returns_the_port() {
+    let dir = tempfile::tempdir().unwrap();
+    write_procs(dir.path());
+    let base = spawn_api("secret", dir.path()).await;
+    let client = reqwest::Client::new();
+
+    let added = client
+        .post(format!("{base}/projects/test/presets"))
+        .bearer_auth("secret")
+        .json(&serde_json::json!({ "name": "local", "base_url": "http://127.0.0.1:3000" }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(added.status(), 200);
+
+    let port: u16 = client
+        .get(format!("{base}/projects/test/hub-port"))
+        .bearer_auth("secret")
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert!((42000..49000).contains(&port));
+}
+
+#[tokio::test]
 async fn run_registers_starts_requires_token_and_is_idempotent() {
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(
