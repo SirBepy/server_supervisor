@@ -64,6 +64,71 @@ pub fn ensure_crypto_provider() {
     });
 }
 
+/// Spawn `app` on `addr` inside its own OS thread hosting a current-thread
+/// tokio runtime, so a synchronous caller can start a server with no ambient
+/// runtime. Returns once the listener is bound, so a bind error surfaces
+/// synchronously; `log_target` tags the "serve ended" error line so it's
+/// traceable to its caller (`proxy` or `proxy_hub`).
+pub(crate) fn spawn_loopback_server(
+    addr: std::net::SocketAddr,
+    app: Router,
+    log_target: &'static str,
+) -> std::io::Result<(oneshot::Sender<()>, std::thread::JoinHandle<()>)> {
+    let (bound_tx, bound_rx) = mpsc::channel::<std::io::Result<()>>();
+    let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
+
+    let handle = std::thread::spawn(move || {
+        let rt = match tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+        {
+            Ok(rt) => rt,
+            Err(e) => {
+                let _ = bound_tx.send(Err(e));
+                return;
+            }
+        };
+        rt.block_on(async move {
+            let listener = match tokio::net::TcpListener::bind(addr).await {
+                Ok(l) => l,
+                Err(e) => {
+                    let _ = bound_tx.send(Err(e));
+                    return;
+                }
+            };
+            let _ = bound_tx.send(Ok(()));
+
+            // Race serve against shutdown rather than a graceful drain: a
+            // held-open stream (SSE, long-poll) could block a drain
+            // indefinitely, and stop()'s join can't wedge while callers
+            // hold the procs/projects lock.
+            tokio::select! {
+                res = axum::serve(listener, app).into_future() => {
+                    if let Err(e) = res {
+                        log::error!("{log_target}: serve ended with error: {e}");
+                    }
+                }
+                _ = shutdown_rx => {}
+            }
+        });
+    });
+
+    match bound_rx.recv() {
+        Ok(Ok(())) => Ok((shutdown_tx, handle)),
+        Ok(Err(e)) => {
+            let _ = handle.join();
+            Err(e)
+        }
+        Err(_) => {
+            let _ = handle.join();
+            Err(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                format!("{log_target} thread exited before binding"),
+            ))
+        }
+    }
+}
+
 /// A running reverse proxy. Dropping it (or calling `stop`) signals graceful
 /// shutdown and joins the proxy thread.
 pub struct ProxyTask {
@@ -106,80 +171,22 @@ pub fn spawn(
     reload_tx: broadcast::Sender<()>,
 ) -> std::io::Result<ProxyTask> {
     ensure_crypto_provider();
-    let (bound_tx, bound_rx) = mpsc::channel::<std::io::Result<()>>();
-    let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
+    let state = ProxyState {
+        internal_port,
+        reload_tx,
+        client: reqwest::Client::new(),
+    };
+    let app = Router::new()
+        .route("/__supervisor_reload", get(sse_handler))
+        .fallback(proxy_handler)
+        .with_state(state);
+    let addr = std::net::SocketAddr::from((std::net::Ipv4Addr::LOCALHOST, public_port));
 
-    let handle = std::thread::spawn(move || {
-        let rt = match tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-        {
-            Ok(rt) => rt,
-            Err(e) => {
-                let _ = bound_tx.send(Err(e));
-                return;
-            }
-        };
-        rt.block_on(async move {
-            let listener =
-                match tokio::net::TcpListener::bind(("127.0.0.1", public_port)).await {
-                    Ok(l) => l,
-                    Err(e) => {
-                        let _ = bound_tx.send(Err(e));
-                        return;
-                    }
-                };
-            // Bound OK: report success, then serve until shutdown.
-            let _ = bound_tx.send(Ok(()));
-
-            let state = ProxyState {
-                internal_port,
-                reload_tx,
-                client: reqwest::Client::new(),
-            };
-            let app = Router::new()
-                .route("/__supervisor_reload", get(sse_handler))
-                .fallback(proxy_handler)
-                .with_state(state);
-
-            // Race serve against the shutdown signal instead of a graceful drain.
-            // The SSE endpoint is a long-lived KeepAlive stream held open by every
-            // browser tab, so a graceful shutdown could block indefinitely (and
-            // ProxyTask::stop's join would wedge the supervisor, which holds the
-            // procs lock across it). On shutdown we drop everything immediately:
-            // block_on returns, the current-thread runtime is dropped, and all
-            // tasks (open SSE streams included) are aborted at once - so join is
-            // near-instant.
-            tokio::select! {
-                res = axum::serve(listener, app).into_future() => {
-                    if let Err(e) = res {
-                        log::error!("proxy: serve ended with error: {e}");
-                    }
-                }
-                _ = shutdown_rx => {}
-            }
-        });
-    });
-
-    // Wait for the bind result. If the thread died before reporting, treat it as
-    // a generic bind failure.
-    match bound_rx.recv() {
-        Ok(Ok(())) => Ok(ProxyTask {
-            shutdown: Some(shutdown_tx),
-            handle: Some(handle),
-        }),
-        Ok(Err(e)) => {
-            let _ = handle.join();
-            Err(e)
-        }
-        Err(_) => {
-            let _ = handle.join();
-            Err(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                "proxy thread exited before binding",
-            ))
-        }
-    }
+    let (shutdown_tx, handle) = spawn_loopback_server(addr, app, "proxy")?;
+    Ok(ProxyTask {
+        shutdown: Some(shutdown_tx),
+        handle: Some(handle),
+    })
 }
 
 /// SSE endpoint: emit a "reload" event each time the daemon signals a finished
@@ -193,26 +200,24 @@ async fn sse_handler(
     Sse::new(stream).keep_alive(KeepAlive::default())
 }
 
-/// Reverse-proxy every other request to the internal flutter web-server,
-/// injecting the live-reload script into HTML responses.
-async fn proxy_handler(State(state): State<ProxyState>, req: Request) -> Response {
-    let path_and_query = req
-        .uri()
+/// Cap on a proxied request/response body. Generous: proxied dev assets and
+/// API payloads are small, this just guards against a runaway upstream.
+const MAX_BODY_BYTES: usize = 64 * 1024 * 1024;
+
+/// The inbound request's path plus query string, verbatim.
+pub(crate) fn path_and_query(req: &Request) -> String {
+    req.uri()
         .path_and_query()
         .map(|pq| pq.as_str().to_string())
-        .unwrap_or_else(|| req.uri().path().to_string());
-    let url = format!(
-        "http://127.0.0.1:{}{}",
-        state.internal_port, path_and_query
-    );
+        .unwrap_or_else(|| req.uri().path().to_string())
+}
 
-    let method = req.method().clone();
-
-    // Copy request headers minus hop-by-hop, reconstructing into reqwest's
-    // HeaderMap by parsing names/values (avoids an http-crate version mismatch
-    // between axum and reqwest).
-    let mut req_headers = reqwest::header::HeaderMap::new();
-    for (name, value) in req.headers().iter() {
+/// Copy `headers` into a fresh reqwest `HeaderMap`, skipping hop-by-hop
+/// headers and reconstructing by parsing names/values (avoids an http-crate
+/// version mismatch between axum and reqwest).
+pub(crate) fn to_upstream_headers(headers: &axum::http::HeaderMap) -> reqwest::header::HeaderMap {
+    let mut out = reqwest::header::HeaderMap::new();
+    for (name, value) in headers.iter() {
         if is_hop_by_hop(name.as_str()) {
             continue;
         }
@@ -220,17 +225,64 @@ async fn proxy_handler(State(state): State<ProxyState>, req: Request) -> Respons
             reqwest::header::HeaderName::from_bytes(name.as_str().as_bytes()),
             reqwest::header::HeaderValue::from_bytes(value.as_bytes()),
         ) {
-            req_headers.insert(n, v);
+            out.insert(n, v);
         }
     }
+    out
+}
 
-    // Buffer the request body (dev assets are small; 64MB is generous).
-    let body_bytes = match axum::body::to_bytes(req.into_body(), 64 * 1024 * 1024).await {
+/// Convert an axum request method to reqwest's method type.
+pub(crate) fn to_reqwest_method(method: &axum::http::Method) -> Result<reqwest::Method, ()> {
+    reqwest::Method::from_bytes(method.as_str().as_bytes()).map_err(|_| ())
+}
+
+/// Buffer a request/response body up to `MAX_BODY_BYTES`.
+pub(crate) async fn buffer_body(body: Body) -> Result<axum::body::Bytes, axum::Error> {
+    axum::body::to_bytes(body, MAX_BODY_BYTES).await
+}
+
+/// Copy `headers` onto `builder`, skipping hop-by-hop headers and any name
+/// for which `skip_extra` returns true (e.g. `set-cookie` when it needs
+/// separate per-value rewriting, or a stale `content-length` after the body
+/// changed).
+pub(crate) fn copy_response_headers(
+    mut builder: axum::http::response::Builder,
+    headers: &reqwest::header::HeaderMap,
+    skip_extra: impl Fn(&str) -> bool,
+) -> axum::http::response::Builder {
+    for (name, value) in headers.iter() {
+        let n = name.as_str();
+        if is_hop_by_hop(n) || skip_extra(n) {
+            continue;
+        }
+        if let (Ok(hn), Ok(hv)) = (
+            axum::http::HeaderName::from_bytes(n.as_bytes()),
+            axum::http::HeaderValue::from_bytes(value.as_bytes()),
+        ) {
+            builder = builder.header(hn, hv);
+        }
+    }
+    builder
+}
+
+/// Reverse-proxy every other request to the internal flutter web-server,
+/// injecting the live-reload script into HTML responses.
+async fn proxy_handler(State(state): State<ProxyState>, req: Request) -> Response {
+    let path_and_query = path_and_query(&req);
+    let url = format!(
+        "http://127.0.0.1:{}{}",
+        state.internal_port, path_and_query
+    );
+
+    let method = req.method().clone();
+    let req_headers = to_upstream_headers(req.headers());
+
+    let body_bytes = match buffer_body(req.into_body()).await {
         Ok(b) => b,
         Err(_) => return (axum::http::StatusCode::BAD_GATEWAY, "proxy: bad request body").into_response(),
     };
 
-    let method = match reqwest::Method::from_bytes(method.as_str().as_bytes()) {
+    let method = match to_reqwest_method(&method) {
         Ok(m) => m,
         Err(_) => return (axum::http::StatusCode::BAD_GATEWAY, "proxy: bad method").into_response(),
     };
@@ -283,38 +335,16 @@ async fn proxy_handler(State(state): State<ProxyState>, req: Request) -> Respons
         // fresh content-length below.
         let injected = inject_reload_script(&String::from_utf8_lossy(&body));
         let out = injected.into_bytes();
-        for (name, value) in upstream_headers.iter() {
-            let n = name.as_str();
-            if is_hop_by_hop(n)
-                || n.eq_ignore_ascii_case("content-length")
-                || n.eq_ignore_ascii_case("content-encoding")
-            {
-                continue;
-            }
-            if let (Ok(hn), Ok(hv)) = (
-                axum::http::HeaderName::from_bytes(n.as_bytes()),
-                axum::http::HeaderValue::from_bytes(value.as_bytes()),
-            ) {
-                builder = builder.header(hn, hv);
-            }
-        }
+        builder = copy_response_headers(builder, &upstream_headers, |n| {
+            n.eq_ignore_ascii_case("content-length") || n.eq_ignore_ascii_case("content-encoding")
+        });
         builder = builder.header(axum::http::header::CONTENT_LENGTH, out.len());
         builder
             .body(Body::from(out))
             .unwrap_or_else(|_| axum::http::StatusCode::BAD_GATEWAY.into_response())
     } else {
         // Pass through unchanged (non-HTML, or encoded HTML we won't touch).
-        for (name, value) in upstream_headers.iter() {
-            if is_hop_by_hop(name.as_str()) {
-                continue;
-            }
-            if let (Ok(hn), Ok(hv)) = (
-                axum::http::HeaderName::from_bytes(name.as_str().as_bytes()),
-                axum::http::HeaderValue::from_bytes(value.as_bytes()),
-            ) {
-                builder = builder.header(hn, hv);
-            }
-        }
+        builder = copy_response_headers(builder, &upstream_headers, |_| false);
         builder
             .body(Body::from(body.to_vec()))
             .unwrap_or_else(|_| axum::http::StatusCode::BAD_GATEWAY.into_response())

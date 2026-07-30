@@ -42,7 +42,11 @@
 
 use super::config;
 use super::crud;
-use super::proxy::{ensure_crypto_provider, is_hop_by_hop};
+use super::proc::now_ms;
+use super::proxy::{
+    buffer_body, copy_response_headers, ensure_crypto_provider, path_and_query,
+    spawn_loopback_server, to_reqwest_method, to_upstream_headers,
+};
 use super::registry::Supervisor;
 use crate::types::{Project, UpstreamPreset};
 use axum::body::Body;
@@ -52,8 +56,6 @@ use axum::response::{IntoResponse, Response};
 use axum::Router;
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
-use std::future::IntoFuture;
-use std::sync::mpsc;
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::Instant;
 use tokio::sync::oneshot;
@@ -168,80 +170,20 @@ fn loopback_addr(port: u16) -> std::net::SocketAddr {
 /// surfaces synchronously.
 pub fn spawn(port: u16, initial: &UpstreamPreset) -> std::io::Result<ProxyHub> {
     ensure_crypto_provider();
-    let (bound_tx, bound_rx) = mpsc::channel::<std::io::Result<()>>();
-    let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
-
     let shared = Arc::new(HubShared {
         active: RwLock::new(ActiveUpstream::from_preset(initial)),
         log: Mutex::new(VecDeque::with_capacity(REQUEST_LOG_CAP)),
         client: reqwest::Client::new(),
     });
-    let thread_shared = shared.clone();
+    let state = HubState { inner: shared.clone() };
+    let app = Router::new().fallback(hub_handler).with_state(state);
 
-    let handle = std::thread::spawn(move || {
-        let rt = match tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-        {
-            Ok(rt) => rt,
-            Err(e) => {
-                let _ = bound_tx.send(Err(e));
-                return;
-            }
-        };
-        rt.block_on(async move {
-            let listener = match tokio::net::TcpListener::bind(loopback_addr(port)).await {
-                Ok(l) => l,
-                Err(e) => {
-                    let _ = bound_tx.send(Err(e));
-                    return;
-                }
-            };
-            let _ = bound_tx.send(Ok(()));
-
-            let state = HubState { inner: thread_shared };
-            let app = Router::new().fallback(hub_handler).with_state(state);
-
-            // Same rationale as `proxy::spawn`: race serve against shutdown
-            // rather than a graceful drain, so `ProxyHub::stop`'s join can't
-            // wedge the supervisor (which may hold the procs/projects lock
-            // across it) on an in-flight long-poll request.
-            tokio::select! {
-                res = axum::serve(listener, app).into_future() => {
-                    if let Err(e) = res {
-                        log::error!("proxy_hub: serve ended with error: {e}");
-                    }
-                }
-                _ = shutdown_rx => {}
-            }
-        });
-    });
-
-    match bound_rx.recv() {
-        Ok(Ok(())) => Ok(ProxyHub {
-            shutdown: Some(shutdown_tx),
-            handle: Some(handle),
-            shared,
-        }),
-        Ok(Err(e)) => {
-            let _ = handle.join();
-            Err(e)
-        }
-        Err(_) => {
-            let _ = handle.join();
-            Err(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                "proxy_hub thread exited before binding",
-            ))
-        }
-    }
-}
-
-fn now_ms() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_millis() as u64)
-        .unwrap_or(0)
+    let (shutdown_tx, handle) = spawn_loopback_server(loopback_addr(port), app, "proxy_hub")?;
+    Ok(ProxyHub {
+        shutdown: Some(shutdown_tx),
+        handle: Some(handle),
+        shared,
+    })
 }
 
 /// True if `origin` (a full `scheme://host[:port]` value from the `Origin`
@@ -341,11 +283,7 @@ fn record(state: &HubState, method: &Method, path: &str, status: u16, start: Ins
 async fn hub_handler(State(state): State<HubState>, req: Request) -> Response {
     let start = Instant::now();
     let method = req.method().clone();
-    let path_and_query = req
-        .uri()
-        .path_and_query()
-        .map(|pq| pq.as_str().to_string())
-        .unwrap_or_else(|| req.uri().path().to_string());
+    let path_and_query = path_and_query(&req);
     let req_headers_axum = req.headers().clone();
 
     // CORS preflight: answer directly, never forwarded upstream.
@@ -376,25 +314,14 @@ async fn hub_handler(State(state): State<HubState>, req: Request) -> Response {
     let active = state.inner.active.read().unwrap().clone();
     let url = format!("{}{}", active.base_url, path_and_query);
 
-    let mut req_headers = reqwest::header::HeaderMap::new();
-    for (name, value) in req_headers_axum.iter() {
-        if is_hop_by_hop(name.as_str()) {
-            continue;
-        }
-        if let (Ok(n), Ok(v)) = (
-            reqwest::header::HeaderName::from_bytes(name.as_str().as_bytes()),
-            reqwest::header::HeaderValue::from_bytes(value.as_bytes()),
-        ) {
-            req_headers.insert(n, v);
-        }
-    }
+    let mut req_headers = to_upstream_headers(&req_headers_axum);
     if let Some(host) = upstream_host_header(&active.base_url) {
         if let Ok(v) = reqwest::header::HeaderValue::from_str(&host) {
             req_headers.insert(reqwest::header::HOST, v);
         }
     }
 
-    let reqwest_method = match reqwest::Method::from_bytes(method.as_str().as_bytes()) {
+    let reqwest_method = match to_reqwest_method(&method) {
         Ok(m) => m,
         Err(_) => {
             record(&state, &method, &path_and_query, StatusCode::BAD_GATEWAY.as_u16(), start);
@@ -402,7 +329,7 @@ async fn hub_handler(State(state): State<HubState>, req: Request) -> Response {
         }
     };
 
-    let body_bytes = match axum::body::to_bytes(req.into_body(), 64 * 1024 * 1024).await {
+    let body_bytes = match buffer_body(req.into_body()).await {
         Ok(b) => b,
         Err(_) => {
             record(&state, &method, &path_and_query, StatusCode::BAD_GATEWAY.as_u16(), start);
@@ -447,18 +374,7 @@ async fn hub_handler(State(state): State<HubState>, req: Request) -> Response {
 
     let mut builder = axum::http::Response::builder()
         .status(StatusCode::from_u16(status.as_u16()).unwrap_or(StatusCode::BAD_GATEWAY));
-    for (name, value) in upstream_headers.iter() {
-        let n = name.as_str();
-        if is_hop_by_hop(n) || n.eq_ignore_ascii_case("set-cookie") {
-            continue;
-        }
-        if let (Ok(hn), Ok(hv)) = (
-            axum::http::HeaderName::from_bytes(n.as_bytes()),
-            axum::http::HeaderValue::from_bytes(value.as_bytes()),
-        ) {
-            builder = builder.header(hn, hv);
-        }
-    }
+    builder = copy_response_headers(builder, &upstream_headers, |n| n.eq_ignore_ascii_case("set-cookie"));
     // Set-Cookie needs per-value Domain rewriting (see module docs), and
     // there can be several - `get_all` rather than the single-value getter.
     for value in upstream_headers.get_all(reqwest::header::SET_COOKIE) {
