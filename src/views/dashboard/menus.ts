@@ -9,15 +9,16 @@ import * as ipc from "../../shared/ipc";
 import { ui, act, draw } from "./state";
 import { startAddCommand } from "./modals";
 import { startAddProject } from "./add-project";
+import { portUrl } from "./helpers";
 
 function openInBrowser(port: number, flutter: boolean) {
-  void ipc.openPortUrl(`http://localhost:${port}`, flutter);
+  void ipc.openPortUrl(portUrl(port), flutter);
 }
 
 // Exported so the Project screen's proxy hub section can reuse it for the
 // hub's own copyable address (same clipboard idiom, different port source).
 export function copyPortUrl(port: number) {
-  void navigator.clipboard?.writeText(`http://localhost:${port}`);
+  void navigator.clipboard?.writeText(portUrl(port));
 }
 
 // Store the anchor rect for the portal from a button click event.

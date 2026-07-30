@@ -14,7 +14,7 @@ import { html, nothing, type TemplateResult } from "lit-html";
 import * as ipc from "../../shared/ipc";
 import type { EnvVar, ProcInfo, Project, RequestLogEntry, UpstreamPreset } from "../../types/ipc.generated";
 import { ui, act, draw } from "./state";
-import { formatBytes, formatUptime, displayName, resolveActivePreset, toggleSetMember } from "./helpers";
+import { formatBytes, formatUptime, displayName, resolveActivePreset, toggleSetMember, portUrl } from "./helpers";
 import { statusClass, roleBadge, toggleSelectCmd, resolveProjectIcon } from "./dashboard";
 import { cmdMenu, setMouseAnchor, copyPortUrl } from "./menus";
 import { startAddPreset, startEditPreset } from "./modals";
@@ -338,7 +338,7 @@ function proxySection(project: Project): TemplateResult {
             ? html`<span class="muted">unavailable</span>`
             : html`
                 <button class="proxy-hub-url" title="Copy to clipboard" @click=${() => copyPortUrl(port)}>
-                  <code>http://localhost:${port}</code>
+                  <code>${portUrl(port)}</code>
                   <i class="ph ph-copy"></i>
                 </button>
               `}

@@ -157,6 +157,10 @@ export function toggleSetMember(set: Set<string>, id: string): void {
   else set.add(id);
 }
 
+export function portUrl(port: number): string {
+  return `http://localhost:${port}`;
+}
+
 // The preset actually serving traffic right now, mirroring the backend's own
 // fallback rule (see `Project.active_preset`'s doc comment): the preset whose
 // id matches `active_preset`, or the first preset in the list if that id is
