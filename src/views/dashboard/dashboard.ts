@@ -9,6 +9,7 @@
 import { html, render, nothing, type TemplateResult } from "lit-html";
 import "./dashboard.css";
 import "./home-screen.css";
+import "./stats-strip.css";
 import "./project-screen.css";
 import * as ipc from "../../shared/ipc";
 import type { Project, Role } from "../../types/ipc.generated";
