@@ -78,7 +78,7 @@ impl Supervisor {
         }
         drop(map);
         // Stop the project's reverse-proxy hub listener (if any) before
-        // reclaiming its port - see `proxy_hub::Supervisor::stop_hub`.
+        // reclaiming its port - see `hub_lifecycle::Supervisor::stop_hub`.
         self.stop_hub(&removed.id);
         // Reclaim the whole port block (and any per-command overrides) so a
         // future project can reuse it instead of it staying reserved forever.
