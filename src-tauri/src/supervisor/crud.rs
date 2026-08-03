@@ -5,7 +5,7 @@
 
 use super::config;
 use super::proc::ManagedProc;
-use super::registry::Supervisor;
+use super::registry::{begin_stop_locked, Supervisor};
 use crate::types::{unit_id, Command, ProcInfo, ProcKind, ProcSpec, Project, Role};
 
 impl Supervisor {
@@ -85,13 +85,20 @@ impl Supervisor {
         config::save(&self.data_dir, &projects);
         drop(projects);
 
-        let mut map = self.procs.lock().unwrap();
-        for c in &removed.commands {
-            if let Some(mut proc) = map.remove(&unit_id(&removed.id, &c.id)) {
-                proc.stop();
-            }
+        // Two-phase like `Supervisor::stop`: run the kills after dropping the
+        // lock. `release_project` below reclaims ports regardless.
+        let handles: Vec<super::proc::StopHandle> = {
+            let mut map = self.procs.lock().unwrap();
+            removed
+                .commands
+                .iter()
+                .filter_map(|c| map.remove(&unit_id(&removed.id, &c.id)))
+                .map(|mut proc| begin_stop_locked(&mut proc).2)
+                .collect()
+        };
+        for handle in handles {
+            handle.finish();
         }
-        drop(map);
         // Stop the project's reverse-proxy hub listener (if any) before
         // reclaiming its port - see `hub_lifecycle::Supervisor::stop_hub`.
         self.stop_hub(&removed.id);
@@ -387,7 +394,9 @@ impl Supervisor {
 
         let mut map = self.procs.lock().unwrap();
         if let Some(mut proc) = map.remove(&unit_id(project_id, command_id)) {
-            proc.stop();
+            // Already guaranteed stopped (checked above), so this is a no-op
+            // cleanup - fine to finish() inline without releasing the lock.
+            proc.begin_stop().finish();
         }
         drop(map);
         // Reclaim this command's port slot - or, if the project emptied out
