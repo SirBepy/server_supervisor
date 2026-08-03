@@ -8,7 +8,7 @@ use tauri::{
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
     AppHandle, Manager,
 };
-use tauri_plugin_dialog::{DialogExt, MessageDialogButtons};
+use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogResult};
 
 pub fn setup(app: &AppHandle) -> tauri::Result<()> {
     let menu = MenuBuilder::new(app)
@@ -65,20 +65,9 @@ fn running_count(app: &AppHandle) -> usize {
         .unwrap_or(0)
 }
 
-/// Confirm a quit. If processes are running, ask whether to stop them. Two
-/// outcomes from the native dialog (it returns a bool, so no separate Cancel;
-/// the user re-opens the app if they did not mean to quit - servers are still
-/// alive. A true 3-way Cancel would need a custom webview modal; deferred):
-///   - first button "Stop all & quit"  -> kill_on_exit = true
-///   - second button "Leave running & quit" / dismiss -> kill_on_exit stays false
-///
-/// `blocking_show()` MUST NOT run on the main thread (the crate docstring and the
-/// plugin's own example wrap it in `std::thread::spawn` for exactly this reason).
-/// `request_quit` is called from the tray menu event and the `quit_app` IPC, both
-/// on the UI thread - so it spawns a worker that shows the dialog, sets the flags,
-/// and calls `exit(0)`, and returns immediately. The native MessageDialog is a
-/// top-level OS modal: it shows correctly even with the app in the tray and no
-/// visible window (the normal quit-from-tray case).
+/// Confirm a quit via a real 3-way dialog. `rfd` reports Cancel, the window's
+/// own X, and Escape all as `MessageDialogResult::Cancel` (distinct from
+/// either `Custom` label) - the one branch below that must abort the quit.
 pub fn request_quit(app: &AppHandle) {
     let n = running_count(app);
     if n == 0 {
@@ -90,19 +79,27 @@ pub fn request_quit(app: &AppHandle) {
     }
     let handle = app.clone();
     std::thread::spawn(move || {
-        let stop = handle
+        const STOP_AND_QUIT: &str = "Stop all & quit";
+        const LEAVE_AND_QUIT: &str = "Leave running & quit";
+        let result = handle
             .dialog()
             .message(format!(
                 "{n} process(es) are running.\n\nStop them before quitting, or leave them running (re-adopted next launch)?"
             ))
             .title("Quit Server Supervisor")
-            .buttons(MessageDialogButtons::OkCancelCustom(
-                "Stop all & quit".into(),
-                "Leave running & quit".into(),
+            .buttons(MessageDialogButtons::YesNoCancelCustom(
+                STOP_AND_QUIT.into(),
+                LEAVE_AND_QUIT.into(),
+                "Cancel".into(),
             ))
-            .blocking_show();
+            .blocking_show_with_result();
+        let kill_on_exit = match result {
+            MessageDialogResult::Custom(s) if s == STOP_AND_QUIT => true,
+            MessageDialogResult::Custom(s) if s == LEAVE_AND_QUIT => false,
+            _ => return,
+        };
         if let Some(s) = handle.try_state::<AppState>() {
-            s.kill_on_exit.store(stop, Ordering::SeqCst);
+            s.kill_on_exit.store(kill_on_exit, Ordering::SeqCst);
             s.should_quit.store(true, Ordering::SeqCst);
         }
         handle.exit(0);
