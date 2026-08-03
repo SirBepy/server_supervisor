@@ -370,25 +370,43 @@ function cmdMenuContent(
   };
   return html`
     ${live
-      ? // Restart/Stop live as inline buttons on the Project screen row now, so
-        // this menu only carries the browser-link actions while live. Empty
-        // (no menu content at all) for a live command with no port yet.
-        port != null
-        ? html`
-            <button
-              class="accent"
-              @click=${() => {
-                close();
-                openInBrowser(port, isFlutter);
-              }}
-            >
-              <i class="ph ph-globe-simple"></i> Open :${port} in browser
-            </button>
-            <button @click=${() => { close(); copyPortUrl(port); }}>
-              <i class="ph ph-copy"></i> Copy URL
-            </button>
-          `
-        : nothing
+      ? // Restart/Stop live as inline buttons on the Project screen row too,
+        // but right-clicking a row (this menu) needs them as well - a
+        // right-click "Stop" was the whole point of adding this branch.
+        html`
+          ${port != null
+            ? html`
+                <button
+                  class="accent"
+                  @click=${() => {
+                    close();
+                    openInBrowser(port, isFlutter);
+                  }}
+                >
+                  <i class="ph ph-globe-simple"></i> Open :${port} in browser
+                </button>
+                <button @click=${() => { close(); copyPortUrl(port); }}>
+                  <i class="ph ph-copy"></i> Copy URL
+                </button>
+              `
+            : nothing}
+          <button
+            @click=${() => {
+              close();
+              void act(ipc.restartProc(id));
+            }}
+          >
+            <i class="ph ph-arrow-clockwise"></i> Restart
+          </button>
+          <button
+            @click=${() => {
+              close();
+              void act(ipc.stopProc(id));
+            }}
+          >
+            <i class="ph ph-stop"></i> Stop
+          </button>
+        `
       : html`
           <button
             @click=${() => {
