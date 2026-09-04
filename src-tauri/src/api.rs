@@ -11,7 +11,7 @@
 use crate::ports::{PortEntry, PortRegistry};
 use crate::supervisor::proxy_hub::RequestLogEntry;
 use crate::supervisor::Supervisor;
-use crate::types::{Command, ProcInfo, ProcKind};
+use crate::types::{Command, ProcInfo, ProcKind, Project};
 use axum::{
     extract::{Path, Request, State},
     http::{header, HeaderMap, StatusCode},
@@ -458,10 +458,21 @@ async fn reload_proc(State(s): State<ApiState>, Path(id): Path<String>) -> Respo
 
 // --- reverse-proxy hub handlers ---
 
+/// Look up a project by id, or the shared 404 response every `:project_id`
+/// handler below needs when it is absent.
+fn find_project(state: &ApiState, project_id: &str) -> Result<Project, Response> {
+    state
+        .sup
+        .list_projects()
+        .into_iter()
+        .find(|p| p.id == project_id)
+        .ok_or_else(|| (StatusCode::NOT_FOUND, format!("unknown project: {project_id}")).into_response())
+}
+
 async fn list_presets_api(State(s): State<ApiState>, Path(project_id): Path<String>) -> Response {
-    match s.sup.list_projects().into_iter().find(|p| p.id == project_id) {
-        Some(p) => Json(p.presets).into_response(),
-        None => (StatusCode::NOT_FOUND, format!("unknown project: {project_id}")).into_response(),
+    match find_project(&s, &project_id) {
+        Ok(p) => Json(p.presets).into_response(),
+        Err(r) => r,
     }
 }
 
@@ -498,15 +509,16 @@ async fn proxy_log_api(
 }
 
 async fn hub_port_api(State(s): State<ApiState>, Path(project_id): Path<String>) -> Response {
-    match s.sup.list_projects().into_iter().find(|p| p.id == project_id) {
-        Some(p) if p.presets.is_empty() => {
-            (StatusCode::NOT_FOUND, format!("no hub configured for project: {project_id}")).into_response()
-        }
-        Some(_) => match s.sup.hub_port(&project_id) {
-            Ok(port) => Json(port).into_response(),
-            Err(e) => (StatusCode::BAD_REQUEST, e).into_response(),
-        },
-        None => (StatusCode::NOT_FOUND, format!("unknown project: {project_id}")).into_response(),
+    let p = match find_project(&s, &project_id) {
+        Ok(p) => p,
+        Err(r) => return r,
+    };
+    if p.presets.is_empty() {
+        return (StatusCode::NOT_FOUND, format!("no hub configured for project: {project_id}")).into_response();
+    }
+    match s.sup.hub_port(&project_id) {
+        Ok(port) => Json(port).into_response(),
+        Err(e) => (StatusCode::BAD_REQUEST, e).into_response(),
     }
 }
 
