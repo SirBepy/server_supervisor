@@ -17,7 +17,7 @@ import { ui, act, draw } from "./state";
 import { formatBytes, formatUptime, displayName, resolveActivePreset, toggleSetMember, portUrl } from "./helpers";
 import { statusClass, roleBadge, toggleSelectCmd, resolveProjectIcon } from "./dashboard";
 import { cmdMenu, setMouseAnchor, copyPortUrl, openInBrowser } from "./menus";
-import { startAddPreset, startEditPreset } from "./modals";
+import { startAddPreset, startEditPreset } from "./preset-modals";
 import { renderAnsi } from "../../shared/ansi";
 
 // The project's icon slot, large (Project screen detail header) size.

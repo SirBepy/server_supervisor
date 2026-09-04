@@ -1,6 +1,8 @@
 // Pure string helpers shared by the dashboard view modules. No state, no IPC.
 
+import { html, nothing, type TemplateResult } from "lit-html";
 import type { Project, ProcInfo, UpstreamPreset } from "../../types/ipc.generated";
+import { ui, draw } from "./state";
 
 // Last path segment, ignoring trailing slashes.
 export function basename(p: string): string {
@@ -170,4 +172,25 @@ export function portUrl(port: number): string {
 export function resolveActivePreset(project: Project): UpstreamPreset | null {
   if (project.presets.length === 0) return null;
   return project.presets.find((p) => p.id === project.active_preset) ?? project.presets[0];
+}
+
+// Shared inline field-error row, used below both the command-port field and
+// the preset base-URL field.
+export function fieldError(msg: string | null): TemplateResult | typeof nothing {
+  return msg
+    ? html`<div class="field-error">
+        <i class="ph ph-warning"></i>
+        <span>${msg}</span>
+      </div>`
+    : nothing;
+}
+
+// Trims a required text field; returns the trimmed value, or null after
+// setting ui.error and redrawing (callers return immediately on null).
+export function requireField(raw: string, errMsg: string): string | null {
+  const trimmed = raw.trim();
+  if (trimmed) return trimmed;
+  ui.error = errMsg;
+  draw();
+  return null;
 }
