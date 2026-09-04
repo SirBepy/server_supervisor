@@ -67,8 +67,7 @@ pub fn ensure_crypto_provider() {
 /// Spawn `app` on `addr` inside its own OS thread hosting a current-thread
 /// tokio runtime, so a synchronous caller can start a server with no ambient
 /// runtime. Returns once the listener is bound, so a bind error surfaces
-/// synchronously; `log_target` tags the "serve ended" error line so it's
-/// traceable to its caller (`proxy` or `proxy_hub`).
+/// synchronously.
 pub(crate) fn spawn_loopback_server(
     addr: std::net::SocketAddr,
     app: Router,

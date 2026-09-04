@@ -250,11 +250,10 @@ pub struct Project {
     /// in `presets`, falls back to the first preset in the list.
     #[serde(default)]
     pub active_preset: Option<String>,
-    /// True for a project registered from a throwaway root (agent worktree,
-    /// `.for_bepy`/`.claude` scratch dir, OS temp, or a git linked worktree).
-    /// Never written to `projects.json` - see `supervisor::config::save` -
-    /// only to the side `transient_projects.json`, so a still-running one
-    /// survives a restart without polluting the permanent project list.
+    /// True for a project registered from a throwaway root (see
+    /// `supervisor::transient`). Never written to `projects.json`, only to the
+    /// side `transient_projects.json`, so a still-running one survives a
+    /// restart without polluting the permanent project list.
     #[serde(default)]
     pub transient: bool,
     /// Branch name, else the worktree/scratch dir name. Computed once at
