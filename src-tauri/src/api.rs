@@ -8,10 +8,12 @@
 //! (define-and-run), so loopback-only binding plus the bearer token matter
 //! doubly here.
 
+mod groups;
+mod presets;
+
 use crate::ports::{PortEntry, PortRegistry};
-use crate::supervisor::proxy_hub::RequestLogEntry;
 use crate::supervisor::Supervisor;
-use crate::types::{Command, ProcInfo, ProcKind, Project};
+use crate::types::{Command, ProcInfo, ProcKind};
 use axum::{
     extract::{Path, Request, State},
     http::{header, HeaderMap, StatusCode},
@@ -20,6 +22,8 @@ use axum::{
     routing::{delete, get, patch, post, put},
     Json, Router,
 };
+use groups::{create_group_api, delete_group_api, list_groups_api, set_project_group_api, update_group_api};
+use presets::{activate_preset_api, add_preset_api, hub_port_api, list_presets_api, proxy_log_api, remove_preset_api};
 use serde::Deserialize;
 use std::path::Path as FsPath;
 use std::sync::Arc;
@@ -91,15 +95,6 @@ struct AddCommandBody {
     env: Option<String>,
 }
 
-/// Body for `POST /projects/:project_id/presets`.
-#[derive(Deserialize)]
-struct AddPresetBody {
-    name: String,
-    base_url: String,
-    #[serde(default)]
-    danger: bool,
-}
-
 /// Body for `PATCH /projects/:project_id/commands/:command_id`. Mirrors the IPC
 /// `update_command`: a full field replace (kind is always re-inferred from
 /// `cmd`), so a caller must send the complete desired state, not a partial diff.
@@ -141,64 +136,6 @@ fn ai_forbidden(allowed: bool, action: &str) -> Option<Response> {
         Some((StatusCode::FORBIDDEN, format!("{action} is disabled in Settings")).into_response())
     } else {
         None
-    }
-}
-
-// --- group handlers ---
-
-async fn list_groups_api(State(s): State<ApiState>) -> impl IntoResponse {
-    Json(crate::groups::load(&s.data_dir))
-}
-
-#[derive(Deserialize)]
-struct GroupNameBody {
-    name: String,
-}
-
-async fn create_group_api(
-    State(s): State<ApiState>,
-    Json(body): Json<GroupNameBody>,
-) -> impl IntoResponse {
-    match crate::groups::create(&s.data_dir, body.name) {
-        Ok(g) => (StatusCode::CREATED, Json(g)).into_response(),
-        Err(e) => (StatusCode::CONFLICT, e).into_response(),
-    }
-}
-
-async fn update_group_api(
-    State(s): State<ApiState>,
-    Path(id): Path<String>,
-    Json(body): Json<GroupNameBody>,
-) -> impl IntoResponse {
-    match crate::groups::update(&s.data_dir, &id, body.name) {
-        Ok(g) => Json(g).into_response(),
-        Err(e) => (StatusCode::NOT_FOUND, e).into_response(),
-    }
-}
-
-async fn delete_group_api(
-    State(s): State<ApiState>,
-    Path(id): Path<String>,
-) -> impl IntoResponse {
-    match crate::groups::delete(&s.data_dir, &id) {
-        Ok(()) => StatusCode::NO_CONTENT.into_response(),
-        Err(e) => (StatusCode::NOT_FOUND, e).into_response(),
-    }
-}
-
-#[derive(Deserialize)]
-struct SetGroupBody {
-    group_id: Option<String>,
-}
-
-async fn set_project_group_api(
-    State(s): State<ApiState>,
-    Path(project_id): Path<String>,
-    Json(body): Json<SetGroupBody>,
-) -> impl IntoResponse {
-    match crate::groups::set_project_group(&s.data_dir, &project_id, body.group_id.as_deref()) {
-        Ok(()) => StatusCode::NO_CONTENT.into_response(),
-        Err(e) => (StatusCode::NOT_FOUND, e).into_response(),
     }
 }
 
@@ -454,72 +391,6 @@ async fn restart_proc(State(s): State<ApiState>, Path(id): Path<String>) -> Resp
 async fn reload_proc(State(s): State<ApiState>, Path(id): Path<String>) -> Response {
     // Try the flutter daemon hot restart; registry falls back to a full restart if the daemon is not ready.
     unit_result(s.sup.reload(&id, true))
-}
-
-// --- reverse-proxy hub handlers ---
-
-/// Look up a project by id, or the shared 404 response every `:project_id`
-/// handler below needs when it is absent.
-fn find_project(state: &ApiState, project_id: &str) -> Result<Project, Response> {
-    state
-        .sup
-        .list_projects()
-        .into_iter()
-        .find(|p| p.id == project_id)
-        .ok_or_else(|| (StatusCode::NOT_FOUND, format!("unknown project: {project_id}")).into_response())
-}
-
-async fn list_presets_api(State(s): State<ApiState>, Path(project_id): Path<String>) -> Response {
-    match find_project(&s, &project_id) {
-        Ok(p) => Json(p.presets).into_response(),
-        Err(r) => r,
-    }
-}
-
-async fn add_preset_api(
-    State(s): State<ApiState>,
-    Path(project_id): Path<String>,
-    Json(b): Json<AddPresetBody>,
-) -> Response {
-    match s.sup.add_preset(&project_id, b.name, b.base_url, b.danger) {
-        Ok(preset) => Json(preset).into_response(),
-        Err(e) => (StatusCode::BAD_REQUEST, e).into_response(),
-    }
-}
-
-async fn remove_preset_api(
-    State(s): State<ApiState>,
-    Path((project_id, preset_id)): Path<(String, String)>,
-) -> Response {
-    unit_result(s.sup.remove_preset(&project_id, &preset_id))
-}
-
-async fn activate_preset_api(
-    State(s): State<ApiState>,
-    Path((project_id, preset_id)): Path<(String, String)>,
-) -> Response {
-    unit_result(s.sup.set_active_preset(&project_id, &preset_id))
-}
-
-async fn proxy_log_api(
-    State(s): State<ApiState>,
-    Path(project_id): Path<String>,
-) -> Json<Vec<RequestLogEntry>> {
-    Json(s.sup.hub_log(&project_id))
-}
-
-async fn hub_port_api(State(s): State<ApiState>, Path(project_id): Path<String>) -> Response {
-    let p = match find_project(&s, &project_id) {
-        Ok(p) => p,
-        Err(r) => return r,
-    };
-    if p.presets.is_empty() {
-        return (StatusCode::NOT_FOUND, format!("no hub configured for project: {project_id}")).into_response();
-    }
-    match s.sup.hub_port(&project_id) {
-        Ok(port) => Json(port).into_response(),
-        Err(e) => (StatusCode::BAD_REQUEST, e).into_response(),
-    }
 }
 
 async fn get_logs(State(s): State<ApiState>, Path(id): Path<String>) -> Response {
