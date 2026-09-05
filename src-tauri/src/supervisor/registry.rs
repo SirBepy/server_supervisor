@@ -1,5 +1,5 @@
 use super::config;
-use super::proc::{ManagedProc, StopHandle};
+use super::proc::ManagedProc;
 use super::proxy_hub::ProxyHub;
 use super::reaper::{self, PidEntry};
 use crate::ports::PortRegistry;
@@ -8,6 +8,9 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use sysinfo::System;
+
+mod stop;
+pub(super) use stop::begin_stop_locked;
 
 /// Owns every supervised process. `projects` is the persisted config (source of
 /// truth); `procs` is the live runtime map keyed by composite `project/command` id.
@@ -29,14 +32,6 @@ pub struct Supervisor {
     /// sampler) so per-process CPU usage has a prior reading to diff against -
     /// see `sampler.rs` module docs.
     sampler_sys: Mutex<System>,
-}
-
-/// Snapshots one proc's ports + `StopHandle` under the lock; run the release
-/// + `handle.finish()` only AFTER dropping it (here and in `crud`).
-pub(super) fn begin_stop_locked(p: &mut ManagedProc) -> (Option<u16>, Option<u16>, StopHandle) {
-    let released = p.acquired_port();
-    let released_internal = p.internal_port();
-    (released, released_internal, p.begin_stop())
 }
 
 impl Supervisor {
@@ -110,36 +105,6 @@ impl Supervisor {
             self.ports.release_project(id);
         }
         config::save(&self.data_dir, &projects);
-    }
-
-    /// Stop every running process but keep the app alive (tray "Close Processes").
-    /// Distinct from `shutdown_all`, which is the kill-then-exit path. Kills
-    /// run in parallel, not a serial loop - see `shutdown_all`.
-    pub fn stop_all(&self) {
-        let entries: Vec<(Option<u16>, Option<u16>, StopHandle)> = {
-            let mut guard = self.procs.lock().unwrap();
-            guard
-                .values_mut()
-                .filter(|p| p.pid.is_some())
-                .map(begin_stop_locked)
-                .collect()
-        };
-        let mut handles = Vec::with_capacity(entries.len());
-        for (released, released_internal, handle) in entries {
-            if let Some(port) = released {
-                self.ports.release(port);
-            }
-            if let Some(port) = released_internal {
-                self.ports.release(port);
-            }
-            handles.push(handle);
-        }
-        self.persist_pids();
-        std::thread::scope(|scope| {
-            for handle in handles {
-                scope.spawn(move || handle.finish());
-            }
-        });
     }
 
     /// Backend reconcile pass, meant to run on a timer rather than only when
@@ -412,29 +377,6 @@ impl Supervisor {
         Ok(())
     }
 
-    /// Stop one process. The slow kill runs off `self.procs`'s lock, so it
-    /// never blocks list()/start()/stop() of every OTHER process.
-    pub fn stop(&self, id: &str) -> Result<(), String> {
-        let (released, released_internal, handle) = {
-            let mut guard = self.procs.lock().unwrap();
-            let p = guard
-                .get_mut(id)
-                .ok_or_else(|| format!("unknown process id: {id}"))?;
-            begin_stop_locked(p)
-        };
-        // internal_port is always distinct from acquired_port (separate
-        // acquire), so no double-release risk releasing both.
-        if let Some(port) = released {
-            self.ports.release(port);
-        }
-        if let Some(port) = released_internal {
-            self.ports.release(port);
-        }
-        self.persist_pids();
-        handle.finish();
-        Ok(())
-    }
-
     pub fn restart(&self, id: &str) -> Result<(), String> {
         self.stop(id)?;
         self.start(id)
@@ -468,25 +410,6 @@ impl Supervisor {
             }
             Err(e) => Err(e),
         }
-    }
-
-    /// Kill-then-exit path ("Stop all & quit"). Parallel kill, same as
-    /// `stop_all` - a serial loop would make quitting itself hang for a while.
-    pub fn shutdown_all(&self) {
-        let handles: Vec<StopHandle> = {
-            let mut guard = self.procs.lock().unwrap();
-            guard
-                .values_mut()
-                .filter(|p| p.pid.is_some())
-                .map(|p| begin_stop_locked(p).2)
-                .collect()
-        };
-        std::thread::scope(|scope| {
-            for handle in handles {
-                scope.spawn(move || handle.finish());
-            }
-        });
-        reaper::write_pids(&self.data_dir, &[]);
     }
 
     /// Resolve the port a dynamic-port command should bind: its stable
