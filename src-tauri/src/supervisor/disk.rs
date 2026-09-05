@@ -103,15 +103,18 @@ fn walk_dir_size(root: &Path) -> u64 {
 /// sampled yet. Never walks synchronously.
 pub fn sample_and_snapshot(roots: &[(String, PathBuf)]) -> HashMap<String, u64> {
     let state = state();
+    let known: HashSet<&str> = roots.iter().map(|(id, _)| id.as_str()).collect();
     {
         let mut tracked = state.tracked.lock().unwrap();
         for (id, root) in roots {
             tracked.insert(id.clone(), root.clone());
         }
-        let known: HashSet<&str> = roots.iter().map(|(id, _)| id.as_str()).collect();
         tracked.retain(|id, _| known.contains(id.as_str()));
     }
-    let cache = state.cache.lock().unwrap();
+    let mut cache = state.cache.lock().unwrap();
+    // Transient worktree projects churn, so an unpruned cache grows for the
+    // life of the app.
+    cache.retain(|id, _| known.contains(id.as_str()));
     roots
         .iter()
         .filter_map(|(id, _)| cache.get(id).map(|c| (id.clone(), c.bytes)))
