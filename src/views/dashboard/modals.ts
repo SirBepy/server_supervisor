@@ -2,8 +2,9 @@
 // plus the actions that open/confirm them and the shared cmd validation. The
 // add-project wizard lives in ./add-project (this module imports its render fn);
 // the preset modals live in ./preset-modals (this module wires them into the
-// modalView switch). Shared view state and the re-render trigger come from
-// ./state; pure helpers from ./helpers; the dropdown from ./combobox.
+// modalView switch); the port/role/env field builders live in ./modal-fields.
+// Shared view state and the re-render trigger come from ./state; pure helpers
+// from ./helpers; the dropdown from ./combobox.
 
 import "./modals.css";
 import { html, nothing, type TemplateResult } from "lit-html";
@@ -17,10 +18,11 @@ import {
   VALIDATE_DEBOUNCE_MS,
   type Modal,
 } from "./state";
-import { deriveName, fieldError, requireField } from "./helpers";
+import { deriveName, requireField } from "./helpers";
 import { comboBox, filterDetected } from "./combobox";
 import { addProjectModal, detectInto } from "./add-project";
 import { addPresetModal, editPresetModal } from "./preset-modals";
+import { envField, portField, roleField, parsePortField, type CmdModal } from "./modal-fields";
 
 // Open the add-command modal for a project, pre-loading detected commands.
 export async function startAddCommand(projectId: string, root: string) {
@@ -43,22 +45,6 @@ export async function startAddCommand(projectId: string, root: string) {
   };
   ui.comboOpen = false;
   draw();
-}
-
-// Parse a modal's raw port-field text into an override for the IPC call.
-// Empty text = auto-assign (null). A non-numeric entry is rejected locally
-// (inline, via `portError`) before ever reaching the backend; range and
-// collision checks are the backend's job (`ports::PortRegistry::project_port`)
-// since only it knows what's currently reserved.
-function parsePortField(m: CmdModal): { fixedPort: number | null; ok: true } | { ok: false } {
-  const text = m.port.trim();
-  if (!text) return { fixedPort: null, ok: true };
-  const n = Number(text);
-  if (!Number.isInteger(n) || n < 1 || n > 65535) {
-    m.portError = "port must be a whole number between 1 and 65535";
-    return { ok: false };
-  }
-  return { fixedPort: n, ok: true };
 }
 
 // Route a rejected add/edit-command call to the port field's inline error
@@ -130,79 +116,10 @@ async function confirmEditCommand() {
   await refresh();
 }
 
-// The two modals that carry a free-text `cmd` to validate (add + edit).
-type CmdModal = Extract<Modal, { t: "addCommand" } | { t: "editCommand" }>;
 function cmdModal(): CmdModal | null {
   return ui.modal && (ui.modal.t === "addCommand" || ui.modal.t === "editCommand")
     ? ui.modal
     : null;
-}
-
-// Optional per-command env overrides, one KEY=VALUE per line. Values may
-// reference existing vars via ${NAME} / %NAME% (so PATH=...;%PATH% prepends).
-// Lets a command reach a toolchain the inherited env can't (e.g. node past the
-// nvm4w symlink) without a hand-rolled wrapper script.
-function envField(m: CmdModal): TemplateResult {
-  return html`
-    <div class="field-row env-row">
-      <label>Env</label>
-      <textarea
-        class="env-input"
-        rows="2"
-        spellcheck="false"
-        placeholder="optional — KEY=VALUE per line, e.g. PATH=C:\\node\\dir;%PATH%"
-        .value=${m.env}
-        @input=${(e: Event) => (m.env = (e.target as HTMLTextAreaElement).value)}
-      ></textarea>
-    </div>
-  `;
-}
-
-// Manual port override, shown next to the "assign a dynamic port" checkbox on
-// both add and edit command modals (only while that checkbox is on - the
-// field is meaningless otherwise). Empty = auto-assign from the project's
-// port block; a typed value is validated by the backend (range + not already
-// reserved by a different command) and any rejection surfaces right below
-// the field via `portError`, rather than the shared error banner.
-function portField(m: CmdModal): TemplateResult {
-  return html`
-    <div class="field-row">
-      <label>Port</label>
-      <input
-        placeholder="auto"
-        inputmode="numeric"
-        .value=${m.port}
-        @input=${(e: Event) => {
-          m.port = (e.target as HTMLInputElement).value;
-          m.portError = null;
-          draw();
-        }}
-      />
-    </div>
-    ${fieldError(m.portError)}
-  `;
-}
-
-// 3-way FE/BE/None role selector, shown on both add and edit command modals.
-// Feeds the optional Role badge shown next to a command everywhere in the
-// dashboard (Home's running-now rows, Project screen's command rows).
-function roleField(m: CmdModal): TemplateResult {
-  return html`
-    <div class="field-row">
-      <label>Role</label>
-      <select
-        .value=${m.role ?? ""}
-        @change=${(e: Event) => {
-          const v = (e.target as HTMLSelectElement).value;
-          m.role = v === "FE" || v === "BE" ? v : null;
-        }}
-      >
-        <option value="">None</option>
-        <option value="FE">Frontend</option>
-        <option value="BE">Backend</option>
-      </select>
-    </div>
-  `;
 }
 
 // Debounced advisory check for a cmd-bearing modal's `cmd`. Stale-guarded: only
