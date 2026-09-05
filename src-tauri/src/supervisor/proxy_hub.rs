@@ -41,7 +41,7 @@
 //! plain HTTP response.
 
 use super::proc::now_ms;
-use super::proxy::{
+use super::proxy_util::{
     buffer_body, copy_response_headers, ensure_crypto_provider, path_and_query,
     spawn_loopback_server, to_reqwest_method, to_upstream_headers,
 };

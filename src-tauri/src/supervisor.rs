@@ -13,6 +13,7 @@ pub mod proc_log;
 pub mod proc_tree;
 pub mod proxy;
 pub mod proxy_hub;
+pub mod proxy_util;
 pub mod reaper;
 pub mod registry;
 pub mod sampler;
