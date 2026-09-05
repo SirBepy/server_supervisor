@@ -4460,6 +4460,7 @@ dependencies = [
 name = "tauri_kit_settings"
 version = "0.0.1"
 dependencies = [
+ "log",
  "serde",
  "serde_json",
  "tauri",
