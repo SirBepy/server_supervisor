@@ -3,6 +3,7 @@ pub mod cpu;
 pub mod crud;
 pub mod detect;
 pub mod dev_browser;
+pub mod disk;
 pub mod flutter;
 pub mod hub_lifecycle;
 pub mod mem;

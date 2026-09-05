@@ -77,6 +77,29 @@ pub fn get_system_stats() -> SystemStats {
     }
 }
 
+/// One project's sampled disk usage, in bytes. See `supervisor::disk`.
+#[derive(Serialize, TS)]
+pub struct DiskUsage {
+    pub project_id: String,
+    pub bytes: u64,
+}
+
+/// Cached per-project disk usage, sampled on its own ~60s cadence off the
+/// main RAM/CPU poll (see `supervisor::disk`). Omits any project not yet
+/// sampled - the frontend treats an absent id as "no figure yet", not zero.
+#[tauri::command(async)]
+pub fn get_disk_usage(sup: State<Arc<Supervisor>>) -> Vec<DiskUsage> {
+    let roots: Vec<(String, std::path::PathBuf)> = sup
+        .list_projects()
+        .into_iter()
+        .map(|p| (p.id, std::path::PathBuf::from(p.root)))
+        .collect();
+    crate::supervisor::disk::sample_and_snapshot(&roots)
+        .into_iter()
+        .map(|(project_id, bytes)| DiskUsage { project_id, bytes })
+        .collect()
+}
+
 #[tauri::command]
 pub fn save_settings(app: AppHandle, settings: Settings) -> Result<(), String> {
     crate::settings::sync_autostart(&app, settings.autostart);

@@ -6,7 +6,7 @@
 
 use server_supervisor_lib::groups::Group;
 use server_supervisor_lib::icons::ProjectIcon;
-use server_supervisor_lib::ipc::commands::SystemStats;
+use server_supervisor_lib::ipc::commands::{DiskUsage, SystemStats};
 use server_supervisor_lib::ipc::version::VersionInfo;
 use server_supervisor_lib::ports::PortEntry;
 use server_supervisor_lib::settings::Settings;
@@ -57,6 +57,7 @@ fn emit_ipc_types() {
     out.push_str(&decl::<Group>());
     out.push_str(&decl::<VersionInfo>());
     out.push_str(&decl::<SystemStats>());
+    out.push_str(&decl::<DiskUsage>());
 
     let path = output_path();
     if let Some(parent) = path.parent() {

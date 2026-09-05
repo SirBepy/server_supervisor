@@ -4,6 +4,7 @@
 // `draw()`. dashboard.ts registers the real renderer via `setDraw`, which keeps
 // the dependency graph acyclic (no module imports dashboard.ts).
 
+import { invoke } from "@tauri-apps/api/core";
 import * as ipc from "../../shared/ipc";
 import type {
   ProcInfo,
@@ -14,6 +15,7 @@ import type {
   Role,
   SystemStats,
   RequestLogEntry,
+  DiskUsage,
 } from "../../types/ipc.generated";
 
 // Debounce window for the advisory command-validity check.
@@ -228,6 +230,8 @@ export const ui = {
   // = collapsed, the default (matches envSectionOpen's collapsed-by-default
   // convention).
   hubLogOpen: new Set<string>(),
+  // Per-project disk usage in bytes; absent id = not sampled yet.
+  diskUsageBytes: {} as Record<string, number>,
 };
 
 // draw() indirection: dashboard.ts owns the top-level render and registers it
@@ -282,6 +286,18 @@ export async function refresh() {
     ui.error = String(e);
   }
   draw();
+}
+
+// Slow sibling to refresh(): never joins its Promise.all, so this poll's own
+// cadence can never slow the fast one down.
+export async function refreshDiskUsage() {
+  try {
+    const usage = await invoke<DiskUsage[]>("get_disk_usage");
+    ui.diskUsageBytes = Object.fromEntries(usage.map((u) => [u.project_id, Number(u.bytes)]));
+    draw();
+  } catch {
+    // Leave the last-known values in place.
+  }
 }
 
 export async function act(p: Promise<unknown>) {

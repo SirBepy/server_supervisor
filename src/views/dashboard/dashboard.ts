@@ -13,7 +13,7 @@ import "./stats-strip.css";
 import "./project-screen.css";
 import * as ipc from "../../shared/ipc";
 import type { Project, Role } from "../../types/ipc.generated";
-import { ui, setDraw, refresh } from "./state";
+import { ui, setDraw, refresh, refreshDiskUsage } from "./state";
 import { displayName, projectTech, deviconClass, deviconClassByName } from "./helpers";
 import { modalView } from "./modals";
 import { moreMenu, portalMenu, setButtonAnchor, setMouseAnchor } from "./menus";
@@ -21,17 +21,23 @@ import { homeScreen } from "./home-screen";
 import { projectScreen } from "./project-screen";
 
 const POLL_MS = 2500;
+// Disk usage needs a recursive tree walk per project - far more expensive
+// than the RAM/CPU poll above, so it runs on its own much slower cadence
+// (see supervisor::disk) and never joins refresh()'s Promise.all.
+const DISK_POLL_MS = 60000;
 
 export function mountDashboard(el: HTMLElement): () => void {
   ui.root = el;
   setDraw(draw);
   void refresh();
+  void refreshDiskUsage();
   void loadPrefs();
   // Capture the poll handle and clear it on teardown. Without this the interval
   // outlives navigation and keeps calling draw() into the (now replaced) root,
   // throwing lit-html "ChildPart has no parentNode" every tick and corrupting
   // whatever view replaced it.
   const timer = window.setInterval(() => void refresh(), POLL_MS);
+  const diskTimer = window.setInterval(() => void refreshDiskUsage(), DISK_POLL_MS);
 
   // Close the per-project "more options" menu on any outside click or Escape.
   // The button + menu both stopPropagation, so any click reaching the document
@@ -94,6 +100,7 @@ export function mountDashboard(el: HTMLElement): () => void {
 
   return () => {
     window.clearInterval(timer);
+    window.clearInterval(diskTimer);
     document.removeEventListener("click", onDocClick);
     document.removeEventListener("keydown", onKey);
     document.removeEventListener("contextmenu", onContextMenu);
