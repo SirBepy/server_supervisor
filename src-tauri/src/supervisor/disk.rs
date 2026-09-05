@@ -8,14 +8,31 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
-/// Minimum interval between two walks of the same project's tree.
-const REFRESH_INTERVAL: Duration = Duration::from_secs(60);
+/// Floor on the interval between two walks of the same project's tree - a
+/// cheap tree (fast walk) is never re-walked more often than this even
+/// though the 10x rule below would allow it.
+const MIN_INTERVAL: Duration = Duration::from_secs(60);
+/// The next walk waits this many multiples of the last walk's own duration,
+/// so an expensive tree backs itself off proportionally and a walk never
+/// costs more than roughly 1/BACKOFF_FACTOR of a core's wall-clock time on
+/// that project.
+const BACKOFF_FACTOR: u32 = 10;
 /// How often the background worker wakes to check for overdue projects.
 const TICK_INTERVAL: Duration = Duration::from_secs(5);
 
 struct Cached {
     bytes: u64,
     sampled_at: Instant,
+    /// Wall-clock time the walk that produced `bytes` took - feeds the
+    /// adaptive due-check for this project's *next* walk.
+    walk_duration: Duration,
+}
+
+/// Next allowed gap before this project's tree is walked again, given how
+/// long its last walk took. See `MIN_INTERVAL` / `BACKOFF_FACTOR` for the
+/// rationale behind the floor and the multiplier.
+fn next_due_interval(last_walk_duration: Duration) -> Duration {
+    MIN_INTERVAL.max(last_walk_duration * BACKOFF_FACTOR)
 }
 
 struct DiskState {
@@ -40,9 +57,9 @@ fn state() -> Arc<DiskState> {
 }
 
 /// The one background worker thread. Wakes every `TICK_INTERVAL`, walks any
-/// tracked project whose cache entry is missing or older than
-/// `REFRESH_INTERVAL`, and writes the result back. Readers never wait on
-/// this - they only ever read whatever `cache` last held.
+/// tracked project whose cache entry is missing or past its adaptive due
+/// time (see `next_due_interval`), and writes the result back. Readers never
+/// wait on this - they only ever read whatever `cache` last held.
 fn spawn_worker(state: Arc<DiskState>) {
     std::thread::spawn(move || loop {
         std::thread::sleep(TICK_INTERVAL);
@@ -54,14 +71,16 @@ fn spawn_worker(state: Arc<DiskState>) {
                 .filter(|(id, _)| {
                     cache
                         .get(id.as_str())
-                        .map(|c| c.sampled_at.elapsed() >= REFRESH_INTERVAL)
+                        .map(|c| c.sampled_at.elapsed() >= next_due_interval(c.walk_duration))
                         .unwrap_or(true)
                 })
                 .map(|(id, root)| (id.clone(), root.clone()))
                 .collect()
         };
         for (id, root) in due {
+            let started = Instant::now();
             let bytes = walk_dir_size(&root);
+            let walk_duration = started.elapsed();
             // Re-check tracked: the project may have been dropped (untracked)
             // while this walk was in flight, and inserting anyway would
             // resurrect an entry `sample_and_snapshot` already pruned.
@@ -72,7 +91,7 @@ fn spawn_worker(state: Arc<DiskState>) {
                 .cache
                 .lock()
                 .unwrap()
-                .insert(id, Cached { bytes, sampled_at: Instant::now() });
+                .insert(id, Cached { bytes, sampled_at: Instant::now(), walk_duration });
         }
     });
 }
@@ -130,6 +149,18 @@ pub fn sample_and_snapshot(roots: &[(String, PathBuf)]) -> HashMap<String, u64> 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn next_due_interval_clamps_fast_walk_to_floor() {
+        let interval = next_due_interval(Duration::from_secs(1));
+        assert_eq!(interval, MIN_INTERVAL);
+    }
+
+    #[test]
+    fn next_due_interval_backs_off_slow_walk() {
+        let interval = next_due_interval(Duration::from_secs(30));
+        assert_eq!(interval, Duration::from_secs(300));
+    }
 
     #[test]
     fn walk_dir_size_sums_nested_files() {
