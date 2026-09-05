@@ -8,6 +8,10 @@ use ts_rs::TS;
 pub enum ProcKind {
     Generic,
     Flutter,
+    /// Never auto-inferred (see `infer` below) - only set via an explicit
+    /// `/run` payload `kind`. Its entry is deleted on exit instead of being
+    /// retained as `stopped` (see `registry::reap_tick`, `Supervisor::stop`).
+    Ephemeral,
 }
 
 impl Default for ProcKind {

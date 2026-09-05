@@ -3,7 +3,7 @@ use super::proc::ManagedProc;
 use super::proxy_hub::ProxyHub;
 use super::reaper::{self, PidEntry};
 use crate::ports::PortRegistry;
-use crate::types::{unit_id, LogLine, ProcInfo, ProcSpec, Project};
+use crate::types::{unit_id, LogLine, ProcInfo, ProcKind, ProcSpec, Project};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -115,9 +115,13 @@ impl Supervisor {
     /// re-adopt. This refreshes every proc, releases the port of any that just
     /// transitioned out of running on its own, and rewrites pids.json.
     pub fn reap_tick(&self) {
-        let released: Vec<u16> = {
+        let mut released: Vec<u16> = Vec::new();
+        // (project_id, command_id) of every Ephemeral proc that just exited on
+        // its own - collected under the procs lock, deleted after dropping it
+        // (see `remove_command`'s own two-phase pattern).
+        let mut ephemeral_exited: Vec<(String, String)> = Vec::new();
+        {
             let mut guard = self.procs.lock().unwrap();
-            let mut released = Vec::new();
             for p in guard.values_mut() {
                 // Holding a pid before refresh but not after means the child
                 // ended on its own (crash or self-exit). A user-initiated stop
@@ -136,12 +140,22 @@ impl Supervisor {
                     if let Some(port) = internal {
                         released.push(port);
                     }
+                    if p.spec.kind == ProcKind::Ephemeral {
+                        if let Some((project_id, command_id)) = p.spec.id.split_once(':') {
+                            ephemeral_exited.push((project_id.to_string(), command_id.to_string()));
+                        }
+                    }
                 }
             }
-            released
-        };
+        }
         for port in released {
             self.ports.release(port);
+        }
+        // Ephemeral entries don't linger as `stopped` - delete on exit instead.
+        for (project_id, command_id) in ephemeral_exited {
+            if let Err(e) = self.remove_command(&project_id, &command_id) {
+                log::warn!("reap_tick: could not remove ephemeral {project_id}:{command_id}: {e}");
+            }
         }
         self.persist_pids();
     }
@@ -465,7 +479,7 @@ impl Supervisor {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::{Command, ProcKind, ProcSpec};
+    use crate::types::{Command, ProcKind, ProcSpec, ProcStatus};
     use std::fs;
 
     fn fast_exit_spec(id: &str) -> ProcSpec {
@@ -555,6 +569,75 @@ mod tests {
         // pids.json must not keep the dead proc's PID around to be re-adopted.
         let pids = std::fs::read_to_string(dir.path().join("pids.json")).unwrap_or_default();
         assert!(!pids.contains("p:c"), "stale pid must be pruned from pids.json");
+    }
+
+    fn command(id: &str, kind: ProcKind) -> Command {
+        Command {
+            id: id.to_string(),
+            name: id.to_string(),
+            cmd: "cmd /C exit 0".to_string(), // trivial child, exits instantly
+            kind,
+            autostart: false,
+            use_dynamic_port: false,
+            fixed_port: None,
+            env: String::new(),
+            role: None,
+        }
+    }
+
+    #[test]
+    fn reap_tick_deletes_an_ephemeral_entry_on_exit_but_keeps_generic_as_stopped() {
+        let dir = tempfile::tempdir().unwrap();
+        let ports = Arc::new(PortRegistry::new(dir.path().to_path_buf()));
+        let sup = Supervisor::new(dir.path().to_path_buf(), Arc::clone(&ports));
+
+        let project = Project {
+            id: "p".to_string(),
+            name: "p".to_string(),
+            root: ".".to_string(),
+            commands: vec![command("eph", ProcKind::Ephemeral), command("gen", ProcKind::Generic)],
+            presets: Vec::new(),
+            active_preset: None,
+            transient: false,
+            transient_label: None,
+        };
+        {
+            let mut projects = sup.projects.lock().unwrap();
+            projects.push(project.clone());
+        }
+        {
+            let mut map = sup.procs.lock().unwrap();
+            for c in &project.commands {
+                let spec = ProcSpec::from_unit(&project, c);
+                let mut p = ManagedProc::new(spec);
+                p.start(None, None).unwrap();
+                assert!(p.pid.is_some(), "freshly started proc has a pid");
+                map.insert(unit_id("p", &c.id), p);
+            }
+        }
+        std::thread::sleep(std::time::Duration::from_millis(400)); // let both exit
+
+        // reap_tick is the ONLY refresh here - nothing calls list() first.
+        sup.reap_tick();
+
+        let projects = sup.list_projects();
+        let proj = projects.iter().find(|p| p.id == "p").expect("project survives (gen command remains)");
+        assert!(
+            !proj.commands.iter().any(|c| c.id == "eph"),
+            "ephemeral command's config entry must be deleted on exit"
+        );
+        assert!(
+            proj.commands.iter().any(|c| c.id == "gen"),
+            "generic command's config entry must be retained"
+        );
+
+        let info = sup.list();
+        assert!(
+            !info.iter().any(|i| i.id == "p:eph"),
+            "ephemeral proc entry must be gone from list()"
+        );
+        let gen_info = info.iter().find(|i| i.id == "p:gen").expect("generic proc entry retained");
+        assert_eq!(gen_info.status, ProcStatus::Stopped, "generic entry must be retained as stopped");
     }
 
     #[test]

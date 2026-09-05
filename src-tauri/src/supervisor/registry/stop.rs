@@ -6,6 +6,7 @@
 use super::Supervisor;
 use crate::supervisor::proc::{ManagedProc, StopHandle};
 use crate::supervisor::reaper;
+use crate::types::ProcKind;
 
 /// Snapshots one proc's ports + `StopHandle` under the lock; run the release
 /// + `handle.finish()` only AFTER dropping it (here and in `crud`).
@@ -49,12 +50,14 @@ impl Supervisor {
     /// Stop one process. The slow kill runs off `self.procs`'s lock, so it
     /// never blocks list()/start()/stop() of every OTHER process.
     pub fn stop(&self, id: &str) -> Result<(), String> {
-        let (released, released_internal, handle) = {
+        let (released, released_internal, handle, is_ephemeral) = {
             let mut guard = self.procs.lock().unwrap();
             let p = guard
                 .get_mut(id)
                 .ok_or_else(|| format!("unknown process id: {id}"))?;
-            begin_stop_locked(p)
+            let is_ephemeral = p.spec.kind == ProcKind::Ephemeral;
+            let (released, released_internal, handle) = begin_stop_locked(p);
+            (released, released_internal, handle, is_ephemeral)
         };
         // internal_port is always distinct from acquired_port (separate
         // acquire), so no double-release risk releasing both.
@@ -66,6 +69,15 @@ impl Supervisor {
         }
         self.persist_pids();
         handle.finish();
+        // A manually-stopped ephemeral entry must not linger as `stopped`
+        // either - mirrors `reap_tick`'s exit-triggered delete.
+        if is_ephemeral {
+            if let Some((project_id, command_id)) = id.split_once(':') {
+                if let Err(e) = self.remove_command(project_id, command_id) {
+                    log::warn!("stop: could not remove ephemeral {id}: {e}");
+                }
+            }
+        }
         Ok(())
     }
 
