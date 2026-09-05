@@ -50,6 +50,17 @@ impl Supervisor {
     /// Stop one process. The slow kill runs off `self.procs`'s lock, so it
     /// never blocks list()/start()/stop() of every OTHER process.
     pub fn stop(&self, id: &str) -> Result<(), String> {
+        self.stop_inner(id, true)
+    }
+
+    /// `delete_ephemeral` is false only for `restart`, which stops and starts the
+    /// SAME id: deleting an ephemeral entry between the two leaves `start` with
+    /// nothing to look up, so the restart fails after the process is already dead.
+    pub(in crate::supervisor) fn stop_inner(
+        &self,
+        id: &str,
+        delete_ephemeral: bool,
+    ) -> Result<(), String> {
         let (released, released_internal, handle, is_ephemeral) = {
             let mut guard = self.procs.lock().unwrap();
             let p = guard
@@ -71,7 +82,7 @@ impl Supervisor {
         handle.finish();
         // A manually-stopped ephemeral entry must not linger as `stopped`
         // either - mirrors `reap_tick`'s exit-triggered delete.
-        if is_ephemeral {
+        if delete_ephemeral && is_ephemeral {
             if let Some((project_id, command_id)) = id.split_once(':') {
                 if let Err(e) = self.remove_command(project_id, command_id) {
                     log::warn!("stop: could not remove ephemeral {id}: {e}");

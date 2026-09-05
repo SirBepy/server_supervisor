@@ -392,7 +392,7 @@ impl Supervisor {
     }
 
     pub fn restart(&self, id: &str) -> Result<(), String> {
-        self.stop(id)?;
+        self.stop_inner(id, false)?;
         self.start(id)
     }
 
@@ -638,6 +638,51 @@ mod tests {
         );
         let gen_info = info.iter().find(|i| i.id == "p:gen").expect("generic proc entry retained");
         assert_eq!(gen_info.status, ProcStatus::Stopped, "generic entry must be retained as stopped");
+    }
+
+    #[test]
+    fn restart_keeps_an_ephemeral_entry_so_start_can_find_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let ports = Arc::new(PortRegistry::new(dir.path().to_path_buf()));
+        let sup = Supervisor::new(dir.path().to_path_buf(), Arc::clone(&ports));
+
+        let project = Project {
+            id: "p".to_string(),
+            name: "p".to_string(),
+            root: ".".to_string(),
+            commands: vec![command("eph", ProcKind::Ephemeral)],
+            presets: Vec::new(),
+            active_preset: None,
+            transient: false,
+            transient_label: None,
+        };
+        {
+            let mut projects = sup.projects.lock().unwrap();
+            projects.push(project.clone());
+        }
+        {
+            let mut map = sup.procs.lock().unwrap();
+            let spec = ProcSpec::from_unit(&project, &project.commands[0]);
+            let mut p = ManagedProc::new(spec);
+            p.start(None, None).unwrap();
+            map.insert(unit_id("p", "eph"), p);
+        }
+
+        sup.restart("p:eph").expect("restart must not delete the entry it is about to start");
+
+        let projects = sup.list_projects();
+        let proj = projects.iter().find(|p| p.id == "p").expect("project survives");
+        assert!(
+            proj.commands.iter().any(|c| c.id == "eph"),
+            "restart must leave the ephemeral config entry in place"
+        );
+
+        sup.stop("p:eph").unwrap();
+        let projects = sup.list_projects();
+        assert!(
+            !projects.iter().any(|p| p.commands.iter().any(|c| c.id == "eph")),
+            "a plain stop still deletes the ephemeral entry"
+        );
     }
 
     #[test]
