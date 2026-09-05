@@ -11,9 +11,8 @@
 //! Flutter-web-only reverse proxy with live-reload injection fronting one dev
 //! server. This hub fronts however many named upstream presets a project
 //! declares (e.g. local / develop / prod), swappable without moving the
-//! app's own port. The two do not share runtime state; `proxy.rs`'s
-//! `HOP_BY_HOP`/`is_hop_by_hop` helpers and `ensure_crypto_provider` are
-//! reused here rather than duplicated.
+//! app's own port. The two do not share runtime state; both draw their
+//! header-filtering and loopback-server plumbing from `proxy_util.rs`.
 //!
 //! ## CORS
 //! The dashboard/app runs on one localhost port and calls the hub on
