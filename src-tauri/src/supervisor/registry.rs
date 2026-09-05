@@ -585,6 +585,23 @@ mod tests {
         }
     }
 
+    /// Unlike `command`'s instant-exit child, `stop_all` only acts on procs
+    /// still holding a pid when it runs - so this test needs one that is
+    /// reliably still alive to be killed, not racing its own natural exit.
+    fn long_running_command(id: &str, kind: ProcKind) -> Command {
+        Command {
+            id: id.to_string(),
+            name: id.to_string(),
+            cmd: "cmd /C ping -n 30 127.0.0.1 >NUL".to_string(),
+            kind,
+            autostart: false,
+            use_dynamic_port: false,
+            fixed_port: None,
+            env: String::new(),
+            role: None,
+        }
+    }
+
     #[test]
     fn reap_tick_deletes_an_ephemeral_entry_on_exit_but_keeps_generic_as_stopped() {
         let dir = tempfile::tempdir().unwrap();
@@ -625,6 +642,68 @@ mod tests {
         assert!(
             !proj.commands.iter().any(|c| c.id == "eph"),
             "ephemeral command's config entry must be deleted on exit"
+        );
+        assert!(
+            proj.commands.iter().any(|c| c.id == "gen"),
+            "generic command's config entry must be retained"
+        );
+
+        let info = sup.list();
+        assert!(
+            !info.iter().any(|i| i.id == "p:eph"),
+            "ephemeral proc entry must be gone from list()"
+        );
+        let gen_info = info.iter().find(|i| i.id == "p:gen").expect("generic proc entry retained");
+        assert_eq!(gen_info.status, ProcStatus::Stopped, "generic entry must be retained as stopped");
+    }
+
+    #[test]
+    fn stop_all_deletes_an_ephemeral_entry_but_keeps_generic_as_stopped() {
+        let dir = tempfile::tempdir().unwrap();
+        let ports = Arc::new(PortRegistry::new(dir.path().to_path_buf()));
+        let sup = Supervisor::new(dir.path().to_path_buf(), Arc::clone(&ports));
+
+        let project = Project {
+            id: "p".to_string(),
+            name: "p".to_string(),
+            root: ".".to_string(),
+            commands: vec![
+                long_running_command("eph", ProcKind::Ephemeral),
+                long_running_command("gen", ProcKind::Generic),
+            ],
+            presets: Vec::new(),
+            active_preset: None,
+            transient: false,
+            transient_label: None,
+        };
+        {
+            let mut projects = sup.projects.lock().unwrap();
+            projects.push(project.clone());
+        }
+        {
+            let mut map = sup.procs.lock().unwrap();
+            for c in &project.commands {
+                let spec = ProcSpec::from_unit(&project, c);
+                let mut p = ManagedProc::new(spec);
+                p.start(None, None).unwrap();
+                assert!(p.pid.is_some(), "freshly started proc has a pid");
+                map.insert(unit_id("p", &c.id), p);
+            }
+        }
+
+        // Both children are still alive (long-running, not self-exited) when
+        // stop_all runs, so it is stop_all itself doing the kill here - unlike
+        // reap_tick's test, which only notices an exit that already happened.
+        sup.stop_all();
+
+        let projects = sup.list_projects();
+        let proj = projects
+            .iter()
+            .find(|p| p.id == "p")
+            .expect("project survives (gen command remains)");
+        assert!(
+            !proj.commands.iter().any(|c| c.id == "eph"),
+            "ephemeral command's config entry must be deleted by stop_all, same as stop()"
         );
         assert!(
             proj.commands.iter().any(|c| c.id == "gen"),
