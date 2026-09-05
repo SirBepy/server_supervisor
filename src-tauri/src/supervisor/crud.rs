@@ -2,175 +2,23 @@
 //! `impl Supervisor` block, split from `registry` (which keeps the struct +
 //! runtime control) so process lifecycle and config mutation each read as one
 //! focused file. Reaches the supervisor's `pub(super)` fields directly.
+//!
+//! This file holds `ensure_and_run` (the composite one-call `/run` API entry
+//! point, which registers a project AND a command then starts it) plus its
+//! `prune_failed_siblings` helper and the name-derivation helpers both lean
+//! on. Project CRUD (list/add/rename/remove a project) and command CRUD
+//! (add/edit/remove a command) are each a further `impl Supervisor` block in
+//! a sibling module - `project` and `command` - since `ensure_and_run`
+//! composes both.
 
 use super::config;
-use super::proc::ManagedProc;
-use super::registry::{begin_stop_locked, Supervisor};
-use crate::types::{unit_id, Command, ProcInfo, ProcKind, ProcSpec, Project, Role};
+use super::registry::Supervisor;
+use crate::types::{unit_id, ProcInfo, ProcKind};
+
+mod command;
+mod project;
 
 impl Supervisor {
-    // ----- config CRUD (mutates projects + runtime map, persists) -----
-
-    pub fn list_projects(&self) -> Vec<Project> {
-        self.projects.lock().unwrap().clone()
-    }
-
-    pub fn add_project(&self, name: String, root: String) -> Result<Project, String> {
-        self.add_project_inner(name, root, false, None)
-    }
-
-    /// Shared by `add_project` (always non-transient: the UI's manual add-project
-    /// flow) and `ensure_and_run` (which detects transience first). Transience is
-    /// set once here, at registration, and never re-derived afterward.
-    fn add_project_inner(
-        &self,
-        name: String,
-        root: String,
-        transient: bool,
-        transient_label: Option<String>,
-    ) -> Result<Project, String> {
-        let name = name.trim().to_string();
-        let root = root.trim().to_string();
-        if name.is_empty() || root.is_empty() {
-            return Err("project name and root are required".to_string());
-        }
-        let mut projects = self.projects.lock().unwrap();
-        // Idempotent on the folder: same canonical path -> reuse the existing
-        // project unchanged (keep its name; ignore the re-entered one). No dup.
-        if let Some(existing) = projects.iter().find(|p| same_path(&p.root, &root)) {
-            return Ok(existing.clone());
-        }
-        let id = unique_id(&name, &|cand| projects.iter().any(|p| p.id == cand));
-        let project = Project {
-            id,
-            name,
-            root,
-            commands: Vec::new(),
-            presets: Vec::new(),
-            active_preset: None,
-            transient,
-            transient_label,
-        };
-        projects.push(project.clone());
-        config::save(&self.data_dir, &projects);
-        Ok(project)
-    }
-
-    /// Rename a project's display name. The `id` is the stable handle (keys the
-    /// runtime procs map, logs, and API paths), so it never changes here - only
-    /// the mutable `name`. Returns the updated project.
-    pub fn rename_project(&self, project_id: &str, new_name: String) -> Result<Project, String> {
-        let new_name = new_name.trim().to_string();
-        if new_name.is_empty() {
-            return Err("project name is required".to_string());
-        }
-        let mut projects = self.projects.lock().unwrap();
-        let project = projects
-            .iter_mut()
-            .find(|p| p.id == project_id)
-            .ok_or_else(|| format!("unknown project: {project_id}"))?;
-        project.name = new_name;
-        let updated = project.clone();
-        config::save(&self.data_dir, &projects);
-        Ok(updated)
-    }
-
-    pub fn remove_project(&self, project_id: &str) -> Result<(), String> {
-        let mut projects = self.projects.lock().unwrap();
-        let idx = projects
-            .iter()
-            .position(|p| p.id == project_id)
-            .ok_or_else(|| format!("unknown project: {project_id}"))?;
-        let removed = projects.remove(idx);
-        config::save(&self.data_dir, &projects);
-        drop(projects);
-
-        // Two-phase like `Supervisor::stop`: run the kills after dropping the
-        // lock. `release_project` below reclaims ports regardless.
-        let handles: Vec<super::proc::StopHandle> = {
-            let mut map = self.procs.lock().unwrap();
-            removed
-                .commands
-                .iter()
-                .filter_map(|c| map.remove(&unit_id(&removed.id, &c.id)))
-                .map(|mut proc| begin_stop_locked(&mut proc).2)
-                .collect()
-        };
-        for handle in handles {
-            handle.finish();
-        }
-        // Stop the project's reverse-proxy hub listener (if any) before
-        // reclaiming its port - see `hub_lifecycle::Supervisor::stop_hub`.
-        self.stop_hub(&removed.id);
-        // Reclaim the whole port block (and any per-command overrides) so a
-        // future project can reuse it instead of it staying reserved forever.
-        self.ports.release_project(&removed.id);
-        Ok(())
-    }
-
-    /// Add a command. `kind` is normally inferred from the command string
-    /// (`None`); an explicit `Some(kind)` overrides inference (used by the `/run`
-    /// API when a caller knows better).
-    pub fn add_command(
-        &self,
-        project_id: &str,
-        name: String,
-        cmd: String,
-        kind: Option<ProcKind>,
-        autostart: bool,
-        use_dynamic_port: bool,
-        fixed_port: Option<u16>,
-        env: String,
-        role: Option<Role>,
-    ) -> Result<Command, String> {
-        let name = name.trim().to_string();
-        let cmd = normalize_cmd(&cmd);
-        if name.is_empty() || cmd.is_empty() {
-            return Err("command name and cmd are required".to_string());
-        }
-        let kind = kind.unwrap_or_else(|| ProcKind::infer(&cmd));
-        let mut projects = self.projects.lock().unwrap();
-        let project = projects
-            .iter_mut()
-            .find(|p| p.id == project_id)
-            .ok_or_else(|| format!("unknown project: {project_id}"))?;
-        // Idempotent on the exact cmd string within this project: if a command
-        // with the same cmd already exists, return it (the runtime procs map
-        // already holds its entry, so don't re-insert).
-        if let Some(existing) = project.commands.iter().find(|c| c.cmd == cmd) {
-            return Ok(existing.clone());
-        }
-        let cid = unique_id(&name, &|cand| project.commands.iter().any(|c| c.id == cand));
-        // Claim this command's stable port slot eagerly, in creation order, so
-        // "base+0, base+1, ..." reflects declared order rather than start
-        // order, and a bad manual override is rejected right here instead of
-        // silently at spawn time.
-        if use_dynamic_port {
-            self.ports.project_port(project_id, &unit_id(project_id, &cid), fixed_port)?;
-        }
-        let command = Command {
-            id: cid,
-            name,
-            cmd,
-            kind,
-            autostart,
-            use_dynamic_port,
-            fixed_port,
-            env,
-            role,
-        };
-        project.commands.push(command.clone());
-        let project_snapshot = project.clone();
-        config::save(&self.data_dir, &projects);
-        drop(projects);
-
-        let mut map = self.procs.lock().unwrap();
-        let spec = ProcSpec::from_unit(&project_snapshot, &command);
-        map.entry(spec.id.clone())
-            .or_insert_with(|| ManagedProc::new(spec));
-        Ok(command)
-    }
-
     /// Register a project (by folder) + a command (by cmd string) if not already
     /// present - both are idempotent - then start it and return its ProcInfo.
     /// The composite used by the `POST /run` API for one-call server launch.
@@ -258,181 +106,6 @@ impl Supervisor {
             }
         }
     }
-
-    /// Edit an existing command in place. The command `id` is a stable handle
-    /// (it keys the runtime procs map, the captured logs, and the API path), so
-    /// it never changes here - only the mutable fields do. The runtime
-    /// `ManagedProc` is mutated in place (preserving its log buffer and any live
-    /// child handle). If the process is running and the edit changes a field the
-    /// spawn depends on (cmd, cwd, kind, dynamic-port), it is restarted so the
-    /// live process reflects the edit.
-    pub fn update_command(
-        &self,
-        project_id: &str,
-        command_id: &str,
-        name: String,
-        cmd: String,
-        autostart: bool,
-        use_dynamic_port: bool,
-        fixed_port: Option<u16>,
-        env: String,
-        role: Option<Role>,
-    ) -> Result<Command, String> {
-        let name = name.trim().to_string();
-        let cmd = cmd.trim().to_string();
-        if name.is_empty() || cmd.is_empty() {
-            return Err("command name and cmd are required".to_string());
-        }
-        // Kind is always inferred from the command string (no manual picker).
-        let kind = ProcKind::infer(&cmd);
-        // A running command is locked: editing it would silently relaunch the
-        // live process. Require the caller to stop it first. Refresh so a child
-        // that already exited on its own does not count as running.
-        {
-            let mut map = self.procs.lock().unwrap();
-            if let Some(proc) = map.get_mut(&unit_id(project_id, command_id)) {
-                proc.refresh();
-                if proc.pid.is_some() {
-                    return Err("stop the command before editing it".to_string());
-                }
-            }
-        }
-        let (updated, project_snapshot) = {
-            let mut projects = self.projects.lock().unwrap();
-            let project = projects
-                .iter_mut()
-                .find(|p| p.id == project_id)
-                .ok_or_else(|| format!("unknown project: {project_id}"))?;
-            let command = project
-                .commands
-                .iter_mut()
-                .find(|c| c.id == command_id)
-                .ok_or_else(|| format!("unknown command: {command_id}"))?;
-            // Re-resolve (or drop) this command's port reservation now that we
-            // know it genuinely exists, before mutating/saving anything, so a
-            // bad manual override is rejected cleanly rather than half-applied.
-            let owner = unit_id(project_id, command_id);
-            if use_dynamic_port {
-                self.ports.project_port(project_id, &owner, fixed_port)?;
-            } else {
-                self.ports.release_owner(&owner);
-            }
-            command.name = name;
-            command.cmd = cmd;
-            command.kind = kind;
-            command.autostart = autostart;
-            command.use_dynamic_port = use_dynamic_port;
-            command.fixed_port = fixed_port;
-            command.env = env;
-            command.role = role;
-            let updated = command.clone();
-            let snapshot = project.clone();
-            config::save(&self.data_dir, &projects);
-            (updated, snapshot)
-        };
-
-        let new_spec = ProcSpec::from_unit(&project_snapshot, &updated);
-        let id = new_spec.id.clone();
-        let restart_needed = {
-            let mut map = self.procs.lock().unwrap();
-            match map.get_mut(&id) {
-                Some(proc) => {
-                    let affects_running = proc.spec.cmd != new_spec.cmd
-                        || proc.spec.cwd != new_spec.cwd
-                        || proc.spec.kind != new_spec.kind
-                        || proc.spec.use_dynamic_port != new_spec.use_dynamic_port
-                        || proc.spec.fixed_port != new_spec.fixed_port
-                        || proc.spec.env != new_spec.env;
-                    let running = proc.pid.is_some();
-                    proc.spec = new_spec;
-                    running && affects_running
-                }
-                None => {
-                    // Defensive: every command should already have a runtime entry,
-                    // but if not, create one so the edit is at least startable.
-                    map.insert(id.clone(), ManagedProc::new(new_spec));
-                    false
-                }
-            }
-        };
-        if restart_needed {
-            self.restart(&id)?;
-        }
-        Ok(updated)
-    }
-
-    pub fn remove_command(&self, project_id: &str, command_id: &str) -> Result<(), String> {
-        // Same lock as edit: a running command must be stopped before it can be
-        // removed, so deletion never races a live child.
-        {
-            let mut map = self.procs.lock().unwrap();
-            if let Some(proc) = map.get_mut(&unit_id(project_id, command_id)) {
-                proc.refresh();
-                if proc.pid.is_some() {
-                    return Err("stop the command before removing it".to_string());
-                }
-            }
-        }
-        let mut projects = self.projects.lock().unwrap();
-        let project = projects
-            .iter_mut()
-            .find(|p| p.id == project_id)
-            .ok_or_else(|| format!("unknown project: {project_id}"))?;
-        let before = project.commands.len();
-        project.commands.retain(|c| c.id != command_id);
-        if project.commands.len() == before {
-            return Err(format!("unknown command: {command_id}"));
-        }
-        // Auto-remove the project once its last command is gone (there is no
-        // manual project delete; an empty project cleans itself up).
-        let project_emptied = project.commands.is_empty();
-        if project_emptied {
-            projects.retain(|p| p.id != project_id);
-        }
-        config::save(&self.data_dir, &projects);
-        drop(projects);
-
-        let mut map = self.procs.lock().unwrap();
-        if let Some(mut proc) = map.remove(&unit_id(project_id, command_id)) {
-            // Already guaranteed stopped (checked above), so this is a no-op
-            // cleanup - fine to finish() inline without releasing the lock.
-            proc.begin_stop().finish();
-        }
-        drop(map);
-        // Reclaim this command's port slot - or, if the project emptied out
-        // and auto-removed itself, the whole block - rather than leaving it
-        // reserved forever.
-        if project_emptied {
-            self.ports.release_project(project_id);
-        } else {
-            self.ports.release_owner(&unit_id(project_id, command_id));
-        }
-        Ok(())
-    }
-}
-
-/// True if two folder paths refer to the same location. Canonicalize both and
-/// compare the resulting `PathBuf`s (handles drive-letter case, `/` vs `\`,
-/// trailing separators, and `.`/`..` on Windows). If canonicalize fails for
-/// either path (e.g. it no longer exists), fall back to a normalized string
-/// compare: lowercase + strip trailing `\` and `/`.
-fn same_path(a: &str, b: &str) -> bool {
-    match (std::fs::canonicalize(a), std::fs::canonicalize(b)) {
-        (Ok(ca), Ok(cb)) => ca == cb,
-        _ => norm_path(a) == norm_path(b),
-    }
-}
-
-fn norm_path(p: &str) -> String {
-    p.trim_end_matches(['\\', '/']).to_lowercase()
-}
-
-/// Collapse a command string to its canonical dedup form: trim ends and reduce
-/// every run of internal whitespace to a single space. Keeps case (flags are
-/// case-sensitive). `flutter  run` and ` flutter run ` both become `flutter run`,
-/// so trivial whitespace variants reuse one command entry instead of forking.
-fn normalize_cmd(cmd: &str) -> String {
-    cmd.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
 /// Default display name for a project folder. A folder literally named "app" or
@@ -510,7 +183,7 @@ fn derive_name(cmd: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{derive_name, normalize_cmd, smart_project_name};
+    use super::{derive_name, smart_project_name};
 
     #[test]
     fn smart_project_name_prefixes_app_and_src_folders() {
@@ -522,14 +195,6 @@ mod tests {
         assert_eq!(smart_project_name(r"C:\Projects\myproject"), "myproject");
         // Unix-style separators work too.
         assert_eq!(smart_project_name("/home/joe/myproject/src"), "myproject-src");
-    }
-
-    #[test]
-    fn normalize_cmd_collapses_and_trims_whitespace() {
-        assert_eq!(normalize_cmd("flutter  run"), "flutter run");
-        assert_eq!(normalize_cmd("  flutter run  "), "flutter run");
-        assert_eq!(normalize_cmd("npm\trun   dev"), "npm run dev");
-        assert_eq!(normalize_cmd("flutter run"), "flutter run");
     }
 
     #[test]
