@@ -70,6 +70,14 @@
   white-space: nowrap;
   max-width: 320px;
 }
+/* Third header line (below name + root path): a fact, not a path to copy, so
+   plain (non-mono) unlike .detail-sub. Same size/color/margin scale as the
+   rest of the header - no new tokens. */
+.detail-disk {
+  font-size: 11px;
+  color: var(--muted);
+  margin-top: 2px;
+}
 
 /* ----- Project screen: one contiguous bordered command block, rows packed
    with zero gap (only the left status edge + a hairline divider tell them

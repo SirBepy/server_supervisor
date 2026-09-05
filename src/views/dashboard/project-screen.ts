@@ -379,6 +379,17 @@ function proxySection(project: Project): TemplateResult {
   `;
 }
 
+// Muted project-level disk-usage line, third row of the detail header (below
+// name + root path). Omitted entirely - not formatBytes' "-" - while
+// ui.diskUsageBytes has no entry yet for this project: the first 60s poll
+// (state.ts refreshDiskUsage) can still be in flight on mount, and a bare
+// dash there would read as a measurement error rather than "not walked yet".
+function diskUsageLine(projectId: string): TemplateResult | typeof nothing {
+  const bytes = ui.diskUsageBytes[projectId];
+  if (bytes == null) return nothing;
+  return html`<div class="detail-disk">disk ${formatBytes(bytes)}</div>`;
+}
+
 function detailPane(project: Project): TemplateResult {
   const cmd = project.commands.find((c) => `${project.id}:${c.id}` === ui.expandedCmdId);
   if (!cmd) {
@@ -411,6 +422,7 @@ export function projectScreen(projectId: string): TemplateResult {
         <div>
           <div class="detail-title">${project.name}</div>
           <div class="detail-sub" title=${project.root}>${project.root}</div>
+          ${diskUsageLine(project.id)}
         </div>
       </div>
       <div class="section-label">Commands</div>
