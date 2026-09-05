@@ -62,6 +62,12 @@ fn spawn_worker(state: Arc<DiskState>) {
         };
         for (id, root) in due {
             let bytes = walk_dir_size(&root);
+            // Re-check tracked: the project may have been dropped (untracked)
+            // while this walk was in flight, and inserting anyway would
+            // resurrect an entry `sample_and_snapshot` already pruned.
+            if !state.tracked.lock().unwrap().contains_key(&id) {
+                continue;
+            }
             state
                 .cache
                 .lock()
