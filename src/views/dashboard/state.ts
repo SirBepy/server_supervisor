@@ -295,8 +295,11 @@ export async function refreshDiskUsage() {
     const usage = await invoke<DiskUsage[]>("get_disk_usage");
     ui.diskUsageBytes = Object.fromEntries(usage.map((u) => [u.project_id, Number(u.bytes)]));
     draw();
-  } catch {
-    // Leave the last-known values in place.
+  } catch (e) {
+    // A missing/unregistered command throws here with zero other signal (see
+    // todo 0047: get_disk_usage was dead for a whole release because this was
+    // silent). Log it; still leave the last-known values in place.
+    console.error("refreshDiskUsage failed:", e);
   }
 }
 
