@@ -299,6 +299,23 @@ async fn hub_port_with_preset_returns_the_port() {
 }
 
 #[tokio::test]
+async fn set_group_on_unknown_project_is_404() {
+    let dir = tempfile::tempdir().unwrap();
+    write_procs(dir.path()); // project "test" exists; "ghost" does not
+    let base = spawn_api("secret", dir.path()).await;
+    let client = reqwest::Client::new();
+
+    let r = client
+        .patch(format!("{base}/projects/ghost/group"))
+        .bearer_auth("secret")
+        .json(&serde_json::json!({ "group_id": null }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 404, "unknown project_id must 404, matching the preset handlers");
+}
+
+#[tokio::test]
 async fn run_registers_starts_requires_token_and_is_idempotent() {
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(

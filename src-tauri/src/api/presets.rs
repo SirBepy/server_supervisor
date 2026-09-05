@@ -12,8 +12,10 @@ use axum::{
 use serde::Deserialize;
 
 /// Look up a project by id, or the shared 404 response every `:project_id`
-/// handler below needs when it is absent.
-fn find_project(state: &ApiState, project_id: &str) -> Result<Project, Response> {
+/// handler below needs when it is absent. `pub(super)` (not private): reused
+/// by `groups::set_project_group_api` so the group and preset APIs agree on
+/// what an unknown `project_id` does.
+pub(super) fn find_project(state: &ApiState, project_id: &str) -> Result<Project, Response> {
     state
         .sup
         .list_projects()

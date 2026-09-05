@@ -4,7 +4,7 @@ use super::ApiState;
 use axum::{
     extract::{Path, State},
     http::StatusCode,
-    response::IntoResponse,
+    response::{IntoResponse, Response},
     Json,
 };
 use serde::Deserialize;
@@ -54,11 +54,18 @@ pub(super) struct SetGroupBody {
     group_id: Option<String>,
 }
 
+/// Validates `project_id` first (matching every `:project_id` handler in
+/// `presets.rs`) before delegating: an unknown project now 404s the same way
+/// an unknown preset project does, instead of `groups::set_project_group`
+/// silently no-op-204ing on a project that was never registered.
 pub(super) async fn set_project_group_api(
     State(s): State<ApiState>,
     Path(project_id): Path<String>,
     Json(body): Json<SetGroupBody>,
-) -> impl IntoResponse {
+) -> Response {
+    if let Err(r) = super::presets::find_project(&s, &project_id) {
+        return r;
+    }
     match crate::groups::set_project_group(&s.data_dir, &project_id, body.group_id.as_deref()) {
         Ok(()) => StatusCode::NO_CONTENT.into_response(),
         Err(e) => (StatusCode::NOT_FOUND, e).into_response(),
