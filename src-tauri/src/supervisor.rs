@@ -22,6 +22,7 @@ pub mod spawn_env;
 pub mod sysstats;
 pub mod transient;
 pub mod validate;
+pub mod window;
 
 pub use registry::Supervisor;
 
