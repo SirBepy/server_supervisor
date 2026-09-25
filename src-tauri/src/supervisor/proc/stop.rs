@@ -67,6 +67,7 @@ mod tests {
             use_dynamic_port: true,
             fixed_port: None,
             env: String::new(),
+            dock_window: false,
         }
     }
 

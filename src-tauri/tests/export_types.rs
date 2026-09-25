@@ -13,8 +13,8 @@ use server_supervisor_lib::settings::Settings;
 use server_supervisor_lib::supervisor::proxy_hub::RequestLogEntry;
 use server_supervisor_lib::supervisor::validate::CommandCheck;
 use server_supervisor_lib::types::{
-    Command, DetectedCommand, EnvVar, LogLine, ProcInfo, ProcKind, ProcSpec, ProcStatus, Project,
-    Role, UpstreamPreset,
+    Command, DetectedCommand, DockOutcome, DockRect, DockState, EnvVar, LogLine, ProcInfo, ProcKind,
+    ProcSpec, ProcStatus, Project, Role, UpstreamPreset,
 };
 use std::fs;
 use std::path::PathBuf;
@@ -58,6 +58,9 @@ fn emit_ipc_types() {
     out.push_str(&decl::<VersionInfo>());
     out.push_str(&decl::<SystemStats>());
     out.push_str(&decl::<DiskUsage>());
+    out.push_str(&decl::<DockRect>());
+    out.push_str(&decl::<DockOutcome>());
+    out.push_str(&decl::<DockState>());
 
     let path = output_path();
     if let Some(parent) = path.parent() {

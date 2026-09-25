@@ -82,6 +82,14 @@ pub struct ProcSpec {
     /// `PATH=C:\node;%PATH%` to prepend a real node dir past the nvm symlink).
     #[serde(default)]
     pub env: String,
+    /// Whether this process's window should be docked into the dashboard
+    /// instead of left as a separate top-level window on the dev's desktop.
+    /// Per-command, off by default: most supervised processes are headless
+    /// dev servers with no window at all, so docking must be something the
+    /// dev opts into per command rather than something the supervisor tries
+    /// on everything.
+    #[serde(default)]
+    pub dock_window: bool,
 }
 
 /// One resolved env var actually applied to a spawned child (the parsed
@@ -187,6 +195,10 @@ impl ProcSpec {
             use_dynamic_port: command.use_dynamic_port,
             fixed_port: command.fixed_port,
             env: command.env.clone(),
+            // `Command` has no persisted dock toggle yet - that's the later
+            // persistence dispatch's job. Hardcoded off here so every flattened
+            // spec is a real, valid `ProcSpec` in the meantime.
+            dock_window: false,
         }
     }
 }
@@ -284,6 +296,47 @@ pub struct LogLine {
     /// "stdout" or "stderr".
     pub stream: String,
     pub text: String,
+}
+
+/// Screen-coordinate rectangle for docking a supervised process's window
+/// into a dashboard pane. A serde/TS-friendly mirror of
+/// `supervisor::window::Rect` (that type stays FFI-shaped, with no serde or
+/// TS derives, since it is passed by pointer straight into Win32 calls) so
+/// IPC and the frontend never see FFI plumbing.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, TS)]
+pub struct DockRect {
+    pub left: i32,
+    pub top: i32,
+    pub right: i32,
+    pub bottom: i32,
+}
+
+/// How a dock attempt actually landed. Mirrors
+/// `supervisor::window::DockOutcome` variant-for-variant. Kept a real enum
+/// (not a bool) all the way to the frontend: an embedded window has no title
+/// bar of its own to fight with, a soft-docked one still does, and the UI
+/// must render the two differently rather than collapsing them into one
+/// generic "docked" pill.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub enum DockOutcome {
+    Embedded,
+    SoftDocked,
+}
+
+/// Dock status of one supervised process, as read by the UI/API.
+/// `WindowLost` is distinct from both `NotDocked` and `Docked`: it means the
+/// process is alive but the window this module previously found (or is
+/// looking for) can't be located - the proven case is a force-killed host
+/// destroying an embedded guest's window while the guest process itself
+/// survives untouched (see `supervisor::window` module docs). The UI renders
+/// this as recoverable (offer a restart), never as plain "not docked".
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(tag = "state", rename_all = "snake_case")]
+pub enum DockState {
+    NotDocked,
+    Docked { mode: DockOutcome },
+    WindowLost,
 }
 
 #[cfg(test)]

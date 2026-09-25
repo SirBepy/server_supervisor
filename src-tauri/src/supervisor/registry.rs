@@ -111,6 +111,7 @@ mod tests {
             use_dynamic_port: false,
             fixed_port: None,
             env: String::new(),
+            dock_window: false,
         }
     }
 

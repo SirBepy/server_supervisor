@@ -4,6 +4,7 @@ pub mod crud;
 pub mod detect;
 pub mod dev_browser;
 pub mod disk;
+pub mod dock;
 pub mod flutter;
 pub mod hub_lifecycle;
 pub mod mem;

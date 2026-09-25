@@ -1,7 +1,7 @@
 use crate::supervisor::Supervisor;
-use crate::types::{LogLine, ProcInfo};
+use crate::types::{DockOutcome, DockRect, DockState, LogLine, ProcInfo};
 use std::sync::Arc;
-use tauri::State;
+use tauri::{AppHandle, State};
 
 // `async` so Tauri runs it on a worker thread, not the main/UI thread. The body
 // is sync (a quick lock + clone now that sampling is cached), but keeping it off
@@ -52,4 +52,40 @@ pub fn reload_proc(sup: State<Arc<Supervisor>>, id: String, full: bool) -> Resul
 #[tauri::command]
 pub fn get_proc_logs(sup: State<Arc<Supervisor>>, id: String) -> Result<Vec<LogLine>, String> {
     sup.logs(&id)
+}
+
+/// Docks `id`'s window into `rect` (dashboard pane bounds in screen
+/// coordinates). Marshals the actual Win32 work onto the main thread inside
+/// `Supervisor::dock_window` - see `supervisor::dock` module docs for why a
+/// command handler can never do that itself.
+#[tauri::command]
+pub fn dock_proc_window(
+    app: AppHandle,
+    sup: State<Arc<Supervisor>>,
+    id: String,
+    rect: DockRect,
+) -> Result<DockOutcome, String> {
+    sup.dock_window(&app, &id, rect)
+}
+
+#[tauri::command]
+pub fn undock_proc_window(app: AppHandle, sup: State<Arc<Supervisor>>, id: String) -> Result<(), String> {
+    sup.undock_window(&app, &id)
+}
+
+/// Re-places an already-docked proc's window as its pane's layout bounds
+/// change. A no-op when `id` isn't actively docked.
+#[tauri::command]
+pub fn set_proc_dock_bounds(
+    app: AppHandle,
+    sup: State<Arc<Supervisor>>,
+    id: String,
+    rect: DockRect,
+) -> Result<(), String> {
+    sup.reassert_dock(&app, &id, rect)
+}
+
+#[tauri::command]
+pub fn get_dock_state(sup: State<Arc<Supervisor>>, id: String) -> Result<DockState, String> {
+    Ok(sup.dock_state_for(&id).unwrap_or(DockState::NotDocked))
 }
