@@ -30,7 +30,7 @@ use std::collections::HashMap;
 use std::ffi::c_void;
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command};
+use std::process::{Child, Command, Stdio};
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 use std::{ptr, thread};
@@ -164,6 +164,7 @@ const BI_RGB: u32 = 0;
 const SRCCOPY: u32 = 0x00CC_0020;
 const STILL_ACTIVE: u32 = 259;
 const PROCESS_QUERY_LIMITED_INFORMATION: u32 = 0x1000;
+const PROCESS_TERMINATE: u32 = 0x0001;
 const TH32CS_SNAPPROCESS: u32 = 0x0000_0002;
 // DPI_HOSTING_BEHAVIOR_MIXED. Since Windows 10 1607, SetParent fails
 // outright when the parent and child threads have different DPI awareness
@@ -271,6 +272,7 @@ extern "system" {
     fn CloseHandle(h_object: HANDLE) -> BOOL;
     fn OpenProcess(dw_desired_access: u32, b_inherit_handle: BOOL, dw_process_id: u32) -> HANDLE;
     fn GetExitCodeProcess(h_process: HANDLE, lp_exit_code: *mut u32) -> BOOL;
+    fn TerminateProcess(h_process: HANDLE, u_exit_code: u32) -> BOOL;
     fn CreateToolhelp32Snapshot(dw_flags: u32, th32_process_id: u32) -> HANDLE;
     fn Process32FirstW(h_snapshot: HANDLE, lppe: *mut Processentry32W) -> BOOL;
     fn Process32NextW(h_snapshot: HANDLE, lppe: *mut Processentry32W) -> BOOL;
@@ -1981,4 +1983,438 @@ fn spike_running_tauri_app() {
         restore_verified,
         "!!! RESTORE FAILED - {app_name} window may be invisible, kill and relaunch it !!!"
     );
+}
+
+// ---------------------------------------------------------------------
+// Target 5: force-kill the host process while a guest is embedded in it.
+// Every leg above only exercises a cooperative shutdown (the host tears
+// itself down, restores, exits). This leg answers the one question that
+// actually blocks the production design: when the host is TerminateProcess-
+// killed instead, does the OS parent-destroy cascade take the guest's
+// window down with it (a windowless zombie process, strictly worse than
+// today's accepted orphan), or does the guest window/process survive in a
+// recoverable state?
+//
+// The host cannot live in this test's own process for this leg - killing
+// this process would end the test itself. It re-execs the test binary as a
+// child, handing it the guest HWND through an env var, and that child's
+// only job is to embed the guest and then pump messages forever until this
+// test terminates it out from under itself.
+// ---------------------------------------------------------------------
+
+/// Entry point for the re-exec'd host-mode child process. A no-op unless
+/// `EMBED_SPIKE_HOST_MODE` is set, so this reads as an ordinary (fast,
+/// harmless) ignored test to anything that runs the suite without that env
+/// var - including this very file's own `cargo test -- --ignored` runs of
+/// every other target.
+#[test]
+#[ignore]
+fn spike_force_kill_host_mode() {
+    if std::env::var("EMBED_SPIKE_HOST_MODE").as_deref() != Ok("1") {
+        return;
+    }
+    let guest_addr: usize = match std::env::var("EMBED_SPIKE_GUEST_HWND") {
+        Ok(s) => match s.parse() {
+            Ok(v) => v,
+            Err(_) => return,
+        },
+        Err(_) => return,
+    };
+    let guest = guest_addr as HWND;
+
+    unsafe {
+        SetThreadDpiHostingBehavior(DPI_HOSTING_BEHAVIOR_MIXED);
+    }
+
+    let class_name = wide("EmbedSpikeForceKillHostWindowClass");
+    let h_instance = unsafe { GetModuleHandleW(ptr::null()) };
+    let brush = unsafe { CreateSolidBrush(0x00FF00FF) };
+    let wc = WNDCLASSEXW {
+        cb_size: std::mem::size_of::<WNDCLASSEXW>() as u32,
+        style: 0,
+        lpfn_wnd_proc: wndproc,
+        cb_cls_extra: 0,
+        cb_wnd_extra: 0,
+        h_instance,
+        h_icon: ptr::null_mut(),
+        h_cursor: unsafe { LoadCursorW(ptr::null_mut(), 32512usize as *const u16) }, // IDC_ARROW
+        hbr_background: brush,
+        lpsz_menu_name: ptr::null(),
+        lpsz_class_name: class_name.as_ptr(),
+        h_icon_sm: ptr::null_mut(),
+    };
+    let atom = unsafe { RegisterClassExW(&wc) };
+    if atom == 0 {
+        return;
+    }
+    let title = wide("Embed Spike Force Kill Host");
+    let host = unsafe {
+        CreateWindowExW(
+            WS_EX_LEFT,
+            class_name.as_ptr(),
+            title.as_ptr(),
+            WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN,
+            50,
+            50,
+            1200,
+            820,
+            ptr::null_mut(),
+            ptr::null_mut(),
+            h_instance,
+            ptr::null_mut(),
+        )
+    };
+    if host.is_null() {
+        return;
+    }
+    unsafe {
+        ShowWindow(host, SW_SHOW);
+    }
+    pump_for(Duration::from_millis(200));
+
+    if unsafe { IsWindow(guest) } != 0 {
+        let orig_style = unsafe { GetWindowLongPtrW(guest, GWL_STYLE) };
+        let new_style = ((orig_style as u32) & !WS_OVERLAPPEDWINDOW & !WS_POPUP) | WS_CHILD;
+        unsafe {
+            SetWindowLongPtrW(guest, GWL_STYLE, new_style as isize);
+            SetParent(guest, host);
+            SetWindowPos(
+                guest,
+                ptr::null_mut(),
+                40,
+                40,
+                800,
+                600,
+                SWP_FRAMECHANGED | SWP_SHOWWINDOW | SWP_NOZORDER,
+            );
+        }
+    }
+    // The guest embed above may have failed (parent HWND raced ahead of
+    // this child's own SetParent, or the guest closed); the parent test
+    // observes that itself by polling GetParent(guest), not by anything
+    // this process reports back. Either way this process's only remaining
+    // job is to exist as a killable host - a clean return here would test
+    // process exit, not TerminateProcess, which is a different question.
+    loop {
+        pump_messages();
+        thread::sleep(Duration::from_millis(50));
+    }
+}
+
+/// Guarantees both the Edge guest and the re-exec'd host child are killed
+/// even if an assertion panics partway through. Unlike `Teardown`, the host
+/// side here is a real child process this test spawned (not a window in its
+/// own process), so its cleanup is a `Child::kill`/`wait` pair rather than
+/// `DestroyWindow`.
+struct ForceKillTeardown {
+    guest_pid: Option<u32>,
+    host_child: Option<Child>,
+}
+
+impl Drop for ForceKillTeardown {
+    fn drop(&mut self) {
+        if let Some(pid) = self.guest_pid.take() {
+            let _ = Command::new("taskkill")
+                .args(["/T", "/F", "/PID", &pid.to_string()])
+                .output();
+        }
+        if let Some(mut child) = self.host_child.take() {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+    }
+}
+
+#[test]
+#[ignore]
+fn spike_host_force_kill() {
+    let msedge = match find_msedge() {
+        Some(p) => p,
+        None => {
+            println!("SKIPPED spike_host_force_kill: msedge.exe not found at either usual install path");
+            return;
+        }
+    };
+
+    let html_dir = std::env::temp_dir().join("embed_spike_force_kill_html");
+    let _ = std::fs::create_dir_all(&html_dir);
+    let html_path = html_dir.join("spike.html");
+    let html = r#"<!doctype html><html><body style="margin:0">
+<div style="display:flex;height:100vh;width:100vw">
+  <div style="flex:1;background:#e6194b"></div>
+  <div style="flex:1;background:#3cb44b"></div>
+  <div style="flex:1;background:#4363d8"></div>
+  <div style="flex:1;background:#ffe119"></div>
+</div>
+<div style="position:absolute;top:40%;left:10%;font-size:64px;font-family:sans-serif;color:white">
+FORCE KILL SPIKE
+</div>
+</body></html>"#;
+    if std::fs::write(&html_path, html).is_err() {
+        println!("SKIPPED spike_host_force_kill: could not write temp html");
+        return;
+    }
+
+    let user_data_dir =
+        std::env::temp_dir().join(format!("embed_spike_force_kill_profile_{}", std::process::id()));
+    let html_url = format!("file:///{}", html_path.to_string_lossy().replace('\\', "/"));
+
+    let guest_child = match Command::new(&msedge)
+        .arg(format!("--app={html_url}"))
+        .arg(format!("--user-data-dir={}", user_data_dir.display()))
+        .arg("--no-first-run")
+        .arg("--no-default-browser-check")
+        .arg("--window-size=900,600")
+        .spawn()
+    {
+        Ok(c) => c,
+        Err(e) => {
+            println!("SKIPPED spike_host_force_kill: failed to spawn Edge guest: {e}");
+            return;
+        }
+    };
+    let guest_root_pid = guest_child.id();
+    // `guest_child` itself is never waited on: Edge's launcher process
+    // commonly exits immediately and hands off to a child, exactly like the
+    // rest of this file's `--app=` targets - the taskkill in
+    // `ForceKillTeardown` on `guest_root_pid` still reaps the whole process
+    // tree via `/T`.
+    drop(guest_child);
+
+    let mut teardown = ForceKillTeardown {
+        guest_pid: Some(guest_root_pid),
+        host_child: None,
+    };
+
+    let dir = screenshot_dir();
+
+    let guest = match find_guest_window(guest_root_pid, Duration::from_secs(45), true) {
+        Some((h, _was_hidden)) => h,
+        None => {
+            println!(
+                "spike_host_force_kill: no visible, unowned, non-zero-area top-level window found \
+                 for pid {guest_root_pid} or its descendants within 45s"
+            );
+            println!("OUTCOME: INVALID");
+            return;
+        }
+    };
+
+    let mut guest_owner_pid: u32 = 0;
+    unsafe {
+        GetWindowThreadProcessId(guest, &mut guest_owner_pid);
+    }
+
+    // Step 3: record original state before anything touches the guest.
+    let orig_style = unsafe { GetWindowLongPtrW(guest, GWL_STYLE) };
+    let orig_exstyle = unsafe { GetWindowLongPtrW(guest, GWL_EXSTYLE) };
+    let orig_parent = unsafe { GetParent(guest) };
+    let mut orig_rect = RECT::default();
+    unsafe {
+        GetWindowRect(guest, &mut orig_rect);
+    }
+    // Recorded per the spike plan's step 3, though recovery below restores
+    // to null rather than this value: a freshly launched Edge --app window
+    // is always its own top-level window (orig_parent is already null in
+    // every observed run), so this is evidence to print, not a value the
+    // restore call needs to branch on.
+    println!("spike_host_force_kill: orig_parent={orig_parent:?} orig_rect={orig_rect:?}");
+
+    // Step 4: spawn the re-exec'd host-mode child, handing it the guest
+    // HWND. HWNDs are desktop-global handles, not per-process pointers, so
+    // passing the numeric value across processes this way is valid.
+    let exe_path = match std::env::current_exe() {
+        Ok(p) => p,
+        Err(e) => {
+            println!("spike_host_force_kill: std::env::current_exe() failed: {e}");
+            println!("OUTCOME: INVALID");
+            return;
+        }
+    };
+    let host_child = match Command::new(&exe_path)
+        .args(["--ignored", "--exact", "--nocapture", "spike_force_kill_host_mode"])
+        .env("EMBED_SPIKE_HOST_MODE", "1")
+        .env("EMBED_SPIKE_GUEST_HWND", format!("{}", guest as usize))
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+    {
+        Ok(c) => c,
+        Err(e) => {
+            println!("spike_host_force_kill: failed to spawn host-mode child: {e}");
+            println!("OUTCOME: INVALID");
+            return;
+        }
+    };
+    let host_pid = host_child.id();
+    teardown.host_child = Some(host_child);
+    println!("spike_host_force_kill: host-mode child spawned, pid={host_pid}");
+
+    // Step 5: poll until GetParent(guest) is non-null, proving the embed
+    // actually happened, rather than assuming the child's SetParent ran in
+    // time.
+    let start = Instant::now();
+    let mut embedded = false;
+    while start.elapsed() < Duration::from_secs(30) {
+        pump_messages();
+        if unsafe { IsWindow(guest) } == 0 {
+            println!("spike_host_force_kill: guest window vanished while waiting for embed");
+            println!("OUTCOME: INVALID");
+            return;
+        }
+        if !unsafe { GetParent(guest) }.is_null() {
+            embedded = true;
+            break;
+        }
+        thread::sleep(Duration::from_millis(150));
+    }
+    if !embedded {
+        println!("spike_host_force_kill: embed did not happen within 30s (GetParent(guest) stayed null)");
+        println!("OUTCOME: INVALID");
+        return;
+    }
+    println!("spike_host_force_kill: embed confirmed, GetParent(guest) is non-null");
+
+    // Step 6: force-kill the host. Not a graceful close, not WM_CLOSE - a
+    // raw TerminateProcess via a freshly opened handle, since that is the
+    // exact mechanism a crashed/killed supervisor would hit in production.
+    let terminate_ok = unsafe {
+        let h = OpenProcess(PROCESS_TERMINATE, 0, host_pid);
+        if h.is_null() {
+            false
+        } else {
+            let ok = TerminateProcess(h, 1) != 0;
+            CloseHandle(h);
+            ok
+        }
+    };
+    println!("spike_host_force_kill: TerminateProcess(host pid {host_pid}) -> {terminate_ok}");
+    if let Some(mut hc) = teardown.host_child.take() {
+        // Reaps the process so it never lingers as a zombie; TerminateProcess
+        // above already did the actual killing.
+        let _ = hc.wait();
+    }
+
+    // Step 7: wait, then record every outcome as its own named boolean.
+    thread::sleep(Duration::from_secs(2));
+    pump_messages();
+
+    let guest_process_alive = unsafe {
+        let h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, guest_owner_pid);
+        if h.is_null() {
+            false
+        } else {
+            let mut code: u32 = 0;
+            let ok = GetExitCodeProcess(h, &mut code) != 0;
+            CloseHandle(h);
+            ok && code == STILL_ACTIVE
+        }
+    };
+    let guest_hwnd_still_window = unsafe { IsWindow(guest) } != 0;
+    let guest_hwnd_visible = guest_hwnd_still_window && unsafe { IsWindowVisible(guest) != 0 };
+    let guest_parent_now = if guest_hwnd_still_window {
+        unsafe { GetParent(guest) }
+    } else {
+        ptr::null_mut()
+    };
+    let guest_parent_now_is_null = guest_parent_now.is_null();
+    let mut guest_rect = RECT::default();
+    let guest_rect_ok =
+        guest_hwnd_still_window && unsafe { GetWindowRect(guest, &mut guest_rect) != 0 };
+
+    println!("===== FORCE-KILL RESULT: edge_guest_under_killed_host =====");
+    println!("guest_process_alive:      {guest_process_alive}");
+    println!("guest_hwnd_still_window:  {guest_hwnd_still_window}");
+    println!("guest_hwnd_visible:       {guest_hwnd_visible}");
+    println!("guest_parent_now:         {guest_parent_now:?} (null={guest_parent_now_is_null})");
+    if guest_rect_ok {
+        println!("guest_rect:               {guest_rect:?}");
+    } else {
+        println!("guest_rect:               (GetWindowRect failed or window gone)");
+    }
+
+    // Step 8: attempt recovery. This is the part the production design
+    // actually needs an answer for - not just "did it survive" but "can it
+    // be put back to a normal top-level window".
+    let mut recovery_possible = false;
+    let mut recovery_visible = false;
+    let mut recovery_pixel_content_ok: Option<bool> = None;
+    if guest_hwnd_still_window {
+        unsafe {
+            SetParent(guest, ptr::null_mut());
+            SetWindowLongPtrW(guest, GWL_STYLE, orig_style);
+            SetWindowLongPtrW(guest, GWL_EXSTYLE, orig_exstyle);
+            SetWindowPos(
+                guest,
+                ptr::null_mut(),
+                orig_rect.left,
+                orig_rect.top,
+                orig_rect.right - orig_rect.left,
+                orig_rect.bottom - orig_rect.top,
+                SWP_FRAMECHANGED | SWP_SHOWWINDOW,
+            );
+            ShowWindow(guest, SW_SHOW);
+        }
+        pump_for(Duration::from_millis(500));
+        recovery_possible = unsafe { IsWindow(guest) } != 0;
+        recovery_visible = recovery_possible && unsafe { IsWindowVisible(guest) != 0 };
+
+        if recovery_possible {
+            let mut rect_after = RECT::default();
+            unsafe {
+                GetWindowRect(guest, &mut rect_after);
+            }
+            if let Some((method, width, height, pixels)) = capture_host(guest, rect_after) {
+                let full = RECT {
+                    left: 0,
+                    top: 0,
+                    right: width,
+                    bottom: height,
+                };
+                let (distinct, dominant, total) = analyze_region(&pixels, width, full);
+                let pct = if total > 0 {
+                    (dominant as f64 / total as f64) * 100.0
+                } else {
+                    100.0
+                };
+                let content_ok = distinct > 16 && pct < 95.0;
+                println!("recovery_capture_method: {method}");
+                println!("recovery_distinct_colours: {distinct}");
+                println!("recovery_dominant_colour_pct: {pct:.1}");
+                println!("recovery_pixel_content_ok: {content_ok}");
+                recovery_pixel_content_ok = Some(content_ok);
+                let bmp_path = dir.join("embed-spike-force-kill-recovery.bmp");
+                if write_bmp(&bmp_path, width, height, &pixels).is_ok() {
+                    println!("recovery bitmap written to {}", bmp_path.display());
+                }
+            } else {
+                println!("recovery_capture_method: capture failed (both PrintWindow and BitBlt)");
+            }
+        }
+    } else {
+        println!("recovery skipped: guest_hwnd_still_window is false, nothing to reparent back");
+    }
+
+    println!("recovery_possible:        {recovery_possible}");
+    println!("recovery_visible:         {recovery_visible}");
+    println!("recovery_pixel_content_ok: {recovery_pixel_content_ok:?}");
+
+    // guest_hwnd_still_window implies the window survived the host's
+    // destroy cascade; a window cannot outlive the process that owns it, so
+    // "window gone" always means "process alive with no window" or "process
+    // gone with it" - never both true.
+    let outcome = if guest_hwnd_still_window {
+        "(b) RECOVERABLE"
+    } else if guest_process_alive {
+        "(a) WINDOWLESS ZOMBIE"
+    } else {
+        "(c) GUEST EXITED WITH HOST"
+    };
+    println!("OUTCOME: {outcome}");
+    println!("=====================================================");
+
+    // Step 9: teardown. `ForceKillTeardown::drop` kills the Edge guest tree
+    // (host_child is already reaped above, but the guard covers a panic
+    // that happens before that point too).
+    drop(teardown);
 }
