@@ -25,11 +25,13 @@
 // dialect - the same choice the `windows-sys` crate itself makes.
 #![allow(clippy::upper_case_acronyms)]
 
+use std::cell::Cell;
 use std::collections::HashMap;
 use std::ffi::c_void;
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command};
+use std::rc::Rc;
 use std::time::{Duration, Instant};
 use std::{ptr, thread};
 
@@ -133,10 +135,24 @@ const WS_CLIPCHILDREN: u32 = 0x0200_0000;
 const WS_CHILD: u32 = 0x4000_0000;
 const WS_POPUP: u32 = 0x8000_0000;
 const WS_EX_LEFT: u32 = 0;
+const WS_EX_TOOLWINDOW: u32 = 0x0000_0080;
+const WS_EX_TRANSPARENT: u32 = 0x0000_0020;
+const WS_EX_NOACTIVATE: u32 = 0x0800_0000;
 const SW_SHOW: i32 = 5;
+const SW_HIDE: i32 = 0;
 const GWL_STYLE: i32 = -16;
 const GWL_EXSTYLE: i32 = -20;
 const GW_OWNER: u32 = 4;
+// A real application main window is never this small - but this floor is
+// deliberately lower than a first draft (200px either dimension) because
+// live testing falsified that draft: the dev's own pomodoro-overlay and
+// windows-taskbar-widgets are legitimately narrow HUD bars (200x100 and
+// 468x48), and rejecting either would have thrown out the real window
+// this pass exists to find. 32 sits well above the 16x16 helper surface
+// that caused the original bug and well below the smallest real window
+// dimension seen (48px), so it separates the two without re-admitting
+// the helper.
+const MIN_MAIN_WINDOW_DIM: i32 = 32;
 const SWP_NOZORDER: u32 = 0x0004;
 const SWP_FRAMECHANGED: u32 = 0x0020;
 const SWP_SHOWWINDOW: u32 = 0x0040;
@@ -362,41 +378,166 @@ unsafe extern "system" fn enum_proc(hwnd: HWND, lparam: LPARAM) -> BOOL {
     1
 }
 
-/// Polls up to `timeout` for a top-level, visible, unowned, non-zero-area
-/// window belonging to `root_pid` or any of its descendants.
-fn find_guest_window(root_pid: u32, timeout: Duration) -> Option<HWND> {
+/// A window that survived every rejection filter below and is eligible to
+/// be picked as the guest's real main window.
+struct GuestCandidate {
+    hwnd: HWND,
+    visible: bool,
+    // pid == root_pid, i.e. owned by the app's own process rather than a
+    // descendant. Chromium/WebView2 helper subprocesses (gpu-process,
+    // renderer, audio service) reliably own a hidden, monitor-sized
+    // compositor surface window that carries none of the TOOLWINDOW /
+    // TRANSPARENT / NOACTIVATE flags and would otherwise out-area the
+    // app's real window under a plain largest-wins rule - confirmed live
+    // via Get-Process on the owning pid for all three attach targets.
+    root_owned: bool,
+    area: i64,
+}
+
+/// Narrows `candidates` to the single tier the final pick should come from:
+/// visible beats hidden, and within a visibility tier, root_pid-owned beats
+/// descendant-owned. Falling back to the descendant tier only when no
+/// root-owned survivor exists at that visibility level keeps the spawn
+/// path's legitimate case intact (a launcher/browser process handing the
+/// real window to a child - see this function's own doc comment on
+/// `require_visible`), while stopping a same-tier helper-process surface
+/// from beating the app's own window purely on area.
+fn best_tier(candidates: &[GuestCandidate]) -> Vec<&GuestCandidate> {
+    for want_visible in [true, false] {
+        let visible_tier: Vec<&GuestCandidate> = candidates
+            .iter()
+            .filter(|c| c.visible == want_visible)
+            .collect();
+        if visible_tier.is_empty() {
+            continue;
+        }
+        let root_tier: Vec<&GuestCandidate> =
+            visible_tier.iter().filter(|c| c.root_owned).copied().collect();
+        return if root_tier.is_empty() {
+            visible_tier
+        } else {
+            root_tier
+        };
+    }
+    Vec::new()
+}
+
+/// Polls up to `timeout` for the guest's real top-level main window,
+/// belonging to `root_pid` or any of its descendants. Shared by both the
+/// spawn path (`run_spike`) and the attach path (`run_attach_spike`) so a
+/// filter fix here never has to be made twice.
+///
+/// `require_visible` is the one deliberate difference between the two
+/// callers: the spawn path just launched the process and can keep polling
+/// until a window appears on screen, so it passes `true`. The attach path
+/// is reaching for an app the dev already has running, which may be hidden
+/// to the tray - that hidden window is still the legitimate embed target,
+/// so it passes `false` and accepts a non-visible candidate.
+///
+/// Every candidate considered is logged with why it was rejected or kept,
+/// and the caller learns whether the window it got back was hidden
+/// (`was_hidden` in the returned tuple) since the wrong-window bug this
+/// replaces was a silent wrong pick.
+fn find_guest_window(root_pid: u32, timeout: Duration, require_visible: bool) -> Option<(HWND, bool)> {
     let start = Instant::now();
-    while start.elapsed() < timeout {
+    loop {
         pump_messages();
         let descendants = descendant_pids(root_pid);
         let mut found = FoundWindows { hwnds: Vec::new() };
         unsafe {
             EnumWindows(enum_proc, &mut found as *mut FoundWindows as LPARAM);
         }
+
+        let mut candidates: Vec<GuestCandidate> = Vec::new();
         for hwnd in found.hwnds {
             unsafe {
                 let mut pid: u32 = 0;
                 GetWindowThreadProcessId(hwnd, &mut pid);
+                // Windows belonging to an unrelated process are not this
+                // guest's helper surfaces or main window - skip silently,
+                // logging every one of them would drown the real output in
+                // noise from the rest of the desktop.
                 if !descendants.contains(&pid) {
                     continue;
                 }
-                if IsWindowVisible(hwnd) == 0 {
-                    continue;
-                }
-                if !GetWindow(hwnd, GW_OWNER).is_null() {
-                    continue;
-                }
+
+                let visible = IsWindowVisible(hwnd) != 0;
                 let mut rect = RECT::default();
                 GetWindowRect(hwnd, &mut rect);
-                if rect.right - rect.left <= 0 || rect.bottom - rect.top <= 0 {
+                let width = rect.right - rect.left;
+                let height = rect.bottom - rect.top;
+                let exstyle = GetWindowLongPtrW(hwnd, GWL_EXSTYLE) as u32;
+                let has_owner = !GetWindow(hwnd, GW_OWNER).is_null();
+
+                let mut reasons: Vec<&str> = Vec::new();
+                if require_visible && !visible {
+                    reasons.push("not visible");
+                }
+                if has_owner {
+                    reasons.push("has GW_OWNER");
+                }
+                if width < MIN_MAIN_WINDOW_DIM || height < MIN_MAIN_WINDOW_DIM {
+                    reasons.push("too small");
+                }
+                if exstyle & WS_EX_TOOLWINDOW != 0 {
+                    reasons.push("WS_EX_TOOLWINDOW");
+                }
+                if exstyle & WS_EX_TRANSPARENT != 0 {
+                    reasons.push("WS_EX_TRANSPARENT");
+                }
+                if exstyle & WS_EX_NOACTIVATE != 0 {
+                    reasons.push("WS_EX_NOACTIVATE");
+                }
+
+                if !reasons.is_empty() {
+                    println!(
+                        "[finder] pid={pid} hwnd={} {width}x{height} ex=0x{exstyle:08X} REJECTED ({})",
+                        hwnd as usize,
+                        reasons.join(", ")
+                    );
                     continue;
                 }
-                return Some(hwnd);
+
+                println!(
+                    "[finder] pid={pid} hwnd={} {width}x{height} ex=0x{exstyle:08X} CANDIDATE{}",
+                    hwnd as usize,
+                    if visible { "" } else { " (hidden)" }
+                );
+                candidates.push(GuestCandidate {
+                    hwnd,
+                    visible,
+                    root_owned: pid == root_pid,
+                    area: (width as i64) * (height as i64),
+                });
             }
+        }
+
+        // Largest-by-area alone is not enough: a WebView2/Chromium helper
+        // subprocess can own a full-screen invisible compositor surface
+        // (confirmed live via Get-Process on the owning pid, across all
+        // three attach targets) that carries none of the reject flags above
+        // and outsizes the app's real window, which would otherwise win
+        // outright under a plain largest-wins rule. `best_tier` picks
+        // visible-and-root-owned first and only relaxes one axis at a time;
+        // "largest by area" then only breaks ties inside that tier.
+        let pool = best_tier(&candidates);
+        if let Some(best) = pool.iter().max_by_key(|c| c.area) {
+            println!(
+                "[finder] chosen hwnd={} (largest of {} {}{}candidate{})",
+                best.hwnd as usize,
+                pool.len(),
+                if best.visible { "visible " } else { "hidden " },
+                if best.root_owned { "root-owned " } else { "descendant " },
+                if pool.len() == 1 { "" } else { "s" }
+            );
+            return Some((best.hwnd, !best.visible));
+        }
+
+        if start.elapsed() >= timeout {
+            return None;
         }
         thread::sleep(Duration::from_millis(150));
     }
-    None
 }
 
 // ---------------------------------------------------------------------
@@ -456,6 +597,9 @@ struct Verdict {
     setparent_last_error: u32,
     parent_matches: bool,
     guest_alive: bool,
+    // Only meaningful on the attach path: the spawn path requires
+    // visibility as a finder precondition, so it is always false there.
+    guest_was_hidden: bool,
     rect_inside_host: bool,
     capture_method: String,
     distinct_colours: usize,
@@ -492,6 +636,7 @@ impl Verdict {
         println!("setparent_last_error:    {}", self.setparent_last_error);
         println!("parent_matches:          {}", self.parent_matches);
         println!("guest_alive:             {}", self.guest_alive);
+        println!("guest_was_hidden:        {}", self.guest_was_hidden);
         println!("rect_inside_host:        {}", self.rect_inside_host);
         println!("capture_method:          {}", self.capture_method);
         println!("distinct_colours:        {}", self.distinct_colours);
@@ -500,7 +645,10 @@ impl Verdict {
         println!("release_restored_ok:     {}", self.release_restored_ok);
         println!("host_dpi_context:        {}", self.host_dpi_context);
         println!("guest_dpi_context:       {}", self.guest_dpi_context);
-        println!("dpi_hosting_behavior_set: {}", self.dpi_hosting_behavior_set);
+        println!(
+            "dpi_hosting_behavior_set: {}",
+            self.dpi_hosting_behavior_set
+        );
         match &self.bitmap {
             Some(p) => println!("bitmap:                  {}", p.display()),
             None => println!("bitmap:                  (none captured)"),
@@ -572,7 +720,13 @@ fn screen_dimensions_ok(rect: &RECT) -> bool {
 /// content - the older flag returns black for it) or a screen `BitBlt` of
 /// the host's rect. Returns a top-down 32bpp BGRA buffer sized
 /// `width * height * 4`.
-fn capture_frame(host: HWND, host_rect: RECT, width: i32, height: i32, use_printwindow: bool) -> Option<Vec<u8>> {
+fn capture_frame(
+    host: HWND,
+    host_rect: RECT,
+    width: i32,
+    height: i32,
+    use_printwindow: bool,
+) -> Option<Vec<u8>> {
     unsafe {
         let screen_dc = GetDC(ptr::null_mut());
         if screen_dc.is_null() {
@@ -657,7 +811,12 @@ fn capture_host(host: HWND, host_rect: RECT) -> Option<(String, i32, i32, Vec<u8
         return None;
     }
     if let Some(pixels) = capture_frame(host, host_rect, width, height, true) {
-        return Some(("PrintWindow(PW_RENDERFULLCONTENT)".to_string(), width, height, pixels));
+        return Some((
+            "PrintWindow(PW_RENDERFULLCONTENT)".to_string(),
+            width,
+            height,
+            pixels,
+        ));
     }
     capture_frame(host, host_rect, width, height, false)
         .map(|pixels| ("BitBlt(screen)".to_string(), width, height, pixels))
@@ -730,9 +889,10 @@ where
     };
     let atom = unsafe { RegisterClassExW(&wc) };
     if atom == 0 {
-        println!("[{target_name}] RegisterClassExW failed, GetLastError={}", unsafe {
-            GetLastError()
-        });
+        println!(
+            "[{target_name}] RegisterClassExW failed, GetLastError={}",
+            unsafe { GetLastError() }
+        );
         return verdict;
     }
 
@@ -762,9 +922,10 @@ where
     };
 
     if host.is_null() {
-        println!("[{target_name}] CreateWindowExW(host) failed, GetLastError={}", unsafe {
-            GetLastError()
-        });
+        println!(
+            "[{target_name}] CreateWindowExW(host) failed, GetLastError={}",
+            unsafe { GetLastError() }
+        );
         return verdict;
     }
     unsafe {
@@ -787,8 +948,12 @@ where
     let root_pid = child.id();
     teardown.guest_pid = Some(root_pid);
 
-    let guest = match find_guest_window(root_pid, Duration::from_secs(45)) {
-        Some(h) => h,
+    // The spawn path just launched this process, so it requires visibility
+    // (`require_visible: true`) rather than accepting a not-yet-shown
+    // window - see `find_guest_window`'s doc comment for why the attach
+    // path below differs.
+    let guest = match find_guest_window(root_pid, Duration::from_secs(45), true) {
+        Some((h, _was_hidden)) => h,
         None => {
             println!(
                 "[{target_name}] no visible, unowned, non-zero-area top-level window found for \
@@ -887,8 +1052,14 @@ where
 
     // rect_inside_host: compare guest's screen rect against the host's
     // client rect converted to screen coordinates.
-    let mut host_client_screen_tl = POINT { x: host_client.left, y: host_client.top };
-    let mut host_client_screen_br = POINT { x: host_client.right, y: host_client.bottom };
+    let mut host_client_screen_tl = POINT {
+        x: host_client.left,
+        y: host_client.top,
+    };
+    let mut host_client_screen_br = POINT {
+        x: host_client.right,
+        y: host_client.bottom,
+    };
     unsafe {
         ClientToScreen(host, &mut host_client_screen_tl);
         ClientToScreen(host, &mut host_client_screen_br);
@@ -938,7 +1109,8 @@ where
         // distinct from "the guest truly isn't rendering".
         let mut final_pixels = pixels;
         if method.starts_with("PrintWindow") && distinct <= 1 {
-            if let Some(retry_pixels) = capture_frame(host, host_rect_screen, width, height, false) {
+            if let Some(retry_pixels) = capture_frame(host, host_rect_screen, width, height, false)
+            {
                 let (d2, dom2, tot2) = analyze_region(&retry_pixels, width, sub);
                 verdict.capture_method = "BitBlt(screen)".to_string();
                 verdict.distinct_colours = d2;
@@ -988,8 +1160,7 @@ where
     pump_for(Duration::from_millis(500));
     let parent_after_restore = unsafe { GetParent(guest) };
     let still_window_after_restore = unsafe { IsWindow(guest) } != 0;
-    verdict.release_restored_ok =
-        parent_after_restore == orig_parent && still_window_after_restore;
+    verdict.release_restored_ok = parent_after_restore == orig_parent && still_window_after_restore;
 
     verdict
 }
@@ -1065,7 +1236,9 @@ fn spike_edge_app_window() {
     let msedge = match find_msedge() {
         Some(p) => p,
         None => {
-            println!("SKIPPED spike_edge_app_window: msedge.exe not found at either usual install path");
+            println!(
+                "SKIPPED spike_edge_app_window: msedge.exe not found at either usual install path"
+            );
             return;
         }
     };
@@ -1089,10 +1262,8 @@ EMBED SPIKE
     // A fresh --user-data-dir per run is required: without one, this
     // launch hands off to any already-running Edge process and our
     // spawned PID exits immediately with no window of its own.
-    let user_data_dir = std::env::temp_dir().join(format!(
-        "embed_spike_edge_profile_{}",
-        std::process::id()
-    ));
+    let user_data_dir =
+        std::env::temp_dir().join(format!("embed_spike_edge_profile_{}", std::process::id()));
 
     let dir = screenshot_dir();
     let html_url = format!("file:///{}", html_path.to_string_lossy().replace('\\', "/"));
@@ -1227,7 +1398,9 @@ fn spike_tauri_webview2() {
         ) {
             Ok(true) => {}
             other => {
-                println!("SKIPPED spike_tauri_webview2: npm install failed or timed out: {other:?}");
+                println!(
+                    "SKIPPED spike_tauri_webview2: npm install failed or timed out: {other:?}"
+                );
                 return;
             }
         }
@@ -1235,7 +1408,9 @@ fn spike_tauri_webview2() {
 
     println!("spike_tauri_webview2: running npm run build");
     match run_with_timeout(
-        Command::new("npm.cmd").args(["run", "build"]).current_dir(&root),
+        Command::new("npm.cmd")
+            .args(["run", "build"])
+            .current_dir(&root),
         Duration::from_secs(600),
     ) {
         Ok(true) => {}
@@ -1287,4 +1462,523 @@ fn spike_tauri_webview2() {
     let dir = screenshot_dir();
     let verdict = run_spike_with_retries("tauri_webview2", &dir, || Command::new(&exe).spawn());
     verdict.print("tauri_webview2");
+}
+
+// ---------------------------------------------------------------------
+// Target 4: an already-running Tauri app, attached rather than spawned.
+// spike_tauri_webview2 above never actually exercised a real Tauri window
+// because launching this repo's own binary hands off to the dev's running
+// instance via tauri-plugin-single-instance and exits with no window of
+// its own - an artifact of using this project as its own guinea pig, not
+// a statement about the embedding mechanism. This test sidesteps that by
+// reaching for a Tauri app the dev already has open.
+//
+// Everything here is the dev's live application, not a process this test
+// owns, so the rules are different from every target above: nothing may
+// ever taskkill it, and restoring its window ranks above producing a
+// verdict at all - see `AttachTeardown` below.
+// ---------------------------------------------------------------------
+
+/// Returns the PID of the first running process matching `exe_name_lower`
+/// (e.g. "pomodoro-overlay.exe"), or None if it is not running. Unlike
+/// `any_process_named`, callers here need the PID itself to hand to
+/// `find_guest_window`, not just a yes/no.
+fn find_pid_by_name(exe_name_lower: &str) -> Option<u32> {
+    unsafe {
+        let snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+        if snap.is_null() {
+            return None;
+        }
+        let mut entry: Processentry32W = std::mem::zeroed();
+        entry.dw_size = std::mem::size_of::<Processentry32W>() as u32;
+        let mut result = None;
+        if Process32FirstW(snap, &mut entry) != 0 {
+            loop {
+                let name = String::from_utf16_lossy(
+                    &entry.sz_exe_file[..entry
+                        .sz_exe_file
+                        .iter()
+                        .position(|&c| c == 0)
+                        .unwrap_or(entry.sz_exe_file.len())],
+                );
+                if name.to_lowercase() == exe_name_lower {
+                    result = Some(entry.th32_process_id);
+                    break;
+                }
+                entry.dw_size = std::mem::size_of::<Processentry32W>() as u32;
+                if Process32NextW(snap, &mut entry) == 0 {
+                    break;
+                }
+            }
+        }
+        CloseHandle(snap);
+        result
+    }
+}
+
+/// Picks the attach target: `$EMBED_SPIKE_ATTACH` if set, else the first
+/// running match from the dev's usual Tauri apps, in priority order.
+fn resolve_attach_target() -> Option<(String, u32)> {
+    if let Ok(name) = std::env::var("EMBED_SPIKE_ATTACH") {
+        let trimmed = name.trim();
+        if !trimmed.is_empty() {
+            let base = trimmed.trim_end_matches(".exe").to_string();
+            let exe_lower = format!("{}.exe", base.to_lowercase());
+            return find_pid_by_name(&exe_lower).map(|pid| (base, pid));
+        }
+    }
+    for name in [
+        "pomodoro-overlay",
+        "windows-taskbar-widgets",
+        "claude-conductor",
+    ] {
+        let exe_lower = format!("{name}.exe");
+        if let Some(pid) = find_pid_by_name(&exe_lower) {
+            return Some((name.to_string(), pid));
+        }
+    }
+    None
+}
+
+/// What the `AttachTeardown` guard found when it tried to put the guest
+/// window back exactly as it found it. `attempted` stays false only if the
+/// guard never ran at all (impossible short of `mem::forget`), so a
+/// default value reads as a failed restore rather than a silent pass.
+#[derive(Clone, Copy, Default)]
+struct RestoreOutcome {
+    attempted: bool,
+    parent_null: bool,
+    // Whether IsWindowVisible after restore matches the show-state the
+    // guard captured before the spike touched anything - not a bare
+    // "is visible", since a window that started hidden to the tray must
+    // end hidden, not end up shown.
+    visible_matches_original: bool,
+    rect_matches: bool,
+}
+
+impl RestoreOutcome {
+    fn ok(&self) -> bool {
+        self.attempted && self.parent_null && self.visible_matches_original && self.rect_matches
+    }
+}
+
+/// Teardown for the attach case. Unlike `Teardown`, this struct has no PID
+/// field and no taskkill call anywhere in it - there is structurally
+/// nothing here that can terminate the dev's own live application, even on
+/// a panicking unwind, because the guard never took a process handle to
+/// begin with. Its only job is putting the guest window back and proving
+/// it, which is why the restore runs unconditionally in `Drop` instead of
+/// at the end of `run_attach_spike` - a panic or an early return still
+/// reaches this.
+struct AttachTeardown {
+    host: HWND,
+    class_name: Vec<u16>,
+    h_instance: HINSTANCE,
+    guest: HWND,
+    orig_style: isize,
+    orig_exstyle: isize,
+    orig_parent: HWND,
+    orig_rect: RECT,
+    // Show-state as found, before this guard's SetParent/SetWindowPos ever
+    // ran. Restoring style/parent/rect is not enough to restore this - see
+    // the comment on the ShowWindow call below.
+    orig_visible: bool,
+    app_name: String,
+    outcome: Rc<Cell<RestoreOutcome>>,
+}
+
+impl Drop for AttachTeardown {
+    fn drop(&mut self) {
+        let still_a_window = unsafe { IsWindow(self.guest) } != 0;
+        let outcome = if still_a_window {
+            unsafe {
+                SetWindowLongPtrW(self.guest, GWL_STYLE, self.orig_style);
+                SetWindowLongPtrW(self.guest, GWL_EXSTYLE, self.orig_exstyle);
+                SetParent(self.guest, self.orig_parent);
+                SetWindowPos(
+                    self.guest,
+                    ptr::null_mut(),
+                    self.orig_rect.left,
+                    self.orig_rect.top,
+                    self.orig_rect.right - self.orig_rect.left,
+                    self.orig_rect.bottom - self.orig_rect.top,
+                    SWP_FRAMECHANGED,
+                );
+                // SetWindowLongPtrW on GWL_STYLE does not reliably toggle
+                // WS_VISIBLE by itself (MSDN: use ShowWindow/EnableWindow
+                // for that bit, not SetWindowLongPtr) - an explicit
+                // ShowWindow call is the only way to guarantee a window
+                // that started hidden to the tray ends hidden again.
+                ShowWindow(
+                    self.guest,
+                    if self.orig_visible { SW_SHOW } else { SW_HIDE },
+                );
+            }
+            pump_for(Duration::from_millis(500));
+            let mut o = RestoreOutcome {
+                attempted: true,
+                ..Default::default()
+            };
+            unsafe {
+                o.parent_null = GetParent(self.guest).is_null();
+                o.visible_matches_original =
+                    (IsWindowVisible(self.guest) != 0) == self.orig_visible;
+                let mut rect = RECT::default();
+                GetWindowRect(self.guest, &mut rect);
+                o.rect_matches = rect.left == self.orig_rect.left
+                    && rect.top == self.orig_rect.top
+                    && rect.right == self.orig_rect.right
+                    && rect.bottom == self.orig_rect.bottom;
+            }
+            if !o.ok() {
+                println!(
+                    "!!! RESTORE FAILED - {} window may be invisible, kill and relaunch it !!!",
+                    self.app_name
+                );
+            }
+            o
+        } else {
+            // The handle is already gone (e.g. the dev closed the app
+            // mid-test). Hammering a dead HWND with SetParent/SetWindowPos
+            // would only manufacture a false "restore failed" for a state
+            // this guard did not cause - the INVALID verdict above already
+            // explains why.
+            println!(
+                "[{}] guest window no longer exists at teardown time, nothing to restore",
+                self.app_name
+            );
+            RestoreOutcome {
+                attempted: true,
+                parent_null: true,
+                visible_matches_original: true,
+                rect_matches: true,
+            }
+        };
+        self.outcome.set(outcome);
+
+        unsafe {
+            if !self.host.is_null() {
+                DestroyWindow(self.host);
+            }
+            UnregisterClassW(self.class_name.as_ptr(), self.h_instance);
+        }
+    }
+}
+
+/// Mirrors `run_spike`'s embed/measure steps for a window this test did not
+/// launch. Returns the verdict plus whether the restore actually verified,
+/// which the caller asserts on separately, since restoring the dev's
+/// window outranks producing an embedding verdict at all.
+fn run_attach_spike(app_name: &str, screenshot_dir: &Path, guest: HWND) -> (Verdict, bool) {
+    let mut verdict = Verdict::default();
+
+    if unsafe { IsWindow(guest) } == 0 {
+        verdict.invalid_reason = Some(format!(
+            "{app_name} window vanished before the spike could start"
+        ));
+        return (verdict, true); // nothing was ever touched, so nothing to restore
+    }
+
+    // Highest priority in this test, done before anything else touches the
+    // guest: snapshot exactly what a restore needs, so the Drop guard
+    // below can reach it on every exit path, including a panic.
+    let orig_style = unsafe { GetWindowLongPtrW(guest, GWL_STYLE) };
+    let orig_exstyle = unsafe { GetWindowLongPtrW(guest, GWL_EXSTYLE) };
+    let orig_parent = unsafe { GetParent(guest) };
+    let orig_visible = unsafe { IsWindowVisible(guest) } != 0;
+    let mut orig_rect = RECT::default();
+    unsafe {
+        GetWindowRect(guest, &mut orig_rect);
+    }
+    // A hidden guest (e.g. an app minimised to the tray) is still a
+    // legitimate embed target - the finder's `require_visible: false` on
+    // this path is what let it through - but nothing would render until
+    // it is explicitly shown below.
+    verdict.guest_was_hidden = !orig_visible;
+
+    unsafe {
+        verdict.dpi_hosting_behavior_set =
+            SetThreadDpiHostingBehavior(DPI_HOSTING_BEHAVIOR_MIXED) != -1;
+    }
+    if !verdict.dpi_hosting_behavior_set {
+        println!(
+            "[{app_name}] WARNING: SetThreadDpiHostingBehavior(MIXED) did not report success; \
+             continuing anyway, but this is the first place to look if SetParent fails."
+        );
+    }
+
+    let class_name = wide("EmbedSpikeAttachHostWindowClass");
+    let h_instance = unsafe { GetModuleHandleW(ptr::null()) };
+    let brush = unsafe { CreateSolidBrush(0x00FF00FF) };
+    let wc = WNDCLASSEXW {
+        cb_size: std::mem::size_of::<WNDCLASSEXW>() as u32,
+        style: 0,
+        lpfn_wnd_proc: wndproc,
+        cb_cls_extra: 0,
+        cb_wnd_extra: 0,
+        h_instance,
+        h_icon: ptr::null_mut(),
+        h_cursor: unsafe { LoadCursorW(ptr::null_mut(), 32512usize as *const u16) }, // IDC_ARROW
+        hbr_background: brush,
+        lpsz_menu_name: ptr::null(),
+        lpsz_class_name: class_name.as_ptr(),
+        h_icon_sm: ptr::null_mut(),
+    };
+    let atom = unsafe { RegisterClassExW(&wc) };
+    if atom == 0 {
+        println!(
+            "[{app_name}] RegisterClassExW failed, GetLastError={}",
+            unsafe { GetLastError() }
+        );
+        return (verdict, true); // guest never touched
+    }
+
+    let title = wide("Embed Spike Attach Host");
+    let host = unsafe {
+        CreateWindowExW(
+            WS_EX_LEFT,
+            class_name.as_ptr(),
+            title.as_ptr(),
+            WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN,
+            50,
+            50,
+            1200,
+            820,
+            ptr::null_mut(),
+            ptr::null_mut(),
+            h_instance,
+            ptr::null_mut(),
+        )
+    };
+    if host.is_null() {
+        println!(
+            "[{app_name}] CreateWindowExW(host) failed, GetLastError={}",
+            unsafe { GetLastError() }
+        );
+        unsafe {
+            UnregisterClassW(class_name.as_ptr(), h_instance);
+        }
+        return (verdict, true); // guest never touched
+    }
+    unsafe {
+        ShowWindow(host, SW_SHOW);
+    }
+    pump_for(Duration::from_millis(200));
+    verdict.host_dpi_context = unsafe { GetWindowDpiAwarenessContext(host) } as isize;
+    verdict.guest_dpi_context = unsafe { GetWindowDpiAwarenessContext(guest) } as isize;
+
+    // From this point on, `guard` is the only thing allowed to touch the
+    // guest's parent/style/rect. It is constructed before the first
+    // mutation below, so any early return or panic on the remaining lines
+    // still restores the dev's window instead of leaving a hidden
+    // WS_CHILD orphan behind.
+    let outcome_cell = Rc::new(Cell::new(RestoreOutcome::default()));
+    let guard = AttachTeardown {
+        host,
+        class_name: class_name.clone(),
+        h_instance,
+        guest,
+        orig_style,
+        orig_exstyle,
+        orig_parent,
+        orig_rect,
+        orig_visible,
+        app_name: app_name.to_string(),
+        outcome: outcome_cell.clone(),
+    };
+
+    if !still_alive_or_invalidate(&mut verdict, host, guest, "just before SetParent") {
+        drop(guard);
+        return (verdict, outcome_cell.get().ok());
+    }
+
+    let new_style = ((orig_style as u32) & !WS_OVERLAPPEDWINDOW & !WS_POPUP) | WS_CHILD;
+    unsafe {
+        SetWindowLongPtrW(guest, GWL_STYLE, new_style as isize);
+    }
+    let set_parent_result = unsafe { SetParent(guest, host) };
+    verdict.setparent_ok = !set_parent_result.is_null();
+    if !verdict.setparent_ok {
+        verdict.setparent_last_error = unsafe { GetLastError() };
+    }
+
+    let margin = 40;
+    let mut host_client = RECT::default();
+    unsafe {
+        GetClientRect(host, &mut host_client);
+    }
+    let inset_x = margin;
+    let inset_y = margin;
+    let inset_w = (host_client.right - host_client.left - 2 * margin).max(1);
+    let inset_h = (host_client.bottom - host_client.top - 2 * margin).max(1);
+    unsafe {
+        SetWindowPos(
+            guest,
+            ptr::null_mut(),
+            inset_x,
+            inset_y,
+            inset_w,
+            inset_h,
+            SWP_FRAMECHANGED | SWP_SHOWWINDOW | SWP_NOZORDER,
+        );
+        // The window this path selected is allowed to have started hidden
+        // (tray-minimised) - SWP_SHOWWINDOW alone does not reliably flip
+        // WS_VISIBLE (see the matching comment on AttachTeardown's
+        // restore), so a hidden guest needs its own explicit ShowWindow or
+        // there is nothing to capture.
+        if verdict.guest_was_hidden {
+            ShowWindow(guest, SW_SHOW);
+        }
+    }
+    // Short on purpose: this is someone's live app, not a process this
+    // spike owns, so it should exist as an embedded child only as long as
+    // it takes to repaint once and capture a frame.
+    pump_for(Duration::from_secs(2));
+
+    if !still_alive_or_invalidate(&mut verdict, host, guest, "post-embed settle") {
+        drop(guard);
+        return (verdict, outcome_cell.get().ok());
+    }
+
+    verdict.parent_matches = unsafe { GetParent(guest) } == host;
+    let is_window_after_embed = unsafe { IsWindow(guest) } != 0;
+
+    let mut guest_pid: u32 = 0;
+    unsafe {
+        GetWindowThreadProcessId(guest, &mut guest_pid);
+    }
+    verdict.guest_alive = unsafe {
+        let h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, guest_pid);
+        if h.is_null() {
+            false
+        } else {
+            let mut code: u32 = 0;
+            let ok = GetExitCodeProcess(h, &mut code) != 0;
+            CloseHandle(h);
+            ok && code == STILL_ACTIVE
+        }
+    } && is_window_after_embed;
+
+    let mut host_client_screen_tl = POINT {
+        x: host_client.left,
+        y: host_client.top,
+    };
+    let mut host_client_screen_br = POINT {
+        x: host_client.right,
+        y: host_client.bottom,
+    };
+    unsafe {
+        ClientToScreen(host, &mut host_client_screen_tl);
+        ClientToScreen(host, &mut host_client_screen_br);
+    }
+    let mut guest_rect_after = RECT::default();
+    unsafe {
+        GetWindowRect(guest, &mut guest_rect_after);
+    }
+    verdict.rect_inside_host = guest_rect_after.left >= host_client_screen_tl.x
+        && guest_rect_after.top >= host_client_screen_tl.y
+        && guest_rect_after.right <= host_client_screen_br.x
+        && guest_rect_after.bottom <= host_client_screen_br.y
+        && screen_dimensions_ok(&guest_rect_after);
+
+    if !still_alive_or_invalidate(&mut verdict, host, guest, "just before pixel capture") {
+        drop(guard);
+        return (verdict, outcome_cell.get().ok());
+    }
+
+    let mut host_rect_screen = RECT::default();
+    unsafe {
+        GetWindowRect(host, &mut host_rect_screen);
+    }
+    if let Some((method, width, height, pixels)) = capture_host(host, host_rect_screen) {
+        let sub = RECT {
+            left: (guest_rect_after.left - host_rect_screen.left).max(0),
+            top: (guest_rect_after.top - host_rect_screen.top).max(0),
+            right: (guest_rect_after.right - host_rect_screen.left).min(width),
+            bottom: (guest_rect_after.bottom - host_rect_screen.top).min(height),
+        };
+        let (distinct, dominant, total) = analyze_region(&pixels, width, sub);
+        verdict.capture_method = method.clone();
+        verdict.distinct_colours = distinct;
+        verdict.dominant_colour_pct = if total > 0 {
+            (dominant as f64 / total as f64) * 100.0
+        } else {
+            100.0
+        };
+
+        let mut final_pixels = pixels;
+        if method.starts_with("PrintWindow") && distinct <= 1 {
+            if let Some(retry_pixels) = capture_frame(host, host_rect_screen, width, height, false)
+            {
+                let (d2, dom2, tot2) = analyze_region(&retry_pixels, width, sub);
+                verdict.capture_method = "BitBlt(screen)".to_string();
+                verdict.distinct_colours = d2;
+                verdict.dominant_colour_pct = if tot2 > 0 {
+                    (dom2 as f64 / tot2 as f64) * 100.0
+                } else {
+                    100.0
+                };
+                final_pixels = retry_pixels;
+            }
+        }
+
+        let bmp_path = screenshot_dir.join(format!("embed-spike-{app_name}.bmp"));
+        if write_bmp(&bmp_path, width, height, &final_pixels).is_ok() {
+            println!("[{app_name}] bitmap written to {}", bmp_path.display());
+            verdict.bitmap = Some(bmp_path);
+        }
+
+        verdict.pixel_content_ok =
+            verdict.distinct_colours > 16 && verdict.dominant_colour_pct < 95.0;
+    } else {
+        verdict.capture_method = "capture failed (both PrintWindow and BitBlt)".to_string();
+    }
+
+    // Dropping the guard here, rather than waiting for scope exit, makes
+    // the restore happen at a known point right after the capture instead
+    // of racing whatever the test does next - the Drop impl still covers
+    // every early return above for the panic/early-exit paths.
+    drop(guard);
+    let outcome = outcome_cell.get();
+    verdict.release_restored_ok = outcome.ok();
+    (verdict, outcome.ok())
+}
+
+#[test]
+#[ignore]
+fn spike_running_tauri_app() {
+    let (app_name, root_pid) = match resolve_attach_target() {
+        Some(t) => t,
+        None => {
+            println!(
+                "SKIPPED spike_running_tauri_app: none of pomodoro-overlay, \
+                 windows-taskbar-widgets, claude-conductor (or $EMBED_SPIKE_ATTACH) is currently \
+                 running"
+            );
+            return;
+        }
+    };
+
+    // require_visible: false - an app hidden to the tray still owns its
+    // real window, and attaching to that hidden window is a legitimate
+    // thing to want (see find_guest_window's doc comment).
+    let guest = match find_guest_window(root_pid, Duration::from_secs(5), false) {
+        Some((h, _was_hidden)) => h,
+        None => {
+            println!(
+                "SKIPPED spike_running_tauri_app: {app_name} (pid {root_pid}) is running but no \
+                 unowned, non-zero-area main window was found for it or its descendants"
+            );
+            return;
+        }
+    };
+
+    let dir = screenshot_dir();
+    let (verdict, restore_verified) = run_attach_spike(&app_name, &dir, guest);
+    verdict.print(&app_name);
+    println!("restore_verified:        {restore_verified}");
+    assert!(
+        restore_verified,
+        "!!! RESTORE FAILED - {app_name} window may be invisible, kill and relaunch it !!!"
+    );
 }
