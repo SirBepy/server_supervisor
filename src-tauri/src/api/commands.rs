@@ -49,6 +49,11 @@ pub(super) struct AddCommandBody {
     port: Option<u16>,
     #[serde(default)]
     env: Option<String>,
+    /// Whether this command's window should be docked into the dashboard (see
+    /// `Command::dock_window`). Omitted/`null` = start undocked, matching the
+    /// field's own `#[serde(default)]` on disk.
+    #[serde(default)]
+    dock_window: Option<bool>,
 }
 
 /// Body for `PATCH /projects/:project_id/commands/:command_id`. Mirrors the IPC
@@ -69,6 +74,11 @@ pub(super) struct UpdateCommandBody {
     port: Option<u16>,
     #[serde(default)]
     env: Option<String>,
+    /// Same rationale as `AddCommandBody::dock_window`: omitted/`null` resets
+    /// docking off, consistent with this endpoint's full-replace semantics for
+    /// `autostart`/`use_dynamic_port`.
+    #[serde(default)]
+    dock_window: Option<bool>,
 }
 
 pub(super) async fn run(State(s): State<ApiState>, Json(b): Json<RunBody>) -> Response {
@@ -128,9 +138,7 @@ pub(super) async fn add_command(
         // The localhost API has no `role` field on its request body (FE/BE
         // badging is a dashboard-only concept); commands it creates start unset.
         None,
-        // No dock toggle on this request body yet (HTTP API surface for
-        // docking is separate, later work); commands it creates start undocked.
-        false,
+        b.dock_window.unwrap_or(false),
     ))
 }
 
@@ -153,9 +161,7 @@ pub(super) async fn update_command(
         // merging (autostart/use_dynamic_port fall back to a default, not the
         // prior value, when omitted), so unset is consistent, not lossy-new.
         None,
-        // Same full-replace rationale: no dock toggle on this request body
-        // yet, so an HTTP-driven edit resets it to undocked.
-        false,
+        b.dock_window.unwrap_or(false),
     ))
 }
 

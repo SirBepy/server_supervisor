@@ -13,8 +13,9 @@ mod groups;
 mod presets;
 
 use crate::ports::{PortEntry, PortRegistry};
+use crate::supervisor::window;
 use crate::supervisor::Supervisor;
-use crate::types::ProcInfo;
+use crate::types::{DockOutcome, DockRect, DockState, ProcInfo};
 use axum::{
     extract::{Path, Request, State},
     http::{header, HeaderMap, StatusCode},
@@ -26,7 +27,7 @@ use axum::{
 use commands::{add_command, remove_command, run, update_command};
 use groups::{create_group_api, delete_group_api, list_groups_api, set_project_group_api, update_group_api};
 use presets::{activate_preset_api, add_preset_api, hub_port_api, list_presets_api, proxy_log_api, remove_preset_api};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::path::Path as FsPath;
 use std::sync::Arc;
 use tokio::net::TcpListener;
@@ -42,6 +43,20 @@ const PORT_PROBE_TRIES: u16 = 20;
 /// keeping integration tests runnable without Tauri DLL dependencies.
 type PermissionFlags = Arc<dyn Fn() -> (bool, bool) + Send + Sync>;
 
+/// Docks (`Some(rect)`) or undocks (`None`) `id`'s window, returning the dock
+/// outcome on a dock or `None` on an undock. A trait object for the exact
+/// reason `PermissionFlags` above is one: mentioning `tauri::AppHandle`
+/// anywhere in this module's types, even just as a field, pulls Tauri's
+/// windowing runtime (tao/wry/webview2-com) into anything that links this
+/// module - including `tests/api_test.rs`, a plain console binary with no
+/// WebView2 runtime alongside it. Proven, not guessed: with that field in
+/// place the test binary failed to even start
+/// (STATUS_ENTRYPOINT_NOT_FOUND) from a from-scratch build in an unshared
+/// target dir, which rules out a stale-artifact explanation. Closing over
+/// the real `AppHandle` inside `serve` and handing back only this closure
+/// keeps the concrete Tauri type out of `api.rs` entirely.
+type DockFn = Arc<dyn Fn(&Supervisor, &str, Option<DockRect>) -> Result<Option<DockOutcome>, String> + Send + Sync>;
+
 #[derive(Clone)]
 struct ApiState {
     sup: Arc<Supervisor>,
@@ -50,6 +65,12 @@ struct ApiState {
     /// None in tests (all AI operations allowed); Some in production (reads live settings).
     ai_flags: Option<PermissionFlags>,
     data_dir: std::path::PathBuf,
+    /// None in the integration tests in `tests/api_test.rs`, which build the
+    /// router directly with no running Tauri app (see `router`'s own doc) -
+    /// Some in production, wired from `serve`. Docking needs this to marshal
+    /// `SetParent`/`SetWindowPos` onto the main thread; every other route
+    /// works without it.
+    dock_fn: Option<DockFn>,
 }
 
 #[derive(Deserialize)]
@@ -83,8 +104,18 @@ fn ai_forbidden(allowed: bool, action: &str) -> Option<Response> {
 
 /// Build the router. Exposed for tests so the API can be exercised without Tauri.
 /// Pass `None` for `ai_flags` in tests; permission checks are skipped when `None`.
-pub fn router(sup: Arc<Supervisor>, ports: Arc<PortRegistry>, token: String, ai_flags: Option<PermissionFlags>, data_dir: std::path::PathBuf) -> Router {
-    let state = ApiState { sup, ports, token, ai_flags, data_dir };
+/// Pass `None` for `dock_fn` in tests too; every route works without one
+/// except `/procs/:id/dock`, which needs it to marshal onto the main thread
+/// (see `ApiState::dock_fn`).
+pub fn router(
+    sup: Arc<Supervisor>,
+    ports: Arc<PortRegistry>,
+    token: String,
+    ai_flags: Option<PermissionFlags>,
+    data_dir: std::path::PathBuf,
+    dock_fn: Option<DockFn>,
+) -> Router {
+    let state = ApiState { sup, ports, token, ai_flags, data_dir, dock_fn };
     Router::new()
         .route("/procs", get(list_procs))
         .route("/procs/:id/start", post(start_proc))
@@ -92,6 +123,7 @@ pub fn router(sup: Arc<Supervisor>, ports: Arc<PortRegistry>, token: String, ai_
         .route("/procs/:id/restart", post(restart_proc))
         .route("/procs/:id/reload", post(reload_proc))
         .route("/procs/:id/logs", get(get_logs))
+        .route("/procs/:id/dock", post(dock_proc))
         .route("/procs/:id", delete(delete_proc))
         .route("/ports", get(list_ports))
         .route("/ports/reserve", post(reserve_port))
@@ -145,11 +177,22 @@ pub async fn serve(
     data_dir: std::path::PathBuf,
     app_handle: tauri::AppHandle,
 ) {
-    let flags: PermissionFlags = Arc::new(move || {
-        let cfg = crate::settings::load(&app_handle);
-        (cfg.ai_can_add_projects, cfg.ai_can_add_commands)
+    let flags: PermissionFlags = {
+        let app_handle = app_handle.clone();
+        Arc::new(move || {
+            let cfg = crate::settings::load(&app_handle);
+            (cfg.ai_can_add_projects, cfg.ai_can_add_commands)
+        })
+    };
+    // Closes over the real `AppHandle` here, in the one function that only
+    // ever runs inside the live Tauri app - never called from
+    // `tests/api_test.rs` - so the concrete type stays out of `api.rs`'s own
+    // signatures (see `DockFn`'s doc for why that split is load-bearing).
+    let dock_fn: DockFn = Arc::new(move |sup: &Supervisor, id: &str, rect: Option<DockRect>| match rect {
+        Some(r) => sup.dock_window(&app_handle, id, r).map(Some),
+        None => sup.undock_window(&app_handle, id).map(|()| None),
     });
-    let app = router(sup, ports, token, Some(flags), data_dir.clone());
+    let app = router(sup, ports, token, Some(flags), data_dir.clone(), Some(dock_fn));
     let listener = match bind_probe(port).await {
         Ok(l) => l,
         Err(e) => {
@@ -195,8 +238,93 @@ async fn health() -> &'static str {
     "ok"
 }
 
-async fn list_procs(State(s): State<ApiState>) -> Json<Vec<ProcInfo>> {
-    Json(s.sup.list())
+/// Per-proc window/dock info added to `/procs`. Deliberately not a field on
+/// `ProcInfo` itself: that type also flows over the Tauri IPC `list_procs`
+/// command, which the dashboard polls every tick for RAM/CPU stats, and
+/// `find_window_once` below runs a real `EnumWindows` pass - fine for an
+/// on-demand HTTP GET, not for the sampler's hot path.
+#[derive(Serialize)]
+struct WindowInfo {
+    found: bool,
+    hwnd: Option<i64>,
+    title: Option<String>,
+}
+
+#[derive(Serialize)]
+struct ProcWithWindow {
+    #[serde(flatten)]
+    info: ProcInfo,
+    window: Option<WindowInfo>,
+}
+
+/// `None` when the proc has no live pid (stopped - nothing to probe).
+/// Otherwise `dock_state_for` is the single source of truth for an active
+/// dock: an embedded (`WS_CHILD`) window is invisible to `find_window_once`'s
+/// `EnumWindows` scan (see `supervisor::dock`'s `note_window_lost` doc), so a
+/// live probe would falsely report a docked window as not found. Only when
+/// no dock has ever been attempted does this fall back to a live probe, to
+/// tell a caller whether there is even a window worth docking.
+fn window_info_for(sup: &Supervisor, id: &str, pid: Option<u32>) -> Option<WindowInfo> {
+    let pid = pid?;
+    if let Some(DockState::Docked { .. }) = sup.dock_state_for(id) {
+        return Some(WindowInfo { found: true, hwnd: None, title: None });
+    }
+    match window::find_window_once(pid, false) {
+        Some(w) => Some(WindowInfo { found: true, hwnd: Some(w.hwnd as i64), title: Some(w.title) }),
+        None => Some(WindowInfo { found: false, hwnd: None, title: None }),
+    }
+}
+
+async fn list_procs(State(s): State<ApiState>) -> Json<Vec<ProcWithWindow>> {
+    let out = s
+        .sup
+        .list()
+        .into_iter()
+        .map(|info| {
+            let window = window_info_for(&s.sup, &info.id, info.pid);
+            ProcWithWindow { info, window }
+        })
+        .collect();
+    Json(out)
+}
+
+/// Body for `POST /procs/:id/dock`. `rect` present docks/reasserts into that
+/// screen-coordinate rectangle (mirrors the Tauri IPC `dock_proc_window`
+/// body); omitted/`null` undocks. One route covers both directions rather
+/// than a second endpoint, since the action is fully determined by whether a
+/// target rect was given.
+#[derive(Deserialize)]
+struct DockBody {
+    #[serde(default)]
+    rect: Option<DockRect>,
+}
+
+async fn dock_proc(
+    State(s): State<ApiState>,
+    Path(id): Path<String>,
+    Json(b): Json<DockBody>,
+) -> Response {
+    let Some(dock) = s.dock_fn.as_ref() else {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            "dock control is unavailable: no running Tauri app",
+        )
+            .into_response();
+    };
+    // `dock_fn` closes over the real `AppHandle` and calls straight into
+    // `Supervisor::dock_window`/`undock_window`, which already marshal their
+    // `SetParent`/`SetWindowPos` calls onto the main thread internally (see
+    // `supervisor::dock`'s `on_main` helper) - this handler runs on an axum
+    // worker thread, never the main thread, so no extra marshalling belongs
+    // here. Calling either directly off-main would be exactly the deadlock
+    // `supervisor::window`'s module docs warn about; `on_main` is what avoids
+    // it. Both are idempotent: re-docking reasserts into the new rect, and
+    // undocking an already-undocked proc is a no-op success.
+    match dock(&s.sup, &id, b.rect) {
+        Ok(Some(outcome)) => Json(outcome).into_response(),
+        Ok(None) => StatusCode::OK.into_response(),
+        Err(e) => (StatusCode::BAD_REQUEST, e).into_response(),
+    }
 }
 
 async fn list_ports(State(s): State<ApiState>) -> Json<Vec<PortEntry>> {

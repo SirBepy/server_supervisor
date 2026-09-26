@@ -21,7 +21,10 @@ async fn spawn_api(token: &str, dir: &std::path::Path) -> String {
     server_supervisor_lib::supervisor::proxy::ensure_crypto_provider();
     let ports = Arc::new(PortRegistry::new(dir.to_path_buf()));
     let sup = Arc::new(Supervisor::new(dir.to_path_buf(), ports.clone()));
-    let app = api::router(sup, ports, token.to_string(), None, dir.to_path_buf());
+    // No Tauri app in these tests (see `router`'s own doc): every route below
+    // works with `app_handle: None` except `/procs/:id/dock`, which needs a
+    // real one to marshal onto the main thread.
+    let app = api::router(sup, ports, token.to_string(), None, dir.to_path_buf(), None);
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     tokio::spawn(async move {
@@ -372,4 +375,121 @@ async fn run_registers_starts_requires_token_and_is_idempotent() {
         .send()
         .await
         .unwrap();
+}
+
+#[tokio::test]
+async fn procs_payload_includes_window_field() {
+    let dir = tempfile::tempdir().unwrap();
+    write_procs(dir.path()); // project "test", command "job", not started
+    let base = spawn_api("secret", dir.path()).await;
+    let client = reqwest::Client::new();
+
+    let procs: Vec<serde_json::Value> = client
+        .get(format!("{base}/procs"))
+        .bearer_auth("secret")
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let job = procs.iter().find(|p| p["id"] == "test:job").unwrap();
+    // Not started -> no pid -> nothing to probe, so the window key must
+    // still be present (extending the payload, not replacing it) but null.
+    assert!(job.get("window").is_some(), "window key must be present on every proc");
+    assert!(job["window"].is_null(), "a never-started proc has no pid to probe a window for");
+}
+
+#[tokio::test]
+async fn add_command_with_dock_window_round_trips() {
+    let dir = tempfile::tempdir().unwrap();
+    write_procs(dir.path());
+    let base = spawn_api("secret", dir.path()).await;
+    let client = reqwest::Client::new();
+
+    // Hole 1: the HTTP add-command body can turn docking on; the hardcoded
+    // `false` this used to carry regardless of caller intent is gone.
+    let added: serde_json::Value = client
+        .post(format!("{base}/projects/test/commands"))
+        .bearer_auth("secret")
+        .json(&serde_json::json!({ "name": "dockable", "cmd": "ping -n 2 127.0.0.1", "dock_window": true }))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(added["dock_window"], true);
+
+    // Omitting the field still defaults to undocked, matching the on-disk
+    // `#[serde(default)]` and the dashboard's own add-command flow. A
+    // distinct `cmd` string is required: `add_command` is idempotent on the
+    // exact `cmd` within a project (see `crud::command::add_command`), so
+    // reusing the first command's `cmd` here would just return it unchanged.
+    let added_default: serde_json::Value = client
+        .post(format!("{base}/projects/test/commands"))
+        .bearer_auth("secret")
+        .json(&serde_json::json!({ "name": "not-dockable", "cmd": "ping -n 3 127.0.0.1" }))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(added_default["dock_window"], false);
+}
+
+#[tokio::test]
+async fn dock_route_requires_token() {
+    let dir = tempfile::tempdir().unwrap();
+    write_procs(dir.path());
+    let base = spawn_api("secret", dir.path()).await;
+    let client = reqwest::Client::new();
+
+    let no_token = client
+        .post(format!("{base}/procs/test:job/dock"))
+        .json(&serde_json::json!({}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(no_token.status(), 401, "the dock route must sit behind the same bearer check as every other route");
+
+    let wrong = client
+        .post(format!("{base}/procs/test:job/dock"))
+        .bearer_auth("nope")
+        .json(&serde_json::json!({}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(wrong.status(), 401);
+}
+
+#[tokio::test]
+async fn dock_route_without_app_handle_fails_gracefully() {
+    // These integration tests build the router with no Tauri app (see
+    // `spawn_api`), which is exactly the state the dock route must not panic
+    // in - it must report unavailable, not crash the request thread.
+    let dir = tempfile::tempdir().unwrap();
+    write_procs(dir.path());
+    let base = spawn_api("secret", dir.path()).await;
+    let client = reqwest::Client::new();
+
+    let r = client
+        .post(format!("{base}/procs/test:job/dock"))
+        .bearer_auth("secret")
+        .json(&serde_json::json!({ "rect": { "left": 0, "top": 0, "right": 100, "bottom": 100 } }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 503);
+
+    // The undock direction (no `rect`) is the same graceful path.
+    let r2 = client
+        .post(format!("{base}/procs/test:job/dock"))
+        .bearer_auth("secret")
+        .json(&serde_json::json!({}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r2.status(), 503);
 }
