@@ -49,29 +49,178 @@ fn extract_fn_name(line: &str) -> Option<String> {
     }
 }
 
-/// Scans a source file's lines for `#[tauri::command]`, `#[tauri::command(async)]`,
-/// or any other `#[tauri::command(...)]` form, then walks forward past any
-/// intervening attributes/doc-comments/blank lines to the `pub fn`/`pub async fn`
-/// that attribute applies to, and records its name.
-fn find_annotated_commands(content: &str) -> Vec<String> {
-    let lines: Vec<&str> = content.lines().collect();
-    let mut found = Vec::new();
-    for (i, line) in lines.iter().enumerate() {
-        let trimmed = line.trim();
-        if !trimmed.starts_with("#[tauri::command") {
+/// True if `line` is a function signature `generate_handler!` could reach:
+/// any `pub`/`pub(...)` visibility, followed by zero or more of
+/// `extern "C"`/`extern`/`async`/`unsafe`/`const`, followed by `fn`.
+/// `generate_handler!` only needs the item path reachable in-crate, so
+/// `pub(crate)`/`pub(super)` are genuinely registrable, not a narrower case
+/// than plain `pub`.
+fn is_command_signature(line: &str) -> bool {
+    let trimmed = line.trim_start();
+    if !trimmed.starts_with("pub") {
+        return false;
+    }
+    let mut rest = &trimmed[3..];
+    if rest.starts_with('(') {
+        match rest.find(')') {
+            Some(close) => rest = &rest[close + 1..],
+            None => return false,
+        }
+    }
+    loop {
+        rest = rest.trim_start();
+        if rest.starts_with("fn ") || rest.starts_with("fn(") {
+            return true;
+        }
+        let qualifiers = ["extern \"C\"", "extern", "async", "unsafe", "const"];
+        match qualifiers.iter().find(|q| rest.starts_with(**q)) {
+            Some(q) => rest = &rest[q.len()..],
+            None => return false,
+        }
+    }
+}
+
+/// Finds where the `#[tauri::command...]` attribute starting at `lines[start]`
+/// closes, tracking `[`/`]` depth like `parse_registered_commands` tracks
+/// bracket depth below, so a multi-line arg list (`#[tauri::command(` on one
+/// line, `)]` on a later one) isn't mistaken for closing at the first line.
+/// Returns `(lines.len(), 0)` if the attribute never closes, since that's not
+/// a valid position for the caller to slice.
+fn attribute_end(lines: &[&str], start: usize) -> (usize, usize) {
+    let mut depth = 0i32;
+    for (li, line) in lines[start..].iter().enumerate() {
+        for (ci, ch) in line.char_indices() {
+            match ch {
+                '[' => depth += 1,
+                ']' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        return (start + li, ci + 1);
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    (lines.len(), 0)
+}
+
+/// Walks forward from the closing `]` of the attribute at `lines[attr_idx]`
+/// to the function it applies to, skipping blanks, further attributes,
+/// `//`/`///` comments and `/* */` block comments, and also checking the
+/// attribute's own line for the attribute-and-signature-on-one-line shape.
+/// Returns `None` only when a real, non-skippable, non-signature line is hit
+/// (or the attribute never closes) - the caller turns that into a panic
+/// rather than a dropped command.
+fn resolve_command_name(lines: &[&str], attr_idx: usize) -> Option<String> {
+    let (end_line, end_col) = attribute_end(lines, attr_idx);
+    if end_line >= lines.len() {
+        return None;
+    }
+
+    let remainder = lines[end_line][end_col..].trim();
+    if !remainder.is_empty() {
+        return if is_command_signature(remainder) {
+            extract_fn_name(remainder)
+        } else {
+            None
+        };
+    }
+
+    let mut idx = end_line + 1;
+    while idx < lines.len() {
+        let candidate = lines[idx].trim();
+        if candidate.is_empty()
+            || candidate.starts_with("#[")
+            || candidate.starts_with("///")
+            || candidate.starts_with("//")
+        {
+            idx += 1;
             continue;
         }
-        for candidate in &lines[i + 1..] {
-            let c = candidate.trim();
-            if c.is_empty() || c.starts_with("#[") || c.starts_with("///") || c.starts_with("//") {
-                continue;
-            }
-            if c.starts_with("pub fn") || c.starts_with("pub async fn") {
-                if let Some(name) = extract_fn_name(c) {
-                    found.push(name);
+        if candidate.starts_with("/*") {
+            if !candidate.contains("*/") {
+                idx += 1;
+                while idx < lines.len() && !lines[idx].contains("*/") {
+                    idx += 1;
                 }
             }
-            break;
+            idx += 1;
+            continue;
+        }
+        return if is_command_signature(candidate) {
+            extract_fn_name(candidate)
+        } else {
+            None
+        };
+    }
+    None
+}
+
+/// Scans a source file's lines for `#[tauri::command]`, `#[tauri::command(async)]`,
+/// or any other `#[tauri::command(...)]` form (including one spanning several
+/// lines), then resolves each to the function it applies to via
+/// `resolve_command_name`.
+///
+/// DECISION (todo 0048): keep this hand-rolled scan rather than pulling in
+/// `syn`. `syn` would be correct by construction, but the fail-loud panic
+/// below already closes the failure mode `syn` was proposed to fix - a gap
+/// this scanner still has now announces itself as a red test instead of a
+/// silent pass, so a simpler parser stays strictly better once it can't go
+/// quiet. 0047's no-new-dependency constraint stands.
+///
+/// DECISION (todo 0048): a `#[tauri::command]` inside a `#[cfg(test)]` block
+/// is excluded, tracked by brace depth (`brace_depth`/`cfg_test_entry_depth`
+/// below), the same technique `parse_registered_commands` uses for bracket
+/// depth. Such an attribute is not compiled into the release binary and is
+/// not registrable, so a fail-loud scanner reporting it would be a false
+/// positive - and one false positive is all it takes for a loud test to get
+/// muted, which recreates the exact silent-miss problem this test exists to
+/// prevent.
+fn find_annotated_commands(content: &str, file: &Path) -> Vec<String> {
+    let lines: Vec<&str> = content.lines().collect();
+    let mut found = Vec::new();
+
+    let mut brace_depth = 0i32;
+    let mut cfg_test_entry_depth: Option<i32> = None;
+    let mut pending_cfg_test = false;
+
+    for (i, line) in lines.iter().enumerate() {
+        let trimmed = line.trim();
+
+        if trimmed.starts_with("#[cfg(test)]") {
+            pending_cfg_test = true;
+        }
+
+        let opens = line.matches('{').count() as i32;
+        let closes = line.matches('}').count() as i32;
+
+        if pending_cfg_test && opens > 0 {
+            cfg_test_entry_depth = Some(brace_depth + 1);
+            pending_cfg_test = false;
+        }
+
+        brace_depth += opens - closes;
+
+        if let Some(entry_depth) = cfg_test_entry_depth {
+            if brace_depth < entry_depth {
+                cfg_test_entry_depth = None;
+            }
+        }
+
+        if cfg_test_entry_depth.is_some() || !trimmed.starts_with("#[tauri::command") {
+            continue;
+        }
+
+        match resolve_command_name(&lines, i) {
+            Some(name) => found.push(name),
+            None => panic!(
+                "{}:{}: found `#[tauri::command]` but could not resolve the \
+                 function it applies to; teach the scanner this shape rather \
+                 than silently dropping the command (todo 0048)",
+                file.display(),
+                i + 1
+            ),
         }
     }
     found
@@ -138,7 +287,7 @@ fn every_tauri_command_is_registered() {
     for file in &rs_files {
         let content = fs::read_to_string(file)
             .unwrap_or_else(|e| panic!("failed to read {}: {e}", file.display()));
-        annotated.extend(find_annotated_commands(&content));
+        annotated.extend(find_annotated_commands(&content, file));
     }
 
     let lib_rs_path = src_root.join("lib.rs");
@@ -158,4 +307,67 @@ fn every_tauri_command_is_registered() {
          at runtime with \"command not found\": {:?}",
         missing
     );
+}
+
+// Permanent regression coverage for todo 0048's four blind-spot shapes, plus
+// the cfg(test) exclusion and the fail-loud panic. Exercised against inline
+// fixtures rather than the real tree so they hold even after the real tree's
+// shapes change.
+
+#[test]
+fn resolves_multiline_attribute() {
+    let src = "#[tauri::command(\n    rename_all = \"camelCase\"\n)]\npub fn get_status() -> String {\n    String::new()\n}\n";
+    let commands = find_annotated_commands(src, Path::new("fixture.rs"));
+    assert_eq!(commands, vec!["get_status".to_string()]);
+}
+
+#[test]
+fn resolves_broadened_visibility_and_qualifiers() {
+    let signatures = [
+        "pub(crate) fn a() {}",
+        "pub(super) fn b() {}",
+        "pub unsafe fn c() {}",
+        "pub const fn d() {}",
+        "pub(crate) async fn e() {}",
+    ];
+    for sig in signatures {
+        let src = format!("#[tauri::command]\n{sig}\n");
+        let commands = find_annotated_commands(&src, Path::new("fixture.rs"));
+        assert_eq!(commands.len(), 1, "failed to resolve: {sig}");
+    }
+}
+
+#[test]
+fn resolves_attribute_and_signature_on_one_line() {
+    let src = "#[tauri::command] pub fn one_liner() -> String { String::new() }\n";
+    let commands = find_annotated_commands(src, Path::new("fixture.rs"));
+    assert_eq!(commands, vec!["one_liner".to_string()]);
+}
+
+#[test]
+fn resolves_past_block_comment() {
+    let src = "#[tauri::command]\n/* explains the command */\npub fn documented() -> String {\n    String::new()\n}\n";
+    let commands = find_annotated_commands(src, Path::new("fixture.rs"));
+    assert_eq!(commands, vec!["documented".to_string()]);
+}
+
+#[test]
+fn excludes_commands_inside_cfg_test_blocks() {
+    let src = "#[cfg(test)]\nmod tests {\n    #[tauri::command]\n    pub fn fake_command() {}\n}\n";
+    let commands = find_annotated_commands(src, Path::new("fixture.rs"));
+    assert!(commands.is_empty(), "expected no commands, got {commands:?}");
+}
+
+#[test]
+fn still_finds_real_command_after_a_cfg_test_block_closes() {
+    let src = "#[cfg(test)]\nmod tests {\n    #[tauri::command]\n    pub fn fake_command() {}\n}\n\n#[tauri::command]\npub fn real_command() {}\n";
+    let commands = find_annotated_commands(src, Path::new("fixture.rs"));
+    assert_eq!(commands, vec!["real_command".to_string()]);
+}
+
+#[test]
+#[should_panic(expected = "fixture.rs:1")]
+fn panics_on_unresolvable_attribute() {
+    let src = "#[tauri::command]\nstruct NotAFunction;\n";
+    find_annotated_commands(src, Path::new("fixture.rs"));
 }
