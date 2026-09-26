@@ -23,7 +23,7 @@ mod ffi;
 mod find;
 mod place;
 
-pub use find::{FoundWindow, find_window, is_window_alive};
+pub use find::{FoundWindow, find_window, find_window_once, is_window_alive};
 pub use place::{DockOutcome, OriginalState, PlaceError, embed, reassert, release};
 
 pub use ffi::Rect;

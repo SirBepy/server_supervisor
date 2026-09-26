@@ -2,15 +2,6 @@ use super::proxy;
 use super::ManagedProc;
 use crate::types::{EnvVar, ProcStatus};
 use std::process::{Command, Stdio};
-use std::time::Duration;
-
-/// How long the re-adopt liveness poll waits for a docked proc's window
-/// before it's treated as genuinely missing. Short (not the attach path's
-/// full multi-second poll): a re-adopted process already ran the entire
-/// prior app instance, so a window it was ever going to create already
-/// exists by now - this is not a freshly-launched process still painting
-/// its first frame, so there is no "slow launch" case to wait out here.
-const ADOPT_WINDOW_CHECK_TIMEOUT: Duration = Duration::from_millis(500);
 
 impl ManagedProc {
     /// Detect a process that exited on its own (crash or self-stop) and update status.
@@ -71,14 +62,35 @@ impl ManagedProc {
                     // guest process itself keeps running untouched (proven by
                     // tests/embed_spike.rs::spike_host_force_kill) - this is
                     // that "process alive, no window" state. Runs every
-                    // reap_tick (self-healing if the window reappears), but
-                    // costs one fast EnumWindows pass in the common
-                    // window-is-fine case: `find_window` returns as soon as it
-                    // finds a match, so the full timeout above is only spent
-                    // while the window is genuinely missing.
-                    match super::super::window::find_window(pid, ADOPT_WINDOW_CHECK_TIMEOUT, false) {
-                        Some(_) => super::super::dock::clear_window_lost(&self.spec.id),
-                        None => super::super::dock::note_window_lost(&self.spec.id),
+                    // reap_tick, self-healing if the window reappears.
+                    //
+                    // `EnumWindows` (what `find_window`/`find_window_once` are
+                    // built on) enumerates top-level windows only. A
+                    // successfully embedded guest was reparented to
+                    // `WS_CHILD` by `window::place::embed`, so from that
+                    // moment it is structurally invisible to that scan - an
+                    // `Active` dock entry's tracked hwnd must be validated
+                    // directly with `is_window_alive` (`IsWindow`, which does
+                    // not care about top-level status) instead of re-scanned.
+                    // Only fall back to a scan when there is no tracked hwnd
+                    // to validate.
+                    match super::super::dock::active_dock_hwnd(&self.spec.id) {
+                        Some(hwnd) => {
+                            if !super::super::window::is_window_alive(hwnd) {
+                                super::super::dock::note_window_lost(&self.spec.id);
+                            }
+                        }
+                        // This tick runs under the shared `procs` lock (see
+                        // `registry::sampling::reap_tick`), so the fallback
+                        // scan must never sleep-retry: a single
+                        // `EnumWindows` pass only, on this ~3s timer tick
+                        // rather than a blocking multi-second poll.
+                        None => {
+                            match super::super::window::find_window_once(pid, false) {
+                                Some(_) => super::super::dock::clear_window_lost(&self.spec.id),
+                                None => super::super::dock::note_window_lost(&self.spec.id),
+                            }
+                        }
                     }
                 }
             }

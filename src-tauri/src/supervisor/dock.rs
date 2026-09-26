@@ -109,8 +109,34 @@ fn host_hwnd(app: &AppHandle) -> Result<isize, String> {
 /// (`proc::spawn::refresh`), which runs on the reaper thread on a timer and
 /// has no `SetParent`/`SetWindowPos` to marshal onto the main thread here -
 /// finding no window needs no Win32 mutation, only a registry write.
+///
+/// A no-op when `proc_id` already holds an `Active` entry: a successful
+/// embed reparents the guest to `WS_CHILD` (see `window::place::embed`),
+/// which makes it invisible to any caller still probing for it with a
+/// top-level `EnumWindows` scan. Overwriting `Active` with `WindowLost` on
+/// that false negative would report a docked-and-fine window as lost and
+/// never recover, since nothing re-attempts docking from `WindowLost`. Once
+/// an embed lands, only `dock_window`/`undock_window`/`dock_state_for`'s own
+/// `is_window_alive` check may decide the entry has actually gone stale.
 pub(crate) fn note_window_lost(proc_id: &str) {
-    registry().entries.lock().unwrap().insert(proc_id.to_string(), Entry::WindowLost);
+    let mut guard = registry().entries.lock().unwrap();
+    if matches!(guard.get(proc_id), Some(Entry::Active { .. })) {
+        return;
+    }
+    guard.insert(proc_id.to_string(), Entry::WindowLost);
+}
+
+/// The hwnd tracked by `proc_id`'s `Active` dock entry, if any, with no
+/// liveness check of its own - callers that need to know whether it is
+/// still real call `window::is_window_alive` on the result themselves.
+/// Lets the re-adopt liveness poll (`proc::spawn::refresh`) validate a
+/// docked window directly via `IsWindow` instead of an `EnumWindows` scan
+/// that structurally cannot see it once it is `WS_CHILD`.
+pub(crate) fn active_dock_hwnd(proc_id: &str) -> Option<isize> {
+    match registry().entries.lock().unwrap().get(proc_id) {
+        Some(Entry::Active { hwnd, .. }) => Some(*hwnd),
+        _ => None,
+    }
 }
 
 /// Clears a `WindowLost` marker once the same re-adopt liveness poll finds
@@ -289,5 +315,50 @@ impl Supervisor {
             Some(Entry::WindowLost) => Some(DockState::WindowLost),
             None => None,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // `OriginalState`'s fields are private to `window::place`; the only
+    // normal constructor is `embed`'s internal snapshot of a live HWND,
+    // which these tests must not open. It is plain isize/Rect/bool data with
+    // no reference and no niche-optimized enum, so every all-zero bit
+    // pattern is a valid value of the type - a zeroed instance stands in for
+    // a real snapshot without needing a live window.
+    fn dummy_original() -> OriginalState {
+        unsafe { std::mem::zeroed() }
+    }
+
+    fn insert_active(proc_id: &str, hwnd: isize) {
+        registry().entries.lock().unwrap().insert(
+            proc_id.to_string(),
+            Entry::Active {
+                hwnd,
+                original: dummy_original(),
+                outcome: WindowOutcome::Embedded,
+                target: Rect::default(),
+            },
+        );
+    }
+
+    #[test]
+    fn note_window_lost_does_not_clobber_an_active_entry() {
+        let id = "test-dock-note-lost-active";
+        insert_active(id, 777);
+        note_window_lost(id);
+        let guard = registry().entries.lock().unwrap();
+        assert!(matches!(guard.get(id), Some(Entry::Active { hwnd: 777, .. })));
+    }
+
+    #[test]
+    fn note_window_lost_sets_window_lost_when_untracked() {
+        let id = "test-dock-note-lost-untracked";
+        registry().entries.lock().unwrap().remove(id);
+        note_window_lost(id);
+        let guard = registry().entries.lock().unwrap();
+        assert!(matches!(guard.get(id), Some(Entry::WindowLost)));
     }
 }

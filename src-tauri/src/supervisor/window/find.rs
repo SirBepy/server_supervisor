@@ -288,6 +288,15 @@ pub fn find_window(
     }
 }
 
+/// A single `EnumWindows` pass with no retry sleep-loop, for a caller that
+/// runs its own timer tick and must never block on this call - `find_window`
+/// sleeps up to `timeout` between attempts, which is fine for a one-shot
+/// dock request but would hold any lock the caller took across the whole
+/// poll if called from a periodic reconcile pass instead.
+pub fn find_window_once(root_pid: u32, require_visible: bool) -> Option<FoundWindow> {
+    try_find_window(root_pid, require_visible)
+}
+
 /// Stale-handle guard: Windows recycles both PIDs and HWNDs, so any HWND a
 /// caller holds onto (e.g. across a hold-position loop) must be revalidated
 /// before use - acting on a recycled handle would move or reparent an

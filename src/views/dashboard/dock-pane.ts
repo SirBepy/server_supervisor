@@ -178,12 +178,19 @@ function attachPaneObservers(id: string, el: HTMLElement | undefined) {
 
 const POLL_MS = 2000;
 let pollStarted = false;
+// The interval callback reads through this reference rather than closing
+// over the `getTrackedIds` passed to whichever `ensurePolling` call started
+// it - `dockSection` runs on every render (once per project the dashboard
+// shows), and only the first call's closure would otherwise ever run,
+// freezing the poll on whichever project happened to render first.
+let currentGetTrackedIds: () => string[] = () => [];
 
 function ensurePolling(getTrackedIds: () => string[]) {
+  currentGetTrackedIds = getTrackedIds;
   if (pollStarted) return;
   pollStarted = true;
   window.setInterval(() => {
-    for (const id of getTrackedIds()) pollOne(id);
+    for (const id of currentGetTrackedIds()) pollOne(id);
   }, POLL_MS);
 }
 
