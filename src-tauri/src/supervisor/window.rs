@@ -21,9 +21,11 @@
 
 mod ffi;
 mod find;
+mod focus;
 mod place;
 
 pub use find::{FoundWindow, find_window, find_window_once, is_window_alive};
+pub use focus::{capture_foreground, guard_focus, set_keep_focus_on_launch};
 pub use place::{DockOutcome, OriginalState, PlaceError, embed, reassert, release};
 
 pub use ffi::Rect;

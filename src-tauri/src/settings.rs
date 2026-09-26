@@ -24,6 +24,8 @@ pub struct Settings {
     pub show_ram: bool,
     #[serde(default = "default_true")]
     pub show_port: bool,
+    #[serde(default = "default_true")]
+    pub keep_focus_on_launch: bool,
     #[serde(flatten)]
     #[ts(skip)]
     pub kit: KitSettings,
@@ -47,6 +49,7 @@ impl Default for Settings {
             show_command_count: false,
             show_ram: true,
             show_port: true,
+            keep_focus_on_launch: true,
             kit: KitSettings::default(),
         }
     }
@@ -87,5 +90,6 @@ mod tests {
         assert_eq!(s.show_command_count, false);
         assert_eq!(s.show_ram, true);
         assert_eq!(s.show_port, true);
+        assert_eq!(s.keep_focus_on_launch, true);
     }
 }

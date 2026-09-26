@@ -238,8 +238,18 @@ impl ManagedProc {
             command.creation_flags(CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW);
         }
 
+        // Captured immediately before spawn, per the focus-stealing research:
+        // Windows grants foreground self-activation to a process started by
+        // the CURRENT foreground process, so whatever holds it right up until
+        // spawn is what the guard must hand focus back to afterward.
+        let previous_foreground = super::super::window::capture_foreground();
+
         let mut child = command.spawn()?;
         let pid = child.id();
+
+        // Detached: waits (up to a few seconds, or not at all if the setting
+        // is off) for the child's window on a background thread, never here.
+        super::super::window::guard_focus(pid, previous_foreground);
 
         // reload_tx was decided above (Some only when the proxy actually bound).
         self.reload_tx = reload_tx.clone();

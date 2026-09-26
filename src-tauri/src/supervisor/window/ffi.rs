@@ -62,6 +62,11 @@ pub(super) const WS_EX_TRANSPARENT: u32 = 0x0000_0020;
 pub(super) const WS_EX_NOACTIVATE: u32 = 0x0800_0000;
 pub(super) const SW_SHOW: i32 = 5;
 pub(super) const SW_HIDE: i32 = 0;
+// Shows the window without activating it, i.e. it does not steal foreground
+// from whatever window currently holds it. Used by `focus::guard_focus` on a
+// just-launched child's window, on the child's FIRST paint only - this is
+// paired with restoring the pre-spawn foreground window immediately after.
+pub(super) const SW_SHOWNOACTIVATE: i32 = 4;
 pub(super) const GWL_STYLE: i32 = -16;
 pub(super) const GWL_EXSTYLE: i32 = -20;
 pub(super) const GW_OWNER: u32 = 4;
@@ -109,6 +114,12 @@ extern "system" {
     pub(super) fn ShowWindow(hwnd: HWND, n_cmd_show: i32) -> BOOL;
     pub(super) fn SetThreadDpiHostingBehavior(value: i32) -> i32;
     pub(super) fn GetWindowTextW(hwnd: HWND, lp_string: *mut u16, n_max_count: i32) -> i32;
+    pub(super) fn GetForegroundWindow() -> HWND;
+    // Can legitimately fail: Windows only grants this to a process that
+    // already holds (or was started by) the foreground process, and even
+    // then can still refuse it (an open menu, ALT held, etc). Callers must
+    // treat a zero return as an expected, non-fatal outcome, never a bug.
+    pub(super) fn SetForegroundWindow(hwnd: HWND) -> BOOL;
 }
 
 #[link(name = "kernel32")]

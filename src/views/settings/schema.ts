@@ -34,6 +34,13 @@ export function buildSettingsSchema(apiToken: string): SettingsSchema {
             tooltip: "Start Server Supervisor automatically when Windows starts.",
           },
           {
+            key: "keep_focus_on_launch",
+            kind: "toggle",
+            label: "Keep focus on launch",
+            tooltip:
+              "When a launched app steals the foreground, briefly flash it and hand focus back to whatever you were using. Turn off if you want a specific app's window visible and focused right when it launches.",
+          },
+          {
             key: "api_port",
             kind: "integer",
             label: "API port",

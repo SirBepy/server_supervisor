@@ -91,6 +91,7 @@ pub fn get_disk_usage(sup: State<Arc<Supervisor>>) -> Vec<DiskUsage> {
 #[tauri::command]
 pub fn save_settings(app: AppHandle, settings: Settings) -> Result<(), String> {
     crate::settings::sync_autostart(&app, settings.autostart);
+    crate::supervisor::window::set_keep_focus_on_launch(settings.keep_focus_on_launch);
     settings::save(&app, &settings)
 }
 

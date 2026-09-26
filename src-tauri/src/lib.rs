@@ -124,6 +124,10 @@ pub fn run() {
             // registry always matches the JSON, even after reinstall or manual edits.
             let loaded = settings::load(&handle);
             settings::sync_autostart(&handle, loaded.autostart);
+            // `proc::spawn::start` has no `AppHandle` to load `Settings` from
+            // directly, so this process-wide flag is how the setting reaches
+            // the spawn path; re-synced on every `save_settings` too.
+            supervisor::window::set_keep_focus_on_launch(loaded.keep_focus_on_launch);
 
             // Localhost API for programmatic (AI agent) control.
             let port = loaded.api_port;
