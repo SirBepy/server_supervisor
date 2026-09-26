@@ -21,6 +21,7 @@ impl Supervisor {
         fixed_port: Option<u16>,
         env: String,
         role: Option<Role>,
+        dock_window: bool,
     ) -> Result<Command, String> {
         let name = name.trim().to_string();
         let cmd = normalize_cmd(&cmd);
@@ -57,6 +58,7 @@ impl Supervisor {
             fixed_port,
             env,
             role,
+            dock_window,
         };
         project.commands.push(command.clone());
         let project_snapshot = project.clone();
@@ -88,6 +90,7 @@ impl Supervisor {
         fixed_port: Option<u16>,
         env: String,
         role: Option<Role>,
+        dock_window: bool,
     ) -> Result<Command, String> {
         let name = name.trim().to_string();
         let cmd = cmd.trim().to_string();
@@ -136,6 +139,7 @@ impl Supervisor {
             command.fixed_port = fixed_port;
             command.env = env;
             command.role = role;
+            command.dock_window = dock_window;
             let updated = command.clone();
             let snapshot = project.clone();
             config::save(&self.data_dir, &projects);

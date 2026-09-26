@@ -128,6 +128,9 @@ pub(super) async fn add_command(
         // The localhost API has no `role` field on its request body (FE/BE
         // badging is a dashboard-only concept); commands it creates start unset.
         None,
+        // No dock toggle on this request body yet (HTTP API surface for
+        // docking is separate, later work); commands it creates start undocked.
+        false,
     ))
 }
 
@@ -150,6 +153,9 @@ pub(super) async fn update_command(
         // merging (autostart/use_dynamic_port fall back to a default, not the
         // prior value, when omitted), so unset is consistent, not lossy-new.
         None,
+        // Same full-replace rationale: no dock toggle on this request body
+        // yet, so an HTTP-driven edit resets it to undocked.
+        false,
     ))
 }
 

@@ -195,10 +195,7 @@ impl ProcSpec {
             use_dynamic_port: command.use_dynamic_port,
             fixed_port: command.fixed_port,
             env: command.env.clone(),
-            // `Command` has no persisted dock toggle yet - that's the later
-            // persistence dispatch's job. Hardcoded off here so every flattened
-            // spec is a real, valid `ProcSpec` in the meantime.
-            dock_window: false,
+            dock_window: command.dock_window,
         }
     }
 }
@@ -230,6 +227,11 @@ pub struct Command {
     /// `#[serde(default)]` keeps those `projects.json` entries loading).
     #[serde(default)]
     pub role: Option<Role>,
+    /// Whether this command's window should be docked into the dashboard (see
+    /// `ProcSpec::dock_window`). `#[serde(default)]` so an existing
+    /// `projects.json` with no such key on disk still loads, defaulting off.
+    #[serde(default)]
+    pub dock_window: bool,
 }
 
 /// A named upstream target for a project's reverse-proxy hub (see
@@ -370,5 +372,57 @@ mod tests {
         assert!(!EnvVar::new("API_BASE_URL".to_string(), "https://api.example.com".to_string()).secret);
         assert!(!EnvVar::new("PORT".to_string(), "3000".to_string()).secret);
         assert!(!EnvVar::new("NODE_ENV".to_string(), "development".to_string()).secret);
+    }
+
+    fn command_with_dock(dock_window: bool) -> Command {
+        Command {
+            id: "c".to_string(),
+            name: "c".to_string(),
+            cmd: "cmd /C exit 0".to_string(),
+            kind: ProcKind::Generic,
+            autostart: false,
+            use_dynamic_port: false,
+            fixed_port: None,
+            env: String::new(),
+            role: None,
+            dock_window,
+        }
+    }
+
+    #[test]
+    fn command_dock_window_round_trips_through_json() {
+        let cmd = command_with_dock(true);
+        let json = serde_json::to_string(&cmd).unwrap();
+        let back: Command = serde_json::from_str(&json).unwrap();
+        assert!(back.dock_window, "dock_window: true must survive a serialize/deserialize round trip");
+    }
+
+    #[test]
+    fn command_dock_window_defaults_false_when_key_absent() {
+        // No `dock_window` key at all - simulates an existing projects.json
+        // written before this field existed.
+        let json = r#"{
+            "id": "c", "name": "c", "cmd": "cmd /C exit 0", "kind": "generic",
+            "autostart": false, "use_dynamic_port": false, "fixed_port": null,
+            "env": "", "role": null
+        }"#;
+        let cmd: Command = serde_json::from_str(json).unwrap();
+        assert!(!cmd.dock_window, "an absent dock_window key must default to false");
+    }
+
+    #[test]
+    fn proc_spec_from_unit_carries_command_dock_window() {
+        let project = Project {
+            id: "p".to_string(),
+            name: "p".to_string(),
+            root: ".".to_string(),
+            commands: Vec::new(),
+            presets: Vec::new(),
+            active_preset: None,
+            transient: false,
+            transient_label: None,
+        };
+        let spec = ProcSpec::from_unit(&project, &command_with_dock(true));
+        assert!(spec.dock_window, "from_unit must carry the command's dock_window, not hardcode false");
     }
 }

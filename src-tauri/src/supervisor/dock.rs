@@ -104,6 +104,25 @@ fn host_hwnd(app: &AppHandle) -> Result<isize, String> {
     Ok(hwnd.0 as isize)
 }
 
+/// Marks `proc_id` window-lost directly, bypassing the `AppHandle`-marshaled
+/// entry points. Called from the re-adopt liveness poll
+/// (`proc::spawn::refresh`), which runs on the reaper thread on a timer and
+/// has no `SetParent`/`SetWindowPos` to marshal onto the main thread here -
+/// finding no window needs no Win32 mutation, only a registry write.
+pub(crate) fn note_window_lost(proc_id: &str) {
+    registry().entries.lock().unwrap().insert(proc_id.to_string(), Entry::WindowLost);
+}
+
+/// Clears a `WindowLost` marker once the same re-adopt liveness poll finds
+/// the window again. Only removes an untouched `WindowLost` entry, never an
+/// `Active` one, so this can never undo a real embed.
+pub(crate) fn clear_window_lost(proc_id: &str) {
+    let mut guard = registry().entries.lock().unwrap();
+    if matches!(guard.get(proc_id), Some(Entry::WindowLost)) {
+        guard.remove(proc_id);
+    }
+}
+
 impl Supervisor {
     /// Resolves `proc_id` to its live pid, or an error the caller can surface
     /// as-is (unknown id, or the proc simply has no running pid right now).
@@ -223,13 +242,35 @@ impl Supervisor {
         Ok(())
     }
 
-    /// Releases every current dock. Meant for a clean-shutdown path (a later
-    /// lifecycle dispatch calls this) so no guest is left reparented into a
-    /// host window that is about to disappear.
+    /// Releases every current dock. Meant for a caller already running on a
+    /// worker thread (an IPC command, say) that needs the `on_main` channel
+    /// marshal - see `release_all_docks_on_main_thread` for the one caller
+    /// that must NOT go through that marshal.
     pub fn release_all_docks(&self, app: &AppHandle) {
         let ids: Vec<String> = registry().entries.lock().unwrap().keys().cloned().collect();
         for id in ids {
             let _ = self.undock_window(app, &id);
+        }
+    }
+
+    /// Releases every current dock directly on the calling thread, with no
+    /// `AppHandle` and no `on_main` channel marshal. Callers must already be
+    /// on Tauri's main thread - the same constraint every `SetParent`/
+    /// `SetWindowPos` call in this module has (see the module doc). Exists
+    /// for `RunEvent::ExitRequested`: that handler already runs on the main
+    /// thread, so scheduling through `on_main` there would deadlock - the
+    /// scheduled closure can only run once this handler returns control to
+    /// the event loop, which it can't do while blocked on `on_main`'s
+    /// channel waiting for that same closure.
+    pub fn release_all_docks_on_main_thread(&self) {
+        let ids: Vec<String> = registry().entries.lock().unwrap().keys().cloned().collect();
+        for id in ids {
+            let entry = registry().entries.lock().unwrap().remove(&id);
+            if let Some(Entry::Active { hwnd, original, .. }) = entry {
+                if window::is_window_alive(hwnd) {
+                    let _ = window::release(hwnd, &original);
+                }
+            }
         }
     }
 

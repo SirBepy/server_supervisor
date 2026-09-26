@@ -51,6 +51,9 @@ impl Supervisor {
             fixed_port,
             env,
             None,
+            // `ensure_and_run` (the `/run` API's one-call launcher) has no
+            // dock-toggle input; commands it registers start undocked.
+            false,
         )?;
         // The incoming command is now registered, so pruning its failed siblings
         // can never empty the project. Clears the dead-on-arrival variant pile.

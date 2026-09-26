@@ -170,6 +170,18 @@ pub fn run() {
             // them running to be re-adopted next launch (survives self-update).
             // pids.json is already current (persist_pids runs on every start/stop).
             if let tauri::RunEvent::ExitRequested { .. } = event {
+                // Always release docks on a clean exit, independent of
+                // kill_on_exit: a docked guest left reparented into a host
+                // window that is about to be destroyed inherits the OS's
+                // parent-destroy cascade (proven by
+                // tests/embed_spike.rs::spike_host_force_kill) even when the
+                // guest process itself is meant to keep running. Uses the
+                // same-thread release, not the AppHandle-marshaled one - this
+                // handler already runs on the main thread, so `on_main`'s
+                // schedule-then-block pattern would deadlock here.
+                if let Some(sup) = app.try_state::<std::sync::Arc<supervisor::Supervisor>>() {
+                    sup.release_all_docks_on_main_thread();
+                }
                 let kill = app
                     .try_state::<AppState>()
                     .map(|s| s.kill_on_exit.load(Ordering::SeqCst))

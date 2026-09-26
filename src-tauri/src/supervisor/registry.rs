@@ -200,6 +200,7 @@ mod tests {
             fixed_port: None,
             env: String::new(),
             role: None,
+            dock_window: false,
         }
     }
 
@@ -217,6 +218,7 @@ mod tests {
             fixed_port: None,
             env: String::new(),
             role: None,
+            dock_window: false,
         }
     }
 
@@ -427,6 +429,7 @@ mod tests {
                 fixed_port: None,
                 env: String::new(),
                 role: None,
+                dock_window: false,
             }],
             presets: Vec::new(),
             active_preset: None,

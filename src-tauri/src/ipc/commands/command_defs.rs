@@ -15,10 +15,22 @@ pub fn add_command(
     fixed_port: Option<u16>,
     env: String,
     role: Option<Role>,
+    // Optional so a caller that predates this field (an old frontend build)
+    // can omit it entirely rather than erroring; absent = docking off.
+    dock_window: Option<bool>,
 ) -> Result<Command, String> {
     // Kind is inferred from the command string (None = infer).
     sup.add_command(
-        &project_id, name, cmd, None, autostart, use_dynamic_port, fixed_port, env, role,
+        &project_id,
+        name,
+        cmd,
+        None,
+        autostart,
+        use_dynamic_port,
+        fixed_port,
+        env,
+        role,
+        dock_window.unwrap_or(false),
     )
 }
 
@@ -34,9 +46,20 @@ pub fn update_command(
     fixed_port: Option<u16>,
     env: String,
     role: Option<Role>,
+    // Optional for the same reason as `add_command`'s.
+    dock_window: Option<bool>,
 ) -> Result<Command, String> {
     sup.update_command(
-        &project_id, &command_id, name, cmd, autostart, use_dynamic_port, fixed_port, env, role,
+        &project_id,
+        &command_id,
+        name,
+        cmd,
+        autostart,
+        use_dynamic_port,
+        fixed_port,
+        env,
+        role,
+        dock_window.unwrap_or(false),
     )
 }
 

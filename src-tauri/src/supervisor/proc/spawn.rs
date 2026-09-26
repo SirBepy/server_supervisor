@@ -2,6 +2,15 @@ use super::proxy;
 use super::ManagedProc;
 use crate::types::{EnvVar, ProcStatus};
 use std::process::{Command, Stdio};
+use std::time::Duration;
+
+/// How long the re-adopt liveness poll waits for a docked proc's window
+/// before it's treated as genuinely missing. Short (not the attach path's
+/// full multi-second poll): a re-adopted process already ran the entire
+/// prior app instance, so a window it was ever going to create already
+/// exists by now - this is not a freshly-launched process still painting
+/// its first frame, so there is no "slow launch" case to wait out here.
+const ADOPT_WINDOW_CHECK_TIMEOUT: Duration = Duration::from_millis(500);
 
 impl ManagedProc {
     /// Detect a process that exited on its own (crash or self-stop) and update status.
@@ -55,6 +64,22 @@ impl ManagedProc {
                     self.pid = None;
                     self.adopted = false;
                     self.push_log("stdout", "[supervisor] re-adopted process exited".to_string());
+                } else if self.spec.dock_window {
+                    // Confirmed alive and configured to dock: check whether its
+                    // window survived the prior app instance. A force-killed
+                    // host destroys an embedded guest's window while the
+                    // guest process itself keeps running untouched (proven by
+                    // tests/embed_spike.rs::spike_host_force_kill) - this is
+                    // that "process alive, no window" state. Runs every
+                    // reap_tick (self-healing if the window reappears), but
+                    // costs one fast EnumWindows pass in the common
+                    // window-is-fine case: `find_window` returns as soon as it
+                    // finds a match, so the full timeout above is only spent
+                    // while the window is genuinely missing.
+                    match super::super::window::find_window(pid, ADOPT_WINDOW_CHECK_TIMEOUT, false) {
+                        Some(_) => super::super::dock::clear_window_lost(&self.spec.id),
+                        None => super::super::dock::note_window_lost(&self.spec.id),
+                    }
                 }
             }
         }
