@@ -21,13 +21,13 @@
 
 import { html, nothing, type TemplateResult } from "lit-html";
 import { ref } from "lit-html/directives/ref.js";
-import { getCurrentWindow } from "@tauri-apps/api/window";
 import "./dock-pane.css";
 import * as ipc from "../../shared/ipc";
 import type { Command, DockOutcome, DockRect, DockState, Project } from "../../types/ipc.generated";
 import { ui, act, draw } from "./state";
 import { toggleSetMember } from "./helpers";
 import { renderAnsi } from "../../shared/ansi";
+import { computeRect, ensureGeometryListeners, isGeometryReady, refreshWindowGeometry } from "./dock-pane-geometry";
 
 // ----- per-command bookkeeping (all keyed by the composite "project:command" id) -----
 
@@ -59,65 +59,10 @@ const lastRect: Record<string, DockRect> = {};
 // element, which reports a zero rect and corrupts the live dock position.
 const paneCleanup: Record<string, () => void> = {};
 
-// ----- host window geometry -----
-//
-// getBoundingClientRect() returns CSS px relative to the webview's own
-// viewport (its client area). The backend positions windows in SCREEN
-// PHYSICAL pixels. Converting one to the other needs two numbers Tauri's
-// window API can give us but the DOM can't: the client area's own
-// top-left corner in screen space (innerPosition, already physical px - NOT
-// innerPosition/devicePixelRatio, since Tauri already returns it in the
-// physical space Win32 wants), and the per-window scale factor. That scale
-// factor is read from Tauri (`scaleFactor()`), not `window.devicePixelRatio`
-// - both usually agree on Windows, but Tauri's figure is the one the Rust
-// side is guaranteed to also be using, so it's the source of truth here.
-//
-// Cached and refreshed on window move/resize plus every poll tick as a
-// backstop; a resize/scroll of the PANE itself only changes the pane's rect
-// within the window, not the window's own screen origin, so a tick-stale
-// cache here is not a correctness bug on its own - only dragging the host
-// window in the same instant as a pane layout change could read one tick
-// stale, and it self-corrects next tick.
-let winOriginX = 0;
-let winOriginY = 0;
-let winScale = 1;
-let geometryReady = false;
-
-async function refreshWindowGeometry(): Promise<void> {
-  try {
-    const win = getCurrentWindow();
-    const [pos, scale] = await Promise.all([win.innerPosition(), win.scaleFactor()]);
-    winOriginX = pos.x;
-    winOriginY = pos.y;
-    winScale = scale;
-    geometryReady = true;
-  } catch {
-    // Leave the previous cached values in place; a transient IPC hiccup here
-    // shouldn't make every dock rect jump to (0,0).
-  }
-}
-
-let geometryListenersAttached = false;
-function ensureGeometryListeners() {
-  if (geometryListenersAttached) return;
-  geometryListenersAttached = true;
-  void refreshWindowGeometry();
-  const win = getCurrentWindow();
-  void win.onMoved(() => void refreshWindowGeometry());
-  void win.onResized(() => void refreshWindowGeometry().then(() => reassertAllDocked()));
-}
-
 // ----- rect measurement + reporting -----
-
-function computeRect(el: HTMLElement): DockRect {
-  const r = el.getBoundingClientRect();
-  return {
-    left: Math.round(winOriginX + r.left * winScale),
-    top: Math.round(winOriginY + r.top * winScale),
-    right: Math.round(winOriginX + r.right * winScale),
-    bottom: Math.round(winOriginY + r.bottom * winScale),
-  };
-}
+// Host-window geometry (screen origin, scale factor, ResizeObserver-tick
+// refresh) lives in dock-pane-geometry.ts; this file only calls its exports,
+// so that module state has exactly one owner.
 
 // Re-sends the current rect for every id that's actually docked right now
 // (called on host window resize/move, since that moves every open hole at
@@ -150,7 +95,7 @@ function attachPaneObservers(id: string, el: HTMLElement | undefined) {
   paneCleanup[id]?.();
   delete paneCleanup[id];
   if (!el) return;
-  ensureGeometryListeners();
+  ensureGeometryListeners(reassertAllDocked);
 
   const setup = () => {
     reportRect(id, el);
@@ -170,7 +115,7 @@ function attachPaneObservers(id: string, el: HTMLElement | undefined) {
   // window's screen origin/scale have resolved at least once - otherwise the
   // very first reported rect would use the winOriginX/Y=0 placeholder and
   // hand the backend a wrong-corner dock target on a fresh app launch.
-  if (geometryReady) setup();
+  if (isGeometryReady()) setup();
   else void refreshWindowGeometry().then(setup);
 }
 
