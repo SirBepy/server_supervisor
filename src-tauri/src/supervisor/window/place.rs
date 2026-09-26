@@ -203,6 +203,17 @@ pub fn reassert(guest: isize, target: Rect) -> Result<(), PlaceError> {
     Ok(())
 }
 
+/// Builds a placeholder `OriginalState` for tests elsewhere in the crate
+/// (the dock registry's fixtures, notably) that need one but have no live
+/// window to `snapshot`. Goes through real field assignment rather than a
+/// zeroed-memory cast, so a field added to `OriginalState` later becomes a
+/// compile error for those callers instead of silent UB from a bit pattern
+/// nobody checked still applies.
+#[cfg(test)]
+pub(crate) fn test_original_state() -> OriginalState {
+    OriginalState { style: 0, exstyle: 0, parent: 0, rect: Rect::default(), visible: false }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

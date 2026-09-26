@@ -27,5 +27,9 @@ mod place;
 pub use find::{FoundWindow, find_window, find_window_once, is_window_alive};
 pub use focus::{capture_foreground, guard_focus, set_keep_focus_on_launch};
 pub use place::{DockOutcome, OriginalState, PlaceError, embed, reassert, release};
+// Only reachable from the dock registry's own test fixtures; the real
+// constructor path (`embed`'s live snapshot) stays private outside tests.
+#[cfg(test)]
+pub(crate) use place::test_original_state;
 
 pub use ffi::Rect;
