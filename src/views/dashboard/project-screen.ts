@@ -19,6 +19,7 @@ import { statusClass, roleBadge, toggleSelectCmd, resolveProjectIcon } from "./d
 import { cmdMenu, setMouseAnchor, openInBrowser } from "./menus";
 import { renderAnsi } from "../../shared/ansi";
 import { proxySection } from "./proxy-hub";
+import { dockSection } from "./dock-pane";
 
 // The project's icon slot, large (Project screen detail header) size.
 function projectIconTemplateLg(project: Project): TemplateResult {
@@ -264,6 +265,7 @@ export function projectScreen(projectId: string): TemplateResult {
         : html`<div class="cmd-block">${project.commands.map((c) => projectCmdRow(project, c))}</div>`}
       <div class="section-label">Proxy</div>
       ${proxySection(project)}
+      ${dockSection(project)}
       ${detailPane(project)}
     </div>
   `;

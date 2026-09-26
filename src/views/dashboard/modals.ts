@@ -24,6 +24,42 @@ import { addProjectModal, detectInto } from "./add-project";
 import { addPresetModal, editPresetModal } from "./preset-modals";
 import { envField, portField, roleField, parsePortField, type CmdModal } from "./modal-fields";
 
+// ----- "Dock window in dashboard" checkbox state -----
+//
+// Kept OUTSIDE the Modal union (state.ts) on purpose: this dispatch's file
+// allowlist covers modals.ts but not state.ts, and the checkbox's value can
+// be derived/tracked locally just as well. addCommand has no existing
+// command to read a starting value from, so one module-level flag suffices
+// (reset by startAddCommand on every open). editCommand DOES have a
+// backend-known value (`Command.dock_window`); `editDockWindowOverride` holds
+// only the user's in-progress edit, keyed by commandId, falling back to the
+// live Command's own value until the user actually touches the checkbox.
+let addDockWindowChecked = false;
+const editDockWindowOverride: Record<string, boolean> = {};
+
+function findCommand(projectId: string, commandId: string) {
+  return ui.projects.find((p) => p.id === projectId)?.commands.find((c) => c.id === commandId);
+}
+
+function editDockWindowChecked(m: Extract<Modal, { t: "editCommand" }>): boolean {
+  if (m.commandId in editDockWindowOverride) return editDockWindowOverride[m.commandId];
+  return findCommand(m.projectId, m.commandId)?.dock_window ?? false;
+}
+
+// Drops the edit modal's dockWindow override so a later edit of the SAME
+// command re-seeds from the live Command instead of replaying a discarded
+// toggle. Called on both cancel and successful save; deliberately NOT called
+// on a failed save, so the modal (still open) keeps showing what the user
+// picked.
+function clearEditDockWindowOverride(commandId: string) {
+  delete editDockWindowOverride[commandId];
+}
+
+function cancelEditCommand(m: Extract<Modal, { t: "editCommand" }>) {
+  clearEditDockWindowOverride(m.commandId);
+  closeModal();
+}
+
 // Open the add-command modal for a project, pre-loading detected commands.
 export async function startAddCommand(projectId: string, root: string) {
   const detected = await detectInto(root);
@@ -43,6 +79,7 @@ export async function startAddCommand(projectId: string, root: string) {
     highlight: -1,
     check: null,
   };
+  addDockWindowChecked = false;
   ui.comboOpen = false;
   draw();
 }
@@ -71,7 +108,17 @@ async function confirmAddCommand() {
   }
   m.portError = null;
   try {
-    await ipc.addCommand(m.projectId, name, m.cmd, false, m.useDynamicPort, m.env, m.role, parsed.fixedPort);
+    await ipc.addCommand(
+      m.projectId,
+      name,
+      m.cmd,
+      false,
+      m.useDynamicPort,
+      m.env,
+      m.role,
+      parsed.fixedPort,
+      addDockWindowChecked,
+    );
     ui.error = null;
     ui.modal = null;
   } catch (e) {
@@ -96,6 +143,10 @@ async function confirmEditCommand() {
     return;
   }
   m.portError = null;
+  // Read BEFORE the await: a failed call leaves the modal open with `m` still
+  // live, but resolving the checked value up front means this doesn't depend
+  // on that.
+  const dockWindow = editDockWindowChecked(m);
   try {
     await ipc.updateCommand(
       m.projectId,
@@ -107,9 +158,11 @@ async function confirmEditCommand() {
       m.env,
       m.role,
       parsed.fixedPort,
+      dockWindow,
     );
     ui.error = null;
     ui.modal = null;
+    clearEditDockWindowOverride(m.commandId);
   } catch (e) {
     reportCommandError(m, parsed.fixedPort != null, e);
   }
@@ -223,6 +276,17 @@ function addCommandModal(m: Extract<Modal, { t: "addCommand" }>): TemplateResult
           <span>Assign a dynamic port</span>
         </label>
         ${m.useDynamicPort ? portField(m) : nothing}
+        <label class="detect-row">
+          <input
+            type="checkbox"
+            .checked=${addDockWindowChecked}
+            @change=${(e: Event) => {
+              addDockWindowChecked = (e.target as HTMLInputElement).checked;
+              draw();
+            }}
+          />
+          <span>Dock window in dashboard</span>
+        </label>
         ${roleField(m)}
         ${envField(m)}
         <div class="dialog-actions">
@@ -286,11 +350,22 @@ function editCommandModal(m: Extract<Modal, { t: "editCommand" }>): TemplateResu
           />
           <span>Start automatically when the supervisor launches</span>
         </label>
+        <label class="detect-row">
+          <input
+            type="checkbox"
+            .checked=${editDockWindowChecked(m)}
+            @change=${(e: Event) => {
+              editDockWindowOverride[m.commandId] = (e.target as HTMLInputElement).checked;
+              draw();
+            }}
+          />
+          <span>Dock window in dashboard</span>
+        </label>
         ${roleField(m)}
         ${envField(m)}
         <p class="muted note">Saving relaunches the command if it's running.</p>
         <div class="dialog-actions">
-          <button @click=${closeModal}>Cancel</button>
+          <button @click=${() => cancelEditCommand(m)}>Cancel</button>
           <button class="primary" @click=${() => void confirmEditCommand()}>Save</button>
         </div>
       </div>

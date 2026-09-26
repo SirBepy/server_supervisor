@@ -14,6 +14,9 @@ import type {
   SystemStats,
   UpstreamPreset,
   RequestLogEntry,
+  DockRect,
+  DockOutcome,
+  DockState,
 } from "../types/ipc.generated";
 
 // Runtime control (composite "projectId:commandId" ids).
@@ -28,6 +31,19 @@ export const getProcLogs = (id: string) => invoke<LogLine[]>("get_proc_logs", { 
 // CORS-disabled dev browser (new tab in the same window); else the default browser.
 export const openPortUrl = (url: string, flutter: boolean) =>
   invoke<void>("open_port_url", { url, flutter });
+
+// Native window docking (see supervisor::dock). `rect` is the dashboard's
+// reserved-hole bounds in screen PHYSICAL pixels (see dock-pane.ts for the
+// getBoundingClientRect -> screen-px conversion) - the backend positions the
+// process's real OS window over it, it never draws anything itself.
+export const dockProcWindow = (id: string, rect: DockRect) =>
+  invoke<DockOutcome>("dock_proc_window", { id, rect });
+export const undockProcWindow = (id: string) => invoke<void>("undock_proc_window", { id });
+// Re-asserts an already-docked window's bounds (pane resize/scroll/collapse).
+// A no-op backend-side if `id` isn't actively docked.
+export const setProcDockBounds = (id: string, rect: DockRect) =>
+  invoke<void>("set_proc_dock_bounds", { id, rect });
+export const getDockState = (id: string) => invoke<DockState>("get_dock_state", { id });
 
 // Project / command config CRUD.
 export const listProjects = () => invoke<Project[]>("list_projects");
@@ -47,6 +63,10 @@ export const addCommand = (
   role: Role | null = null,
   // Manual port override; null = auto-assign from the project's port block.
   fixedPort: number | null = null,
+  // Whether to dock this command's window into the dashboard. Sent on every
+  // call (like autostart/useDynamicPort above) - the backend treats an
+  // omitted key as false, so a caller that forgets it silently clears docking.
+  dockWindow = false,
 ) =>
   invoke<Command>("add_command", {
     projectId,
@@ -57,6 +77,7 @@ export const addCommand = (
     fixedPort,
     env,
     role,
+    dockWindow,
   });
 export const updateCommand = (
   projectId: string,
@@ -69,6 +90,9 @@ export const updateCommand = (
   role: Role | null = null,
   // Manual port override; null = auto-assign from the project's port block.
   fixedPort: number | null = null,
+  // See addCommand's dockWindow above: this is a full-replace endpoint, so
+  // every call must send the caller's current intent, never omit it.
+  dockWindow = false,
 ) =>
   invoke<Command>("update_command", {
     projectId,
@@ -80,6 +104,7 @@ export const updateCommand = (
     fixedPort,
     env,
     role,
+    dockWindow,
   });
 export const removeCommand = (projectId: string, commandId: string) =>
   invoke<void>("remove_command", { projectId, commandId });
