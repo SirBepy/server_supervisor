@@ -130,12 +130,21 @@ fn resolve_command_name(lines: &[&str], attr_idx: usize) -> Option<String> {
     let mut idx = end_line + 1;
     while idx < lines.len() {
         let candidate = lines[idx].trim();
-        if candidate.is_empty()
-            || candidate.starts_with("#[")
-            || candidate.starts_with("///")
-            || candidate.starts_with("//")
-        {
+        if candidate.is_empty() || candidate.starts_with("///") || candidate.starts_with("//") {
             idx += 1;
+            continue;
+        }
+        // A further attribute can itself span lines, so skip to ITS closing
+        // bracket via the same depth count rather than a single line: stepping
+        // one line lands on a continuation line like `clippy::too_many_args`,
+        // which matches no skip predicate below and would make a valid,
+        // registrable command look unresolvable.
+        if candidate.starts_with("#[") {
+            let (attr_end_line, _) = attribute_end(lines, idx);
+            if attr_end_line >= lines.len() {
+                return None;
+            }
+            idx = attr_end_line + 1;
             continue;
         }
         if candidate.starts_with("/*") {
@@ -319,6 +328,16 @@ fn resolves_multiline_attribute() {
     let src = "#[tauri::command(\n    rename_all = \"camelCase\"\n)]\npub fn get_status() -> String {\n    String::new()\n}\n";
     let commands = find_annotated_commands(src, Path::new("fixture.rs"));
     assert_eq!(commands, vec!["get_status".to_string()]);
+}
+
+/// A SECOND attribute spanning lines is the false-positive shape: skipping it
+/// one line at a time lands the walk on a continuation line, which no skip
+/// predicate matches, so a valid command would panic as unresolvable.
+#[test]
+fn resolves_past_a_multiline_second_attribute() {
+    let src = "#[tauri::command]\n#[allow(\n    clippy::too_many_arguments\n)]\npub fn wide(a: u8, b: u8) -> u8 {\n    a + b\n}\n";
+    let commands = find_annotated_commands(src, Path::new("fixture.rs"));
+    assert_eq!(commands, vec!["wide".to_string()]);
 }
 
 #[test]
