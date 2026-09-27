@@ -99,6 +99,16 @@ pub fn run() {
             let supervisor =
                 std::sync::Arc::new(supervisor::Supervisor::new(data_dir.clone(), ports.clone()));
             supervisor.readopt_orphans();
+            // Load settings BEFORE start_autostart: it launches processes through
+            // the same `proc::spawn::start` the focus guard hooks, and that path
+            // reads a process-wide flag rather than `Settings`, so a flag still
+            // holding its compiled-in default would focus-guard every autostart
+            // process against a saved `false`.
+            let loaded = settings::load(&handle);
+            // `proc::spawn::start` has no `AppHandle` to load `Settings` from
+            // directly, so this process-wide flag is how the setting reaches
+            // the spawn path; re-synced on every `save_settings` too.
+            supervisor::window::set_keep_focus_on_launch(loaded.keep_focus_on_launch);
             supervisor.start_autostart();
             // Reverse-proxy hub listeners for every project that already has
             // upstream presets configured (see supervisor::proxy_hub).
@@ -122,12 +132,7 @@ pub fn run() {
 
             // Sync OS startup entry with the current setting on every launch so the
             // registry always matches the JSON, even after reinstall or manual edits.
-            let loaded = settings::load(&handle);
             settings::sync_autostart(&handle, loaded.autostart);
-            // `proc::spawn::start` has no `AppHandle` to load `Settings` from
-            // directly, so this process-wide flag is how the setting reaches
-            // the spawn path; re-synced on every `save_settings` too.
-            supervisor::window::set_keep_focus_on_launch(loaded.keep_focus_on_launch);
 
             // Localhost API for programmatic (AI agent) control.
             let port = loaded.api_port;
