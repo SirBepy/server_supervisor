@@ -4,6 +4,15 @@
 //! or parked in the off-screen headless host where nothing is on screen to
 //! copy. Without the flag, DirectComposition apps (Chromium, WebView2,
 //! Flutter) capture as solid black.
+//!
+//! A Flutter guest needs one more step: its GPU swapchain presents straight
+//! into the `FLUTTERVIEW` child, never the `FLUTTER_RUNNER_WIN32_WINDOW`
+//! parent, so `PrintWindow` on the parent comes back blank regardless of the
+//! flag (see `window::headless_host`'s module doc). `FLUTTERVIEW` fills the
+//! parent's whole client area at (0,0) - confirmed in
+//! `tests/window_flutter_spike.rs` - so redirecting the capture target here
+//! changes which HWND gets drawn, never the pixel coordinates `/input`
+//! already posts clicks into.
 
 use windows::Win32::Foundation::{HWND, RECT};
 use windows::Win32::Graphics::Gdi::{
@@ -38,6 +47,7 @@ impl Capture {
 }
 
 pub fn capture(hwnd: isize) -> Result<Capture, String> {
+    let hwnd = super::headless_host::find_flutterview_child(hwnd).unwrap_or(hwnd);
     let hwnd = HWND(hwnd as *mut _);
     unsafe {
         if !IsWindow(Some(hwnd)).as_bool() {

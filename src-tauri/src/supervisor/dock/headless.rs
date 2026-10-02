@@ -8,23 +8,17 @@
 
 use super::registry::{registry, Entry};
 use super::on_main;
-use crate::supervisor::window::{self, DockOutcome as WindowOutcome, Rect};
+// Re-exported (not just imported): `dock.rs` still calls `headless::destroy_host`
+// directly, exactly as it did when this function was defined in this file.
+pub(super) use crate::supervisor::window::headless_host::destroy_host;
+use crate::supervisor::window::headless_host::{create_host, host_kind_for_class, screen_rect, window_class};
+use crate::supervisor::window::{self, DockOutcome as WindowOutcome};
 use crate::supervisor::Supervisor;
 use crate::types::DockOutcome;
 use std::collections::HashSet;
 use std::sync::{Mutex, OnceLock};
 use tauri::AppHandle;
-use windows::core::w;
-use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, RECT, WPARAM};
-use windows::Win32::System::LibraryLoader::GetModuleHandleW;
-use windows::Win32::UI::WindowsAndMessaging::{
-    CreateWindowExW, DefWindowProcW, DestroyWindow, GetWindowRect, RegisterClassW, SetWindowPos,
-    ShowWindow, HWND_BOTTOM, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SW_SHOWNOACTIVATE,
-    WNDCLASSW, WS_CLIPCHILDREN, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_POPUP,
-};
 
-/// Far outside any monitor layout, so the host is never on screen.
-const PARK_AT: i32 = -32_000;
 /// The guest keeps its own size when it has one this big; smaller (or
 /// minimised, which reports a tiny rect) falls back to the default.
 const MIN_DIM: i32 = 320;
@@ -37,62 +31,6 @@ enum HeadlessError {
     /// desktop the app can move back.
     Refused,
     Other(String),
-}
-
-unsafe extern "system" fn host_proc(h: HWND, m: u32, w: WPARAM, l: LPARAM) -> LRESULT {
-    unsafe { DefWindowProcW(h, m, w, l) }
-}
-
-/// Main thread only: a window's messages are dispatched by the thread that
-/// created it, and only Tauri's main thread pumps messages.
-fn create_host(width: i32, height: i32) -> Result<isize, String> {
-    static REGISTERED: OnceLock<()> = OnceLock::new();
-    let class = w!("ServerSupervisorHeadlessHost");
-    unsafe {
-        let hinst = GetModuleHandleW(None).map_err(|e| format!("GetModuleHandleW: {e}"))?;
-        REGISTERED.get_or_init(|| {
-            let wc = WNDCLASSW {
-                lpfnWndProc: Some(host_proc),
-                hInstance: hinst.into(),
-                lpszClassName: class,
-                ..Default::default()
-            };
-            RegisterClassW(&wc);
-        });
-        let host = CreateWindowExW(
-            WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
-            class,
-            w!("server_supervisor headless host"),
-            WS_POPUP | WS_CLIPCHILDREN,
-            PARK_AT,
-            PARK_AT,
-            width,
-            height,
-            None,
-            None,
-            Some(hinst.into()),
-            None,
-        )
-        .map_err(|e| format!("could not create the headless host: {e}"))?;
-        let _ = ShowWindow(host, SW_SHOWNOACTIVATE);
-        let _ = SetWindowPos(host, Some(HWND_BOTTOM), 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
-        Ok(host.0 as isize)
-    }
-}
-
-/// Main thread only, for the same reason as `create_host`.
-pub(super) fn destroy_host(host: isize) {
-    unsafe {
-        let _ = DestroyWindow(HWND(host as *mut _));
-    }
-}
-
-fn screen_rect(host: isize) -> Rect {
-    let mut r = RECT::default();
-    unsafe {
-        let _ = GetWindowRect(HWND(host as *mut _), &mut r);
-    }
-    Rect { left: r.left, top: r.top, right: r.right, bottom: r.bottom }
 }
 
 /// (proc id, pid) pairs that refused embedding, so the tick does not retry
@@ -159,9 +97,14 @@ impl Supervisor {
         let guest = found.hwnd;
         let (w, h) = (found.rect.width(), found.rect.height());
         let size = if w >= MIN_DIM && h >= MIN_DIM { (w, h) } else { DEFAULT_SIZE };
+        // Checked now, before the window is possibly moved further by
+        // `embed` itself - the class never changes for a window's lifetime,
+        // so reading it off-thread here (rather than inside `on_main`) is
+        // safe and keeps that closure's body unchanged otherwise.
+        let kind = host_kind_for_class(&window_class(guest));
 
         let placed = on_main(app, move || {
-            let host = create_host(size.0, size.1).map_err(HeadlessError::Other)?;
+            let host = create_host(kind, size.0, size.1).map_err(HeadlessError::Other)?;
             let target = screen_rect(host);
             match window::embed(guest, host, target) {
                 Ok((WindowOutcome::Embedded, original)) => {

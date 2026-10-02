@@ -24,6 +24,7 @@ mod ffi;
 mod find;
 mod find_windows;
 mod focus;
+pub mod headless_host;
 pub mod input;
 pub mod park;
 mod place;

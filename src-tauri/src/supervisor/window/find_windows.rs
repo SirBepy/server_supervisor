@@ -9,16 +9,8 @@
 
 use super::ffi::{self, GA_ROOT, Rect};
 use super::find::{enum_proc, is_window_alive, window_title, EnumResult};
+use super::headless_host::window_class;
 use std::collections::HashSet;
-
-fn window_class(hwnd: ffi::HWND) -> String {
-    let mut buf = [0u16; 256];
-    let len = unsafe { ffi::GetClassNameW(hwnd, buf.as_mut_ptr(), buf.len() as i32) };
-    if len <= 0 {
-        return String::new();
-    }
-    String::from_utf16_lossy(&buf[..len as usize])
-}
 
 /// The pid owning `hwnd`, or `None` for a stale/zero handle - used to check a
 /// caller-supplied hwnd actually belongs to the proc's own pid tree before
@@ -78,7 +70,7 @@ pub fn list_windows_of(tree: &HashSet<u32>) -> Vec<WindowSummary> {
             Some(WindowSummary {
                 hwnd: hwnd as isize,
                 title: window_title(hwnd),
-                class: window_class(hwnd),
+                class: window_class(hwnd as isize),
                 rect,
             })
         })

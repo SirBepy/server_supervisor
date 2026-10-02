@@ -121,7 +121,6 @@ extern "system" {
     ) -> i32;
     pub(super) fn SetThreadDpiHostingBehavior(value: i32) -> i32;
     pub(super) fn GetWindowTextW(hwnd: HWND, lp_string: *mut u16, n_max_count: i32) -> i32;
-    pub(super) fn GetClassNameW(hwnd: HWND, lp_class_name: *mut u16, n_max_count: i32) -> i32;
     pub(super) fn GetAncestor(hwnd: HWND, gaflags: u32) -> HWND;
     pub(super) fn GetForegroundWindow() -> HWND;
     // Can legitimately fail: Windows only grants this to a process that
