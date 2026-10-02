@@ -102,6 +102,13 @@ fn refused() -> &'static Mutex<HashSet<(String, u32)>> {
     REFUSED.get_or_init(|| Mutex::new(HashSet::new()))
 }
 
+/// Whether `(proc_id, pid)` already refused headless embedding, for
+/// `dock_state_for` to surface as `DockState::Refused` instead of
+/// `NotDocked`.
+pub(super) fn is_refused(proc_id: &str, pid: u32) -> bool {
+    refused().lock().unwrap().contains(&(proc_id.to_string(), pid))
+}
+
 fn is_headless_docked(proc_id: &str) -> bool {
     matches!(
         registry().entries.lock().unwrap().get(proc_id),
@@ -193,9 +200,15 @@ impl Supervisor {
                     Err(HeadlessError::Refused) => log::warn!("{id} refused embedding; it stays a normal window"),
                     Err(HeadlessError::Other(e)) => log::warn!("headless dock of {id} failed: {e}"),
                 }
-            } else if !want && docked {
-                if let Err(e) = self.undock_window(app, &id) {
-                    log::warn!("headless undock of {id} failed: {e}");
+            } else if !want {
+                // Forgetting the refusal lets `dock_state_for` stop reporting
+                // `Refused` for a window that is now meant to be normal, and
+                // gives a later re-toggle one fresh attempt.
+                refused().lock().unwrap().remove(&(id.clone(), pid));
+                if docked {
+                    if let Err(e) = self.undock_window(app, &id) {
+                        log::warn!("headless undock of {id} failed: {e}");
+                    }
                 }
             }
         }
@@ -223,5 +236,54 @@ impl Supervisor {
         if !dead.is_empty() {
             let _ = on_main(app, move || dead.into_iter().for_each(destroy_host));
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::supervisor::proc::ManagedProc;
+    use crate::types::{DockState, ProcKind, ProcSpec};
+
+    fn fast_exit_spec(id: &str) -> ProcSpec {
+        ProcSpec {
+            id: id.to_string(),
+            project: "p".to_string(),
+            name: "c".to_string(),
+            cmd: "cmd /C exit 0".to_string(),
+            cwd: ".".to_string(),
+            kind: ProcKind::Generic,
+            autostart: false,
+            use_dynamic_port: false,
+            fixed_port: None,
+            env: String::new(),
+            dock_window: false,
+            play_sound: false,
+            dock_headless: false,
+        }
+    }
+
+    // No live window involved: `dock_state_for`'s `Refused` branch only
+    // consults the `refused()` set and the proc's pid, both reachable
+    // without touching Win32, unlike the rest of this module.
+    #[test]
+    fn dock_state_for_reports_refused_after_a_refusal() {
+        let dir = tempfile::tempdir().unwrap();
+        let ports = std::sync::Arc::new(crate::ports::PortRegistry::new(dir.path().to_path_buf()));
+        let sup = Supervisor::new(dir.path().to_path_buf(), ports);
+        let id = "headless-refused-test:cmd";
+        let pid = 123_456;
+        {
+            let mut map = sup.procs.lock().unwrap();
+            let mut p = ManagedProc::new(fast_exit_spec(id));
+            p.pid = Some(pid);
+            map.insert(id.to_string(), p);
+        }
+        refused().lock().unwrap().insert((id.to_string(), pid));
+
+        let state = sup.dock_state_for(id);
+
+        refused().lock().unwrap().remove(&(id.to_string(), pid));
+        assert_eq!(state, Some(DockState::Refused));
     }
 }

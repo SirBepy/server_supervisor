@@ -287,7 +287,10 @@ impl Supervisor {
             // untracked rather than falsely still-docked.
             Some(Entry::Active { .. }) => None,
             Some(Entry::WindowLost) => Some(DockState::WindowLost),
-            None => None,
+            None => match self.pid_for(proc_id) {
+                Ok(pid) if headless::is_refused(proc_id, pid) => Some(DockState::Refused),
+                _ => None,
+            },
         }
     }
 }

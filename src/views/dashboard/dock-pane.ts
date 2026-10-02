@@ -28,6 +28,7 @@ import { ui, act, draw } from "./state";
 import { toggleSetMember } from "./helpers";
 import { renderAnsi } from "../../shared/ansi";
 import { computeRect, ensureGeometryListeners, isGeometryReady, refreshWindowGeometry } from "./dock-pane-geometry";
+import { refusedView } from "./dock-pane-refused";
 
 // ----- per-command bookkeeping (all keyed by the composite "project:command" id) -----
 
@@ -67,6 +68,12 @@ const previewCache: Record<string, string> = {};
 function isPaneDocked(id: string): boolean {
   const s = dockStateCache[id];
   return s?.state === "docked" && s.mode !== "headless";
+}
+
+// Read by cmd-menu.ts, which has no dock-state access of its own, so its
+// headless toggle label can say "(refused)" instead of claiming it worked.
+export function isDockRefused(id: string): boolean {
+  return dockStateCache[id]?.state === "refused";
 }
 
 // ----- rect measurement + reporting -----
@@ -318,6 +325,7 @@ function dockPaneOne(project: Project, cmd: Command): TemplateResult {
     const state: DockState = dockStateCache[id] ?? { state: "not_docked" };
     if (state.state === "not_docked") inner = liveLogTail(id);
     else if (state.state === "window_lost") inner = windowLostView(id);
+    else if (state.state === "refused") inner = refusedView(project.id, cmd.id);
     else if (state.mode === "headless") inner = headlessView(project, cmd, id);
     else inner = dockedHole(id, state.mode);
   }

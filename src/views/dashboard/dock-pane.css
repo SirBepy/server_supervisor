@@ -108,3 +108,22 @@
   font-size: 12.5px;
   color: var(--fg);
 }
+
+/* Same "different, pay attention" amber as .dockpane-soft-note - this is the
+   same refusal, just hit on the headless path instead of the pane-dock path. */
+.dockpane-refused {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 10px 4px;
+}
+.dockpane-refused i {
+  font-size: 20px;
+  color: var(--warn, #f5a623);
+}
+.dockpane-refused p {
+  margin: 0;
+  font-size: 12.5px;
+  color: var(--warn, #f5a623);
+}

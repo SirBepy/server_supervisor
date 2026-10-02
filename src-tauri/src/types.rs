@@ -360,6 +360,11 @@ pub enum DockState {
     NotDocked,
     Docked { mode: DockOutcome },
     WindowLost,
+    /// The app rejected `SetParent` (soft-docked back out) the last time
+    /// embedding was tried, so it is still an ordinary window on the dev's
+    /// desktop rather than headless. Distinct from `NotDocked` so the UI
+    /// never shows a refused headless toggle as if it had worked.
+    Refused,
 }
 
 #[cfg(test)]

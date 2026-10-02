@@ -6,6 +6,7 @@ import type { Project } from "../../../types/ipc.generated";
 import * as ipc from "../../../shared/ipc";
 import { ui, act, draw } from "../state";
 import { setButtonAnchor, openInBrowser, copyPortUrl } from "../menus";
+import { isDockRefused } from "../dock-pane";
 
 // Per-command kebab button only. The popover is rendered by portalMenu().
 export function cmdMenu(
@@ -70,7 +71,11 @@ export function cmdMenuContent(
       }}
     >
       <i class="ph ${cmd.dock_headless ? "ph-app-window" : "ph-eye-slash"}"></i>
-      ${cmd.dock_headless ? "Show window normally" : "Run window headless"}
+      ${cmd.dock_headless
+        ? isDockRefused(id)
+          ? "Show window normally (refused headless)"
+          : "Show window normally"
+        : "Run window headless"}
     </button>
   `;
   return html`
