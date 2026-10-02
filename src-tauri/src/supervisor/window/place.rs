@@ -66,6 +66,26 @@ fn snapshot(guest: ffi::HWND) -> OriginalState {
     }
 }
 
+/// `SetWindowPos` places a `WS_CHILD` relative to its parent's client
+/// area, never the screen, so an embedded guest handed the caller's screen
+/// rect would land offset by the host's own screen position. A top-level
+/// (soft-docked) guest keeps screen coordinates. The style check matters:
+/// `GetParent` on a top-level popup returns its OWNER, not a parent.
+fn to_placement_coords(guest: ffi::HWND, target: Rect) -> Rect {
+    unsafe {
+        let style = ffi::GetWindowLongPtrW(guest, GWL_STYLE) as u32;
+        let parent = ffi::GetParent(guest);
+        if style & WS_CHILD == 0 || parent.is_null() {
+            return target;
+        }
+        let mut r = target;
+        // A RECT is two POINTs back to back, which is what MapWindowPoints
+        // converts in place.
+        ffi::MapWindowPoints(std::ptr::null_mut(), parent, &mut r, 2);
+        r
+    }
+}
+
 /// Embeds `guest` into `host`'s pane at `target` (screen coordinates,
 /// already computed by the caller - this module does not know about panes
 /// or layout). Must run on the host's own thread: `SetThreadDpiHostingBehavior`
@@ -127,14 +147,15 @@ pub fn embed(
         }
         DockOutcome::SoftDocked
     } else {
+        let at = to_placement_coords(guest_hwnd, target);
         unsafe {
             ffi::SetWindowPos(
                 guest_hwnd,
                 std::ptr::null_mut(),
-                target.left,
-                target.top,
-                target.width(),
-                target.height(),
+                at.left,
+                at.top,
+                at.width(),
+                at.height(),
                 SWP_FRAMECHANGED | SWP_SHOWWINDOW,
             );
         }
@@ -189,14 +210,15 @@ pub fn reassert(guest: isize, target: Rect) -> Result<(), PlaceError> {
     if !is_window_alive(guest) {
         return Err(PlaceError::WindowGone);
     }
+    let at = to_placement_coords(guest as ffi::HWND, target);
     unsafe {
         ffi::SetWindowPos(
             guest as ffi::HWND,
             std::ptr::null_mut(),
-            target.left,
-            target.top,
-            target.width(),
-            target.height(),
+            at.left,
+            at.top,
+            at.width(),
+            at.height(),
             SWP_NOZORDER,
         );
     }

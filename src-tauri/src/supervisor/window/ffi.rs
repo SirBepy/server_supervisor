@@ -112,6 +112,12 @@ extern "system" {
         u_flags: u32,
     ) -> BOOL;
     pub(super) fn ShowWindow(hwnd: HWND, n_cmd_show: i32) -> BOOL;
+    pub(super) fn MapWindowPoints(
+        h_wnd_from: HWND,
+        h_wnd_to: HWND,
+        lp_points: *mut Rect,
+        c_points: u32,
+    ) -> i32;
     pub(super) fn SetThreadDpiHostingBehavior(value: i32) -> i32;
     pub(super) fn GetWindowTextW(hwnd: HWND, lp_string: *mut u16, n_max_count: i32) -> i32;
     pub(super) fn GetForegroundWindow() -> HWND;
