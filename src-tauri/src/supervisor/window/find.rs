@@ -173,7 +173,7 @@ pub(crate) fn snapshot_parent_map() -> HashMap<u32, u32> {
 /// top-down pass can miss a grandchild whose parent entry appears later in
 /// the Toolhelp snapshot than the child's own entry, since the snapshot
 /// order is not guaranteed.
-fn descendant_pids(root: u32) -> HashSet<u32> {
+pub(crate) fn descendant_pids(root: u32) -> HashSet<u32> {
     let parent_of = snapshot_parent_map();
     let mut set = HashSet::new();
     set.insert(root);
@@ -192,17 +192,17 @@ fn descendant_pids(root: u32) -> HashSet<u32> {
     set
 }
 
-struct EnumResult {
-    hwnds: Vec<ffi::HWND>,
+pub(super) struct EnumResult {
+    pub(super) hwnds: Vec<ffi::HWND>,
 }
 
-unsafe extern "system" fn enum_proc(hwnd: ffi::HWND, lparam: ffi::LPARAM) -> ffi::BOOL {
+pub(super) unsafe extern "system" fn enum_proc(hwnd: ffi::HWND, lparam: ffi::LPARAM) -> ffi::BOOL {
     let found = &mut *(lparam as *mut EnumResult);
     found.hwnds.push(hwnd);
     1
 }
 
-fn window_title(hwnd: ffi::HWND) -> String {
+pub(super) fn window_title(hwnd: ffi::HWND) -> String {
     let mut buf = [0u16; 512];
     let len = unsafe { ffi::GetWindowTextW(hwnd, buf.as_mut_ptr(), buf.len() as i32) };
     if len <= 0 {

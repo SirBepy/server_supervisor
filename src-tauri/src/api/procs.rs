@@ -1,6 +1,7 @@
 //! Process lifecycle, logs, window info, and dock routes for the localhost API.
 
 use super::{split_proc_id, unit_result, ApiState, DockRequest};
+use crate::supervisor::dock;
 use crate::supervisor::window;
 use crate::supervisor::Supervisor;
 use crate::types::{DockRect, DockState, ProcInfo};
@@ -60,6 +61,71 @@ pub(super) async fn list_procs(State(s): State<ApiState>) -> Json<Vec<ProcWithWi
         })
         .collect();
     Json(out)
+}
+
+/// One top-level window of a proc's process tree, for `GET /procs/:id/windows`,
+/// the route an agent uses to find a popup or dialog that `window::park`
+/// moved off-screen (see todo 0056), since neither `/screenshot` nor
+/// `/input`'s default target (the docked/main window) ever reaches one.
+#[derive(Serialize)]
+pub(super) struct ProcWindow {
+    hwnd: i64,
+    title: String,
+    class: String,
+    rect: DockRect,
+    /// Whether this is the one window `dock_state_for` tracks as the proc's
+    /// main docked/embedded window - the other windows in the list are
+    /// popups, dialogs or menus `dock::headless` never reparents.
+    docked: bool,
+}
+
+fn to_dock_rect(r: window::Rect) -> DockRect {
+    DockRect { left: r.left, top: r.top, right: r.right, bottom: r.bottom }
+}
+
+/// `GET /procs/:id/windows` - every visible top-level window owned by the
+/// proc's own pid tree (main window, docked or not, plus any popup/dialog),
+/// so an agent can target one directly via `/screenshot?window=`/`/input?window=`.
+pub(super) async fn list_windows(State(s): State<ApiState>, Path(id): Path<String>) -> Response {
+    let pid = match s.sup.pid_for(&id) {
+        Ok(pid) => pid,
+        Err(e) => return (StatusCode::BAD_REQUEST, e).into_response(),
+    };
+    let tree = window::descendant_pids(pid);
+    let docked_hwnd = dock::active_dock_hwnd(&id);
+    let windows: Vec<ProcWindow> = window::list_windows_of(&tree)
+        .into_iter()
+        .map(|w| ProcWindow {
+            hwnd: w.hwnd as i64,
+            title: w.title,
+            class: w.class,
+            rect: to_dock_rect(w.rect),
+            docked: docked_hwnd == Some(w.hwnd),
+        })
+        .collect();
+    Json(windows).into_response()
+}
+
+#[derive(Deserialize)]
+pub(super) struct WindowQuery {
+    window: Option<i64>,
+}
+
+/// Resolves the window `/screenshot` or `/input` should act on: `query`'s
+/// `window` hwnd when given, else the proc's current docked/main window (the
+/// pre-existing default behaviour). A caller-supplied hwnd is checked against
+/// the proc's own pid tree first - this is the only thing stopping the API
+/// from being pointed at an arbitrary window of an unrelated process.
+pub(super) fn resolve_window(sup: &Supervisor, id: &str, query: &WindowQuery) -> Result<isize, String> {
+    let Some(hwnd) = query.window else {
+        return sup.window_for(id);
+    };
+    let pid = sup.pid_for(id)?;
+    let tree = window::descendant_pids(pid);
+    match window::hwnd_pid(hwnd as isize) {
+        Some(owner) if tree.contains(&owner) => Ok(hwnd as isize),
+        _ => Err(format!("window {hwnd} does not belong to process {id}")),
+    }
 }
 
 /// Body for `POST /procs/:id/dock`. `headless: true` moves the window into

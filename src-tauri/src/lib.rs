@@ -112,6 +112,11 @@ pub fn run() {
             // directly, so this process-wide flag is how the setting reaches
             // the spawn path; re-synced on every `save_settings` too.
             supervisor::window::set_keep_focus_on_launch(loaded.keep_focus_on_launch);
+            // Must be running before the first process spawns: a headless
+            // proc's pid is added to the park set at spawn time (see
+            // `proc::spawn::start`), and the hook only catches a window
+            // creation it is already running to see.
+            supervisor::window::park::start();
             supervisor.start_autostart();
             // Reverse-proxy hub listeners for every project that already has
             // upstream presets configured (see supervisor::proxy_hub).

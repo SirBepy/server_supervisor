@@ -22,14 +22,19 @@
 pub mod capture;
 mod ffi;
 mod find;
+mod find_windows;
 mod focus;
 pub mod input;
+pub mod park;
 mod place;
 
 pub use find::{FoundWindow, find_window, find_window_once, is_window_alive};
-pub(crate) use find::snapshot_parent_map;
+pub(crate) use find::{descendant_pids, snapshot_parent_map};
+pub use find_windows::{WindowSummary, list_windows_of};
+pub(crate) use find_windows::hwnd_pid;
 pub use focus::{capture_foreground, guard_focus, set_keep_focus_on_launch};
 pub use place::{DockOutcome, OriginalState, PlaceError, embed, reassert, release};
+pub(crate) use place::safe_restore_rect;
 // Only reachable from the dock registry's own test fixtures; the real
 // constructor path (`embed`'s live snapshot) stays private outside tests.
 #[cfg(test)]

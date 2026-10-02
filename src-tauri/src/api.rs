@@ -30,7 +30,10 @@ use commands::{add_command, remove_command, run, update_command};
 use groups::{create_group_api, delete_group_api, list_groups_api, set_project_group_api, update_group_api};
 use ports::{list_ports, reserve_port};
 use presets::{activate_preset_api, add_preset_api, hub_port_api, list_presets_api, proxy_log_api, remove_preset_api};
-use procs::{delete_proc, dock_proc, get_logs, list_procs, reload_proc, restart_proc, start_proc, stop_proc};
+use procs::{
+    delete_proc, dock_proc, get_logs, list_procs, list_windows, reload_proc, restart_proc,
+    start_proc, stop_proc,
+};
 use std::path::Path as FsPath;
 use std::sync::Arc;
 use tokio::net::TcpListener;
@@ -128,6 +131,7 @@ pub fn router(
         .route("/procs/:id/reload", post(reload_proc))
         .route("/procs/:id/logs", get(get_logs))
         .route("/procs/:id/dock", post(dock_proc))
+        .route("/procs/:id/windows", get(list_windows))
         .route("/procs/:id/sound", post(media::set_sound))
         .route("/procs/:id/listen", get(media::listen))
         .route("/procs/:id/screenshot", get(media::screenshot))

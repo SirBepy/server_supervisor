@@ -137,13 +137,20 @@ POST /procs/:id/dock
 ```
 Moves the app's window into an invisible host of its own and keeps it there (persisted on the command, so it survives restarts). `{}` undocks and turns headless off. `{ "rect": { "left": 0, "top": 0, "right": 800, "bottom": 600 } }` docks into a dashboard-pane rectangle in screen pixels instead. Returns the dock mode (`"headless"`, `"embedded"`, `"soft_docked"`), or `400` when the app has no window yet or refuses embedding (some always-on-top widget apps do).
 
-```
-GET /procs/:id/screenshot
-```
-Returns `image/png` of the app's window, docked, headless or a normal window. Pixel coordinates in the image are the same coordinates `/input` takes.
+**Popups never leak either.** A headless app's dialogs and menus are separate top-level windows the dashboard never reparents (a dialog owned by the docked window must stay owned), so a `SetWinEventHook` catches every new top-level window of a headless proc's pid tree and parks it off-screen right there - the same mechanism that also stops the main window itself from sitting on the desktop for the up-to-250ms gap before the next dock tick would otherwise embed it. `EVENT_OBJECT_CREATE`/`EVENT_OBJECT_SHOW` are delivered asynchronously, so this is not literally zero flash: a spike against one real startup dialog (`src-tauri/tests/window_popup_spike.rs`) measured it visible on a real monitor for about 5ms before the hook moved it, versus the up-to-250ms-plus-find-time window this closes.
 
 ```
-POST /procs/:id/input
+GET /procs/:id/windows
+```
+Every visible top-level window owned by the proc's pid tree - the main window plus any parked popup or dialog `/screenshot`/`/input` can't otherwise reach - as `{ "hwnd": N, "title": "...", "class": "...", "rect": {...}, "docked": bool }`. `docked` marks the one window `dock`'s own state tracks as the main embedded/docked window.
+
+```
+GET /procs/:id/screenshot?window=N
+```
+Returns `image/png` of the app's window, docked, headless or a normal window. Pixel coordinates in the image are the same coordinates `/input` takes. `window` (an hwnd from `GET /procs/:id/windows`) targets a specific popup or dialog instead of the main window; a caller-supplied hwnd outside the proc's own pid tree is rejected with `400`.
+
+```
+POST /procs/:id/input?window=N
 ```
 One action, or a sequence:
 ```json
@@ -156,7 +163,12 @@ One action, or a sequence:
   { "type": "move", "x": 10, "y": 10 }
 ] }
 ```
-Input is posted to the window as messages: the dev's real mouse and keyboard focus are never touched. Click a text field before typing into it: the window is never activated, so `autofocus` and other focus-on-activate behaviour never fire. Named keys: Enter, Tab, Escape, Backspace, Delete, Space, ArrowUp/Down/Left/Right, Home, End, PageUp, PageDown, F1-F12. Modifier chords (Ctrl+C) are not supported.
+Input is posted to the window as messages: the dev's real mouse and keyboard focus are never touched. Click a text field before typing into it: the window is never activated, so `autofocus` and other focus-on-activate behaviour never fire. Named keys: Enter, Tab, Escape, Backspace, Delete, Space, ArrowUp/Down/Left/Right, Home, End, PageUp, PageDown, F1-F12. Modifier chords (Ctrl+C) are not supported. `window` targets a specific popup or dialog the same way `/screenshot`'s does.
+
+Proven against three window shapes (`src-tauri/tests/window_*_spike.rs`, standalone probes under `spikes/`, since the dev's real Tauri app - Cueline - has its own data and was never run directly for this):
+- **Edge / Chromium** (`window_spike.rs`): click and type both land on a same-process guest window.
+- **WebView2 / Tauri-style** (`window_webview2_spike.rs`, a minimal `wry`+`tao` probe with the same window shape as any Tauri v2 app): posted input reaches the content child even though it is owned by a separate `msedgewebview2.exe` process - `target_at`'s child-window walk and `keyboard_target`'s focus lookup both work across that process boundary unmodified, because WebView2 shares input-queue state with the host app's thread.
+- **Flutter Windows** (`window_flutter_spike.rs`, a minimal Flutter app under `spikes/flutter_input_probe`): mouse lands on the inner `FLUTTERVIEW` child (never the runner window) and `WM_CHAR` lands through Flutter's own key embedder, both with no `input.rs` changes needed. Screenshotting a headless Flutter app needs care: capture must target the `FLUTTERVIEW` child HWND directly (Flutter's GPU swapchain presents there, not into the parent `FLUTTER_RUNNER_WIN32_WINDOW`), and the host must be DWM-*cloaked* rather than merely off-screen - a fully off-screen host reads as occluded to Flutter's DXGI swapchain, which then stops presenting frames (Chromium/WebView2 keep presenting off-screen; Flutter does not).
 
 ```
 GET /procs/:id/listen?ms=2000

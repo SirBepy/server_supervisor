@@ -401,6 +401,67 @@ async fn procs_payload_includes_window_field() {
 }
 
 #[tokio::test]
+async fn windows_route_lists_none_for_a_console_process() {
+    let dir = tempfile::tempdir().unwrap();
+    write_procs(dir.path());
+    let base = spawn_api("secret", dir.path()).await;
+    let client = reqwest::Client::new();
+
+    client.post(format!("{base}/procs/test:job/start")).bearer_auth("secret").send().await.unwrap();
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+
+    // `ping` is a console process with no top-level window: the route must
+    // still answer 200 with an empty list, not 404/500, since "no window"
+    // and "unknown proc" are different failure shapes.
+    let r = client
+        .get(format!("{base}/procs/test:job/windows"))
+        .bearer_auth("secret")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 200);
+    let windows: Vec<serde_json::Value> = r.json().await.unwrap();
+    assert!(windows.is_empty(), "a console process owns no top-level window");
+
+    client.post(format!("{base}/procs/test:job/stop")).bearer_auth("secret").send().await.unwrap();
+}
+
+#[tokio::test]
+async fn windows_route_requires_token() {
+    let dir = tempfile::tempdir().unwrap();
+    write_procs(dir.path());
+    let base = spawn_api("secret", dir.path()).await;
+    let client = reqwest::Client::new();
+
+    let r = client.get(format!("{base}/procs/test:job/windows")).send().await.unwrap();
+    assert_eq!(r.status(), 401);
+}
+
+#[tokio::test]
+async fn screenshot_rejects_a_window_outside_the_procs_tree() {
+    let dir = tempfile::tempdir().unwrap();
+    write_procs(dir.path());
+    let base = spawn_api("secret", dir.path()).await;
+    let client = reqwest::Client::new();
+
+    client.post(format!("{base}/procs/test:job/start")).bearer_auth("secret").send().await.unwrap();
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+
+    // A made-up hwnd belongs to no live window at all, let alone this proc's
+    // pid tree - `resolve_window` must reject it before `/screenshot` ever
+    // tries to capture an arbitrary window of an unrelated process.
+    let r = client
+        .get(format!("{base}/procs/test:job/screenshot?window=999999999"))
+        .bearer_auth("secret")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 400);
+
+    client.post(format!("{base}/procs/test:job/stop")).bearer_auth("secret").send().await.unwrap();
+}
+
+#[tokio::test]
 async fn add_command_with_dock_window_round_trips() {
     let dir = tempfile::tempdir().unwrap();
     write_procs(dir.path());

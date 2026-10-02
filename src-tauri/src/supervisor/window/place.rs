@@ -52,6 +52,51 @@ pub struct OriginalState {
     visible: bool,
 }
 
+impl OriginalState {
+    /// The recorded rect, for a caller deciding whether it is still a sane
+    /// place to restore to (see `safe_restore_rect`).
+    pub(crate) fn rect(&self) -> Rect {
+        self.rect
+    }
+
+    /// Overrides just the recorded rect, keeping style/exstyle/parent/visible
+    /// as `embed`'s live snapshot found them. `supervisor::window::park` may
+    /// have already moved a headless guest off-screen before `embed`'s own
+    /// snapshot ran (the park hook fires the instant the window is created,
+    /// well before `dock::headless`'s poll tick finds it), so without this
+    /// override `release` would restore the guest to -32000 forever instead
+    /// of back to the desktop.
+    pub(crate) fn with_rect(mut self, rect: Rect) -> Self {
+        self.rect = rect;
+        self
+    }
+}
+
+/// Whether two rects overlap at all (a touching edge, zero-area overlap,
+/// does not count).
+fn rects_intersect(a: &Rect, b: &Rect) -> bool {
+    a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom
+}
+
+/// Where a guest should actually land on release: `recorded` unchanged when
+/// it still overlaps a real monitor, else centered on `primary_work_area`.
+/// The fallback path matters when no `park`-recorded original exists AND the
+/// only rect on hand is itself off every monitor - e.g. headless was turned
+/// on for a window the park hook never saw get created (hook not running
+/// yet, or state lost across a restart) - so this is a second, independent
+/// safety net on top of `OriginalState::with_rect`'s park-rect override, not
+/// a replacement for it.
+pub(crate) fn safe_restore_rect(recorded: Rect, monitors: &[Rect], primary_work_area: Rect) -> Rect {
+    if monitors.iter().any(|m| rects_intersect(m, &recorded)) {
+        return recorded;
+    }
+    let w = recorded.width().max(1);
+    let h = recorded.height().max(1);
+    let left = primary_work_area.left + (primary_work_area.width() - w) / 2;
+    let top = primary_work_area.top + (primary_work_area.height() - h) / 2;
+    Rect { left, top, right: left + w, bottom: top + h }
+}
+
 fn snapshot(guest: ffi::HWND) -> OriginalState {
     let mut rect = Rect::default();
     unsafe {
@@ -253,5 +298,26 @@ mod tests {
         };
         assert_eq!(release(0, &original), Err(PlaceError::WindowGone));
         assert_eq!(reassert(0, zero_rect), Err(PlaceError::WindowGone));
+    }
+
+    #[test]
+    fn safe_restore_rect_keeps_a_recorded_rect_that_overlaps_a_monitor() {
+        let monitors = [Rect { left: 0, top: 0, right: 1920, bottom: 1080 }];
+        let recorded = Rect { left: 100, top: 100, right: 900, bottom: 700 };
+        assert_eq!(safe_restore_rect(recorded, &monitors, monitors[0]), recorded);
+    }
+
+    #[test]
+    fn safe_restore_rect_centers_an_off_screen_rect_on_the_primary_work_area() {
+        let monitors = [Rect { left: 0, top: 0, right: 1920, bottom: 1080 }];
+        let primary_work_area = Rect { left: 0, top: 0, right: 1920, bottom: 1040 };
+        // Parked at -32000: no monitor overlaps it.
+        let recorded = Rect { left: -32_000, top: -32_000, right: -31_200, bottom: -31_200 };
+        let restored = safe_restore_rect(recorded, &monitors, primary_work_area);
+        assert_eq!(restored.width(), 800);
+        assert_eq!(restored.height(), 800);
+        // Centered: equal margin on both sides of the 1920-wide work area.
+        assert_eq!(restored.left, (1920 - 800) / 2);
+        assert_eq!(restored.top, (1040 - 800) / 2);
     }
 }

@@ -247,6 +247,14 @@ impl ManagedProc {
         let mut child = command.spawn()?;
         let pid = child.id();
 
+        // Headless-flagged from the start: register the pid with the park
+        // hook immediately, not on the next `headless_tick` (up to 250ms
+        // away) - the gap between spawn and that tick is exactly the window
+        // this closes for a brand-new process's own first window.
+        if self.spec.dock_headless {
+            super::super::window::park::add_parked_pid(pid);
+        }
+
         // Detached: waits (up to a few seconds, or not at all if the setting
         // is off) for the child's window on a background thread, never here.
         super::super::window::guard_focus(pid, previous_foreground);

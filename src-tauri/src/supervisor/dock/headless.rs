@@ -109,6 +109,22 @@ pub(super) fn is_refused(proc_id: &str, pid: u32) -> bool {
     refused().lock().unwrap().contains(&(proc_id.to_string(), pid))
 }
 
+/// Second, independent safety net on top of this module's own park-rect
+/// override in `try_dock_headless`: if a recorded original still somehow
+/// sits off every monitor (the park hook was not running yet when the
+/// window first appeared, or its state was lost across a restart), moves it
+/// to a sane on-screen spot instead of restoring a guest to -32000 forever.
+/// A no-op for every normal pane dock, whose recorded rect is always
+/// on-screen already. Called by `dock`'s own release paths, not just
+/// headless ones, since a stale registry entry from before this fix could
+/// in principle carry an off-screen "original" for either dock kind.
+pub(super) fn ensure_restorable(original: window::OriginalState) -> window::OriginalState {
+    let monitors = window::park::monitor_rects();
+    let primary = window::park::primary_work_area();
+    let safe = window::safe_restore_rect(original.rect(), &monitors, primary);
+    original.with_rect(safe)
+}
+
 fn is_headless_docked(proc_id: &str) -> bool {
     matches!(
         registry().entries.lock().unwrap().get(proc_id),
@@ -148,7 +164,19 @@ impl Supervisor {
             let host = create_host(size.0, size.1).map_err(HeadlessError::Other)?;
             let target = screen_rect(host);
             match window::embed(guest, host, target) {
-                Ok((WindowOutcome::Embedded, original)) => Ok((host, target, original)),
+                Ok((WindowOutcome::Embedded, original)) => {
+                    // `embed`'s own snapshot runs AFTER `window::park`'s hook
+                    // may already have moved this window to -32000 (it parks
+                    // the instant the pid is in its set, well before this
+                    // tick's `find_window_once` call ever sees the window) -
+                    // if park recorded the true pre-park position, that is
+                    // the real "original" an undock must restore to.
+                    let original = match window::park::original_rect_of(guest) {
+                        Some(rect) => original.with_rect(rect),
+                        None => original,
+                    };
+                    Ok((host, target, original))
+                }
                 Ok((WindowOutcome::SoftDocked, original)) => {
                     let _ = window::release(guest, &original);
                     destroy_host(host);
@@ -189,6 +217,21 @@ impl Supervisor {
             .iter()
             .filter_map(|(id, p)| p.pid.map(|pid| (id.clone(), pid, p.spec.dock_headless)))
             .collect();
+
+        // One replace per tick, from the union of every currently
+        // headless-wanted proc's full process tree - `window::park`'s hook
+        // parks a new top-level window the instant its pid is in this set,
+        // which is what keeps a headless app's startup window and its
+        // popups/dialogs off the dev's screen without waiting on this tick
+        // to find and embed anything first.
+        let mut parked_pids: HashSet<u32> = HashSet::new();
+        for (_, pid, want) in &procs {
+            if *want {
+                parked_pids.extend(window::descendant_pids(*pid));
+            }
+        }
+        window::park::set_parked_pids(parked_pids);
+
         for (id, pid, want) in procs {
             let docked = is_headless_docked(&id);
             if want && !docked {
@@ -205,6 +248,10 @@ impl Supervisor {
                 // `Refused` for a window that is now meant to be normal, and
                 // gives a later re-toggle one fresh attempt.
                 refused().lock().unwrap().remove(&(id.clone(), pid));
+                // A popup parked off-screen while this proc was headless must
+                // come back, whether or not the main window itself was ever
+                // successfully docked.
+                window::park::unpark_all_of(&window::descendant_pids(pid));
                 if docked {
                     if let Err(e) = self.undock_window(app, &id) {
                         log::warn!("headless undock of {id} failed: {e}");

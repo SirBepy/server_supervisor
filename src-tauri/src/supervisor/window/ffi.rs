@@ -70,6 +70,7 @@ pub(super) const SW_SHOWNOACTIVATE: i32 = 4;
 pub(super) const GWL_STYLE: i32 = -16;
 pub(super) const GWL_EXSTYLE: i32 = -20;
 pub(super) const GW_OWNER: u32 = 4;
+pub(super) const GA_ROOT: u32 = 2;
 // A real application main window is never this small, but 200px would
 // reject legitimate narrow HUD-style windows (a 200x100 or 468x48 utility
 // window, confirmed live). 32 sits above the 16x16 helper surface that
@@ -120,6 +121,8 @@ extern "system" {
     ) -> i32;
     pub(super) fn SetThreadDpiHostingBehavior(value: i32) -> i32;
     pub(super) fn GetWindowTextW(hwnd: HWND, lp_string: *mut u16, n_max_count: i32) -> i32;
+    pub(super) fn GetClassNameW(hwnd: HWND, lp_class_name: *mut u16, n_max_count: i32) -> i32;
+    pub(super) fn GetAncestor(hwnd: HWND, gaflags: u32) -> HWND;
     pub(super) fn GetForegroundWindow() -> HWND;
     // Can legitimately fail: Windows only grants this to a process that
     // already holds (or was started by) the foreground process, and even

@@ -1,6 +1,7 @@
 //! Routes that let an agent test a supervised GUI app without the dev
 //! seeing or hearing it: sound on/off, listen, screenshot, and posted input.
 
+use super::procs::{resolve_window, WindowQuery};
 use super::{split_proc_id, unit_result, ApiState};
 use crate::supervisor::audio;
 use crate::supervisor::window::{capture, input};
@@ -69,10 +70,18 @@ pub(super) async fn listen(
     }
 }
 
-/// `GET /procs/:id/screenshot` - PNG of the app's window, docked or not,
-/// including when it sits in the invisible headless host.
-pub(super) async fn screenshot(State(s): State<ApiState>, Path(id): Path<String>) -> Response {
-    let hwnd = match s.sup.window_for(&id) {
+/// `GET /procs/:id/screenshot?window=N` - PNG of the app's window, docked or
+/// not, including when it sits in the invisible headless host. `window` (an
+/// hwnd from `GET /procs/:id/windows`) targets a specific popup or dialog
+/// instead of the proc's main window; omitted, this is the pre-existing
+/// default-window behaviour. A caller-supplied hwnd outside the proc's own
+/// pid tree is rejected, never captured.
+pub(super) async fn screenshot(
+    State(s): State<ApiState>,
+    Path(id): Path<String>,
+    Query(q): Query<WindowQuery>,
+) -> Response {
+    let hwnd = match resolve_window(&s.sup, &id, &q) {
         Ok(h) => h,
         Err(e) => return bad_request(e),
     };
@@ -91,14 +100,17 @@ pub(super) enum InputBody {
     One(input::InputAction),
 }
 
-/// `POST /procs/:id/input` - one action (`{"type":"click","x":10,"y":20}`)
+/// `POST /procs/:id/input?window=N` - one action (`{"type":"click","x":10,"y":20}`)
 /// or a sequence (`{"actions":[...]}`), in the window's client pixels.
+/// `window` targets a specific popup or dialog the same way `/screenshot`'s
+/// does; omitted, this is the pre-existing default-window behaviour.
 pub(super) async fn send_input(
     State(s): State<ApiState>,
     Path(id): Path<String>,
+    Query(q): Query<WindowQuery>,
     Json(b): Json<InputBody>,
 ) -> Response {
-    let hwnd = match s.sup.window_for(&id) {
+    let hwnd = match resolve_window(&s.sup, &id, &q) {
         Ok(h) => h,
         Err(e) => return bad_request(e),
     };

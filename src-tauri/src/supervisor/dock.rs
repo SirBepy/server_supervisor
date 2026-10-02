@@ -197,6 +197,7 @@ impl Supervisor {
         let Some(Entry::Active { hwnd, original, headless_host, .. }) = entry else {
             return Ok(());
         };
+        let original = headless::ensure_restorable(original);
         on_main(app, move || {
             // Release before destroying the host: destroying a parent
             // destroys its children, which would take the app's window
@@ -262,7 +263,7 @@ impl Supervisor {
             let entry = registry().entries.lock().unwrap().remove(&id);
             if let Some(Entry::Active { hwnd, original, headless_host, .. }) = entry {
                 if window::is_window_alive(hwnd) {
-                    let _ = window::release(hwnd, &original);
+                    let _ = window::release(hwnd, &headless::ensure_restorable(original));
                 }
                 if let Some(host) = headless_host {
                     headless::destroy_host(host);
