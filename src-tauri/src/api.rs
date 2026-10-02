@@ -201,9 +201,15 @@ pub async fn serve(
     // signatures (see `DockFn`'s doc for why that split is load-bearing).
     // Headless is persisted on the command, not just applied: the headless
     // tick reconciles every proc with that flag, so a one-off dock would be
-    // undone within a second, and an undock left with the flag on redone.
+    // undone within a second, and a pane dock or undock left with the flag on
+    // redone.
     let dock_fn: DockFn = Arc::new(move |sup: &Supervisor, id: &str, req: DockRequest| match req {
-        DockRequest::Pane(r) => sup.dock_window(&app_handle, id, r).map(Some),
+        DockRequest::Pane(r) => {
+            if let Some((project_id, command_id)) = split_proc_id(id) {
+                let _ = sup.set_command_headless(project_id, command_id, false);
+            }
+            sup.dock_window(&app_handle, id, r).map(Some)
+        }
         DockRequest::Headless => {
             let (project_id, command_id) =
                 split_proc_id(id).ok_or_else(|| format!("malformed process id: {id}"))?;
