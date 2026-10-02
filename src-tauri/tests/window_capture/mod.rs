@@ -21,7 +21,7 @@ use windows::Win32::UI::WindowsAndMessaging::*;
 use crate::spike_common::kill_tree;
 use crate::window_host::{create_host, embed, find_window, pump_for, HostKind, HOST_H, HOST_W};
 
-struct Frame {
+pub(crate) struct Frame {
     w: i32,
     h: i32,
     bgra: Vec<u8>,
@@ -30,6 +30,13 @@ struct Frame {
 impl Frame {
     fn distinct(&self) -> usize {
         self.bgra.chunks_exact(4).map(|p| u32::from_le_bytes([p[0], p[1], p[2], 0])).collect::<HashSet<_>>().len()
+    }
+    /// More than a handful of distinct colors: cheap proxy for "this capture
+    /// shows real rendered content", not a solid/blank window. Reused by the
+    /// Flutter and WebView2 probe legs, which (unlike the Edge leg) don't
+    /// know a target color to look for with `fraction`.
+    pub(crate) fn non_blank(&self) -> bool {
+        self.distinct() > 4
     }
     /// Share of pixels with the same channel pattern as (r, g, b), tolerant
     /// of the page being dimmed: a full channel must be bright relative to
@@ -62,7 +69,7 @@ impl Frame {
             .count();
         n as f32 / (self.w * self.h).max(1) as f32
     }
-    fn save(&self, name: &str) {
+    pub(crate) fn save(&self, name: &str) {
         let Some(dir) = std::env::var_os("SPIKE_OUT").map(PathBuf::from) else { return };
         let _ = std::fs::create_dir_all(&dir);
         let file = std::fs::File::create(dir.join(format!("{name}.png"))).expect("png file");
@@ -76,7 +83,10 @@ impl Frame {
 
 /// `PrintWindow(PW_RENDERFULLCONTENT)` when `hwnd` is Some, else a BitBlt
 /// of the real screen at `screen_rect` (what the dev would actually see).
-fn grab(hwnd: Option<HWND>, screen_rect: RECT) -> Frame {
+/// `PW_RENDERFULLCONTENT` is what makes this work for a DirectComposition
+/// child owned by another process (WebView2's msedgewebview2.exe), not just
+/// in-process content.
+pub(crate) fn grab(hwnd: Option<HWND>, screen_rect: RECT) -> Frame {
     unsafe {
         let (w, h) = match hwnd {
             Some(hw) => {

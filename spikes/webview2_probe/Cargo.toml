@@ -1,0 +1,21 @@
+# Standalone probe for todo 0057: a minimal WebView2 (Tauri-style) window to
+# prove posted input (src-tauri/src/supervisor/window/input.rs) drives a real
+# tao window hosting a cross-process msedgewebview2.exe content child, not
+# just a bare Edge --app window. Not a workspace member of src-tauri; the
+# empty [workspace] table below stops cargo from searching upward into it.
+[package]
+name = "webview2_probe"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "webview2_probe"
+path = "src/main.rs"
+
+[dependencies]
+# Pinned to the exact versions already resolved in src-tauri/Cargo.lock
+# (via tauri-runtime-wry) so this spike introduces no new crate version.
+wry = "=0.55.1"
+tao = "=0.35.3"
+
+[workspace]

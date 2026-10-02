@@ -12,3 +12,8 @@ superpowers/
 .for_bepy
 # brainstorming visual companion
 .superpowers/
+
+# Standalone cargo spikes under spikes/ build with their own target dir by
+# default when CARGO_TARGET_DIR isn't overridden (see each spike's README
+# note); the Flutter spikes already carry their own generated .gitignore.
+/spikes/*/target/
