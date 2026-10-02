@@ -13,7 +13,15 @@ use std::sync::{Mutex, OnceLock};
 /// nothing left to revalidate against - only a fresh `dock_window` call that
 /// actually finds a window clears this back to `Active`.
 pub(super) enum Entry {
-    Active { hwnd: isize, original: OriginalState, outcome: WindowOutcome, target: Rect },
+    Active {
+        hwnd: isize,
+        original: OriginalState,
+        outcome: WindowOutcome,
+        target: Rect,
+        /// The invisible host window this dock owns when it is headless;
+        /// destroyed on undock. `None` for a dashboard-pane dock.
+        headless_host: Option<isize>,
+    },
     WindowLost,
 }
 
@@ -90,6 +98,7 @@ mod tests {
                 original: test_original_state(),
                 outcome: WindowOutcome::Embedded,
                 target: Rect::default(),
+                headless_host: None,
             },
         );
     }

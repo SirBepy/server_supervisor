@@ -44,6 +44,9 @@ export const undockProcWindow = (id: string) => invoke<void>("undock_proc_window
 export const setProcDockBounds = (id: string, rect: DockRect) =>
   invoke<void>("set_proc_dock_bounds", { id, rect });
 export const getDockState = (id: string) => invoke<DockState>("get_dock_state", { id });
+// PNG of the proc's window as a data: URL, the same image the HTTP API's
+// /screenshot hands an agent.
+export const captureProcWindow = (id: string) => invoke<string>("capture_proc_window", { id });
 
 // Project / command config CRUD.
 export const listProjects = () => invoke<Project[]>("list_projects");
@@ -108,6 +111,11 @@ export const updateCommand = (
   });
 export const removeCommand = (projectId: string, commandId: string) =>
   invoke<void>("remove_command", { projectId, commandId });
+// Live toggles: apply to a running command without restarting it.
+export const setCommandSound = (projectId: string, commandId: string, on: boolean) =>
+  invoke<Command>("set_command_sound", { projectId, commandId, on });
+export const setCommandHeadless = (projectId: string, commandId: string, on: boolean) =>
+  invoke<Command>("set_command_headless", { projectId, commandId, on });
 
 // Reverse-proxy hub: one fixed loopback listener per project, forwarding to
 // whichever upstream preset is active. See supervisor::proxy_hub.

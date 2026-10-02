@@ -112,6 +112,8 @@ mod tests {
             fixed_port: None,
             env: String::new(),
             dock_window: false,
+            play_sound: false,
+            dock_headless: false,
         }
     }
 
@@ -201,6 +203,8 @@ mod tests {
             env: String::new(),
             role: None,
             dock_window: false,
+            play_sound: false,
+            dock_headless: false,
         }
     }
 
@@ -219,6 +223,8 @@ mod tests {
             env: String::new(),
             role: None,
             dock_window: false,
+            play_sound: false,
+            dock_headless: false,
         }
     }
 
@@ -430,6 +436,8 @@ mod tests {
                 env: String::new(),
                 role: None,
                 dock_window: false,
+                play_sound: false,
+                dock_headless: false,
             }],
             presets: Vec::new(),
             active_preset: None,

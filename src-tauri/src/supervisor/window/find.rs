@@ -143,7 +143,10 @@ pub struct FoundWindow {
     pub rect: Rect,
 }
 
-fn snapshot_parent_map() -> HashMap<u32, u32> {
+/// pid -> parent pid for every process on the machine, from one Toolhelp
+/// snapshot (cheap enough for the audio watcher's 100ms tick, unlike a
+/// `sysinfo` refresh).
+pub(crate) fn snapshot_parent_map() -> HashMap<u32, u32> {
     let mut map = HashMap::new();
     unsafe {
         let snap = ffi::CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);

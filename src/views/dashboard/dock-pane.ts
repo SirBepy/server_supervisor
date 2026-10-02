@@ -58,6 +58,16 @@ const lastRect: Record<string, DockRect> = {};
 // collapsing and reopening) would leave a listener bound to a detached
 // element, which reports a zero rect and corrupts the live dock position.
 const paneCleanup: Record<string, () => void> = {};
+// Commands set to run headless. The backend docks those into its invisible
+// host on its own, so this pane must never auto-dock them into the hole or
+// re-assert a hole rect onto them; it only shows a screenshot preview.
+const headlessIds = new Set<string>();
+const previewCache: Record<string, string> = {};
+
+function isPaneDocked(id: string): boolean {
+  const s = dockStateCache[id];
+  return s?.state === "docked" && s.mode !== "headless";
+}
 
 // ----- rect measurement + reporting -----
 // Host-window geometry (screen origin, scale factor, ResizeObserver-tick
@@ -70,7 +80,7 @@ const paneCleanup: Record<string, () => void> = {};
 // scroll listener set up in attachPaneObservers instead.
 function reassertAllDocked() {
   for (const [id, rect] of Object.entries(lastRect)) {
-    if (dockStateCache[id]?.state === "docked") {
+    if (isPaneDocked(id)) {
       void ipc.setProcDockBounds(id, rect).catch(() => {});
     }
   }
@@ -79,7 +89,7 @@ function reassertAllDocked() {
 function reportRect(id: string, el: HTMLElement) {
   const rect = computeRect(el);
   lastRect[id] = rect;
-  if (dockStateCache[id]?.state === "docked") {
+  if (isPaneDocked(id)) {
     void ipc.setProcDockBounds(id, rect).catch(() => {});
   }
 }
@@ -163,8 +173,10 @@ function pollOne(id: string) {
   const state = dockStateCache[id];
   const notDocked = !state || state.state === "not_docked";
   if (notDocked) void fetchLogs(id);
+  if (state?.state === "docked" && state.mode === "headless") void fetchPreview(id);
 
-  if (notDocked && !manualUndock.has(id) && !dockAttemptInFlight.has(id) && lastRect[id]) {
+  const headless = headlessIds.has(id);
+  if (notDocked && !headless && !manualUndock.has(id) && !dockAttemptInFlight.has(id) && lastRect[id]) {
     dockAttemptInFlight.add(id);
     void ipc
       .dockProcWindow(id, lastRect[id])
@@ -180,6 +192,16 @@ function pollOne(id: string) {
         draw();
       });
   }
+}
+
+function fetchPreview(id: string) {
+  void ipc
+    .captureProcWindow(id)
+    .then((url) => {
+      previewCache[id] = url;
+      draw();
+    })
+    .catch(() => {});
 }
 
 function fetchLogs(id: string): Promise<void> {
@@ -238,6 +260,31 @@ function windowLostView(id: string): TemplateResult {
   `;
 }
 
+// Not a hole: the window lives in the backend's invisible host, so this
+// pane draws real content, the latest screenshot an agent would also get.
+function headlessView(project: Project, cmd: Command, id: string): TemplateResult {
+  return html`
+    <div class="dockpane-chrome">
+      <span class="dockpane-pill dockpane-pill-headless">
+        <i class="ph ph-eye-slash"></i>
+        Headless
+      </span>
+      <button
+        class="abtn"
+        title="Show window normally"
+        @click=${() => void act(ipc.setCommandHeadless(project.id, cmd.id, false))}
+      >
+        <i class="ph ph-app-window"></i>
+      </button>
+    </div>
+    <div class="dockpane-body">
+      ${previewCache[id]
+        ? html`<img class="dockpane-preview" src=${previewCache[id]} alt="Latest capture of ${cmd.name}" />`
+        : html`<p class="dockpane-note">Waiting for the first capture...</p>`}
+    </div>
+  `;
+}
+
 function dockedHole(id: string, mode: DockOutcome): TemplateResult {
   const soft = mode === "soft_docked";
   return html`
@@ -271,6 +318,7 @@ function dockPaneOne(project: Project, cmd: Command): TemplateResult {
     const state: DockState = dockStateCache[id] ?? { state: "not_docked" };
     if (state.state === "not_docked") inner = liveLogTail(id);
     else if (state.state === "window_lost") inner = windowLostView(id);
+    else if (state.mode === "headless") inner = headlessView(project, cmd, id);
     else inner = dockedHole(id, state.mode);
   }
 
@@ -287,7 +335,12 @@ function dockPaneOne(project: Project, cmd: Command): TemplateResult {
 // `dock_window: true` - this section must never appear for the headless dev
 // servers that make up most of the command list.
 export function dockSection(project: Project): TemplateResult | typeof nothing {
-  const docked = project.commands.filter((c) => c.dock_window);
+  const docked = project.commands.filter((c) => c.dock_window || c.dock_headless);
+  for (const c of project.commands) {
+    const id = `${project.id}:${c.id}`;
+    if (c.dock_headless) headlessIds.add(id);
+    else headlessIds.delete(id);
+  }
   if (docked.length === 0) return nothing;
 
   ensurePolling(() => docked.map((c) => `${project.id}:${c.id}`));

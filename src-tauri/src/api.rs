@@ -10,6 +10,7 @@
 
 mod commands;
 mod groups;
+mod media;
 mod presets;
 
 use crate::ports::{PortEntry, PortRegistry};
@@ -55,7 +56,13 @@ type PermissionFlags = Arc<dyn Fn() -> (bool, bool) + Send + Sync>;
 /// target dir, which rules out a stale-artifact explanation. Closing over
 /// the real `AppHandle` inside `serve` and handing back only this closure
 /// keeps the concrete Tauri type out of `api.rs` entirely.
-type DockFn = Arc<dyn Fn(&Supervisor, &str, Option<DockRect>) -> Result<Option<DockOutcome>, String> + Send + Sync>;
+type DockFn = Arc<dyn Fn(&Supervisor, &str, DockRequest) -> Result<Option<DockOutcome>, String> + Send + Sync>;
+
+pub enum DockRequest {
+    Pane(DockRect),
+    Headless,
+    Undock,
+}
 
 #[derive(Clone)]
 struct ApiState {
@@ -124,6 +131,10 @@ pub fn router(
         .route("/procs/:id/reload", post(reload_proc))
         .route("/procs/:id/logs", get(get_logs))
         .route("/procs/:id/dock", post(dock_proc))
+        .route("/procs/:id/sound", post(media::set_sound))
+        .route("/procs/:id/listen", get(media::listen))
+        .route("/procs/:id/screenshot", get(media::screenshot))
+        .route("/procs/:id/input", post(media::send_input))
         .route("/procs/:id", delete(delete_proc))
         .route("/ports", get(list_ports))
         .route("/ports/reserve", post(reserve_port))
@@ -188,9 +199,23 @@ pub async fn serve(
     // ever runs inside the live Tauri app - never called from
     // `tests/api_test.rs` - so the concrete type stays out of `api.rs`'s own
     // signatures (see `DockFn`'s doc for why that split is load-bearing).
-    let dock_fn: DockFn = Arc::new(move |sup: &Supervisor, id: &str, rect: Option<DockRect>| match rect {
-        Some(r) => sup.dock_window(&app_handle, id, r).map(Some),
-        None => sup.undock_window(&app_handle, id).map(|()| None),
+    // Headless is persisted on the command, not just applied: the headless
+    // tick reconciles every proc with that flag, so a one-off dock would be
+    // undone within a second, and an undock left with the flag on redone.
+    let dock_fn: DockFn = Arc::new(move |sup: &Supervisor, id: &str, req: DockRequest| match req {
+        DockRequest::Pane(r) => sup.dock_window(&app_handle, id, r).map(Some),
+        DockRequest::Headless => {
+            let (project_id, command_id) =
+                split_proc_id(id).ok_or_else(|| format!("malformed process id: {id}"))?;
+            sup.set_command_headless(project_id, command_id, true)?;
+            sup.dock_headless(&app_handle, id).map(Some)
+        }
+        DockRequest::Undock => {
+            if let Some((project_id, command_id)) = split_proc_id(id) {
+                let _ = sup.set_command_headless(project_id, command_id, false);
+            }
+            sup.undock_window(&app_handle, id).map(|()| None)
+        }
     });
     let app = router(sup, ports, token, Some(flags), data_dir.clone(), Some(dock_fn));
     let listener = match bind_probe(port).await {
@@ -288,15 +313,17 @@ async fn list_procs(State(s): State<ApiState>) -> Json<Vec<ProcWithWindow>> {
     Json(out)
 }
 
-/// Body for `POST /procs/:id/dock`. `rect` present docks/reasserts into that
-/// screen-coordinate rectangle (mirrors the Tauri IPC `dock_proc_window`
-/// body); omitted/`null` undocks. One route covers both directions rather
-/// than a second endpoint, since the action is fully determined by whether a
-/// target rect was given.
+/// Body for `POST /procs/:id/dock`. `headless: true` moves the window into
+/// an invisible host of its own (and keeps it there across restarts);
+/// otherwise `rect` present docks/reasserts into that screen-coordinate
+/// rectangle (mirrors the Tauri IPC `dock_proc_window` body), and neither
+/// undocks.
 #[derive(Deserialize)]
 struct DockBody {
     #[serde(default)]
     rect: Option<DockRect>,
+    #[serde(default)]
+    headless: bool,
 }
 
 async fn dock_proc(
@@ -320,7 +347,12 @@ async fn dock_proc(
     // `supervisor::window`'s module docs warn about; `on_main` is what avoids
     // it. Both are idempotent: re-docking reasserts into the new rect, and
     // undocking an already-undocked proc is a no-op success.
-    match dock(&s.sup, &id, b.rect) {
+    let req = match (b.headless, b.rect) {
+        (true, _) => DockRequest::Headless,
+        (false, Some(r)) => DockRequest::Pane(r),
+        (false, None) => DockRequest::Undock,
+    };
+    match dock(&s.sup, &id, req) {
         Ok(Some(outcome)) => Json(outcome).into_response(),
         Ok(None) => StatusCode::OK.into_response(),
         Err(e) => (StatusCode::BAD_REQUEST, e).into_response(),

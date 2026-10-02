@@ -125,6 +125,58 @@ Returns an array of captured log lines, oldest first.
 
 ---
 
+### GUI apps: headless testing
+
+Every supervised app is **muted by default**: its audio never reaches the dev's speakers unless its command opts in. An agent can still hear it (`/listen`), see it (`/screenshot`) and drive it (`/input`), and with `headless` the window never appears on the dev's screen at all.
+
+```
+POST /procs/:id/dock
+```
+```json
+{ "headless": true }
+```
+Moves the app's window into an invisible host of its own and keeps it there (persisted on the command, so it survives restarts). `{}` undocks and turns headless off. `{ "rect": { "left": 0, "top": 0, "right": 800, "bottom": 600 } }` docks into a dashboard-pane rectangle in screen pixels instead. Returns the dock mode (`"headless"`, `"embedded"`, `"soft_docked"`), or `400` when the app has no window yet or refuses embedding (some always-on-top widget apps do).
+
+```
+GET /procs/:id/screenshot
+```
+Returns `image/png` of the app's window, docked, headless or a normal window. Pixel coordinates in the image are the same coordinates `/input` takes.
+
+```
+POST /procs/:id/input
+```
+One action, or a sequence:
+```json
+{ "actions": [
+  { "type": "click", "x": 120, "y": 340 },
+  { "type": "text", "text": "hello" },
+  { "type": "key", "key": "Enter" },
+  { "type": "scroll", "x": 400, "y": 300, "delta": -3 },
+  { "type": "click", "x": 50, "y": 50, "button": "right", "double": false },
+  { "type": "move", "x": 10, "y": 10 }
+] }
+```
+Input is posted to the window as messages: the dev's real mouse and keyboard focus are never touched. Click a text field before typing into it: the window is never activated, so `autofocus` and other focus-on-activate behaviour never fire. Named keys: Enter, Tab, Escape, Backspace, Delete, Space, ArrowUp/Down/Left/Right, Home, End, PageUp, PageDown, F1-F12. Modifier chords (Ctrl+C) are not supported.
+
+```
+GET /procs/:id/listen?ms=2000
+```
+Samples the app's audio levels for `ms` milliseconds (max 60000), whether or not it is muted for the dev:
+```json
+{ "duration_ms": 2003, "peak": 0.36, "active_ms": 1480, "first_sound_ms": 120, "sessions": 1, "heard": true }
+```
+`peak` is 0.0 to 1.0 of full scale. `sessions: 0` means the app never opened audio at all. This is a level meter, not a recording: per-process audio capture runs after the mute, so recording a muted app only yields silence.
+
+```
+POST /procs/:id/sound
+```
+```json
+{ "on": true }
+```
+Lets this command's audio reach the dev's speakers (`false` mutes it again). Applies live, no restart. Returns the updated command.
+
+---
+
 ### Ports
 
 ```

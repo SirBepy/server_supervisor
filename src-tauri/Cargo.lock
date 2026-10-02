@@ -3739,6 +3739,7 @@ dependencies = [
  "base64 0.22.1",
  "chrono",
  "log",
+ "png 0.18.1",
  "reqwest",
  "rustls",
  "serde",
@@ -3758,6 +3759,8 @@ dependencies = [
  "tokio-stream",
  "ts-rs",
  "uuid",
+ "windows 0.62.2",
+ "windows-core 0.62.2",
 ]
 
 [[package]]

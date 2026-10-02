@@ -61,6 +61,9 @@ pub fn run() {
             ipc::commands::add_command,
             ipc::commands::update_command,
             ipc::commands::remove_command,
+            ipc::commands::set_command_sound,
+            ipc::commands::set_command_headless,
+            ipc::commands::capture_proc_window,
             ipc::commands::detect_commands,
             ipc::commands::validate_command,
             ipc::commands::list_ports,
@@ -128,6 +131,19 @@ pub fn run() {
                 // list() (the UI poll) now only reads this cache, so the heavy
                 // process enumeration + netstat no longer block window drag/clicks.
                 reap_sup.sample_tick();
+            });
+
+            supervisor::audio::spawn_watcher(supervisor.clone());
+
+            // Headless docking runs here, not from the dashboard: a headless
+            // app has to leave the dev's screen even with the window closed
+            // to the tray. Short interval because the app's window is visible
+            // on the desktop until the first tick after it appears.
+            let headless_sup = supervisor.clone();
+            let headless_app = handle.clone();
+            std::thread::spawn(move || loop {
+                std::thread::sleep(std::time::Duration::from_millis(250));
+                headless_sup.headless_tick(&headless_app);
             });
 
             // Sync OS startup entry with the current setting on every launch so the

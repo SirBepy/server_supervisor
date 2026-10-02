@@ -22,6 +22,7 @@
 //! struct definition), so callers reach it the same way as everything else:
 //! `sup.dock_window(...)`.
 
+mod headless;
 mod registry;
 
 use super::window::{self, DockOutcome as WindowOutcome, PlaceError, Rect};
@@ -89,10 +90,25 @@ fn host_hwnd(app: &AppHandle) -> Result<isize, String> {
 impl Supervisor {
     /// Resolves `proc_id` to its live pid, or an error the caller can surface
     /// as-is (unknown id, or the proc simply has no running pid right now).
-    fn pid_for(&self, proc_id: &str) -> Result<u32, String> {
+    pub(crate) fn pid_for(&self, proc_id: &str) -> Result<u32, String> {
         let guard = self.procs.lock().unwrap();
         let proc = guard.get(proc_id).ok_or_else(|| format!("unknown process id: {proc_id}"))?;
-        proc.pid.ok_or_else(|| format!("process {proc_id} has no running pid to dock"))
+        proc.pid.ok_or_else(|| format!("process {proc_id} is not running"))
+    }
+
+    /// The window an agent should screenshot or drive for `proc_id`: the
+    /// docked window when there is one (an embedded `WS_CHILD` is invisible
+    /// to the top-level scan), else the app's own top-level window.
+    pub fn window_for(&self, proc_id: &str) -> Result<isize, String> {
+        if let Some(hwnd) = registry::active_dock_hwnd(proc_id) {
+            if window::is_window_alive(hwnd) {
+                return Ok(hwnd);
+            }
+        }
+        let pid = self.pid_for(proc_id)?;
+        window::find_window_once(pid, false)
+            .map(|w| w.hwnd)
+            .ok_or_else(|| format!("process {proc_id} has no window"))
     }
 
     /// Docks `proc_id`'s window into `target` (screen coordinates the
@@ -114,12 +130,19 @@ impl Supervisor {
         let existing_alive = {
             let guard = reg.entries.lock().unwrap();
             match guard.get(proc_id) {
-                Some(Entry::Active { hwnd, outcome, .. }) if window::is_window_alive(*hwnd) => {
+                Some(Entry::Active { hwnd, outcome, headless_host: None, .. })
+                    if window::is_window_alive(*hwnd) =>
+                {
                     Some((*hwnd, *outcome))
                 }
                 _ => None,
             }
         };
+        // A headless dock lives in its own host; bring it back out before
+        // embedding it into this pane.
+        if matches!(reg.entries.lock().unwrap().get(proc_id), Some(Entry::Active { headless_host: Some(_), .. })) {
+            self.undock_window(app, proc_id)?;
+        }
         if let Some((hwnd, outcome)) = existing_alive {
             on_main(app, move || window::reassert(hwnd, target_rect))
                 .map_err(|e| format!("reassert on main thread failed: {e}"))?
@@ -154,7 +177,7 @@ impl Supervisor {
             Ok((outcome, original)) => {
                 reg.entries.lock().unwrap().insert(
                     proc_id.to_string(),
-                    Entry::Active { hwnd: guest, original, outcome, target: target_rect },
+                    Entry::Active { hwnd: guest, original, outcome, target: target_rect, headless_host: None },
                 );
                 Ok(to_dock_outcome(outcome))
             }
@@ -171,15 +194,21 @@ impl Supervisor {
     /// discipline every entry point here follows.
     pub fn undock_window(&self, app: &AppHandle, proc_id: &str) -> Result<(), String> {
         let entry = registry().entries.lock().unwrap().remove(proc_id);
-        let (hwnd, original) = match entry {
-            Some(Entry::Active { hwnd, original, .. }) if window::is_window_alive(hwnd) => {
-                (hwnd, original)
-            }
-            _ => return Ok(()),
+        let Some(Entry::Active { hwnd, original, headless_host, .. }) = entry else {
+            return Ok(());
         };
-        on_main(app, move || window::release(hwnd, &original))
-            .map_err(|e| format!("release on main thread failed: {e}"))?
-            .map_err(|e| format!("release failed: {e:?}"))
+        on_main(app, move || {
+            // Release before destroying the host: destroying a parent
+            // destroys its children, which would take the app's window
+            // down with it.
+            let released = if window::is_window_alive(hwnd) { window::release(hwnd, &original) } else { Ok(()) };
+            if let Some(host) = headless_host {
+                headless::destroy_host(host);
+            }
+            released
+        })
+        .map_err(|e| format!("release on main thread failed: {e}"))?
+        .map_err(|e| format!("release failed: {e:?}"))
     }
 
     /// Re-places an already-docked proc's window into `target`, for a
@@ -191,7 +220,9 @@ impl Supervisor {
         let hwnd = {
             let guard = reg.entries.lock().unwrap();
             match guard.get(proc_id) {
-                Some(Entry::Active { hwnd, .. }) if window::is_window_alive(*hwnd) => *hwnd,
+                Some(Entry::Active { hwnd, headless_host: None, .. }) if window::is_window_alive(*hwnd) => *hwnd,
+                // Not docked, or headless: a pane rect means nothing to a
+                // window living in its own off-screen host.
                 _ => return Ok(()),
             }
         };
@@ -229,9 +260,12 @@ impl Supervisor {
         let ids: Vec<String> = registry().entries.lock().unwrap().keys().cloned().collect();
         for id in ids {
             let entry = registry().entries.lock().unwrap().remove(&id);
-            if let Some(Entry::Active { hwnd, original, .. }) = entry {
+            if let Some(Entry::Active { hwnd, original, headless_host, .. }) = entry {
                 if window::is_window_alive(hwnd) {
                     let _ = window::release(hwnd, &original);
+                }
+                if let Some(host) = headless_host {
+                    headless::destroy_host(host);
                 }
             }
         }
@@ -243,6 +277,9 @@ impl Supervisor {
     /// default that to `DockState::NotDocked`.
     pub fn dock_state_for(&self, proc_id: &str) -> Option<DockState> {
         match registry().entries.lock().unwrap().get(proc_id) {
+            Some(Entry::Active { hwnd, headless_host: Some(_), .. }) if window::is_window_alive(*hwnd) => {
+                Some(DockState::Docked { mode: DockOutcome::Headless })
+            }
             Some(Entry::Active { hwnd, outcome, .. }) if window::is_window_alive(*hwnd) => {
                 Some(DockState::Docked { mode: to_dock_outcome(*outcome) })
             }

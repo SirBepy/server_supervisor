@@ -19,12 +19,15 @@
 //! This module only holds the mechanism. Nothing here wires it into
 //! `ProcSpec`, IPC, or the HTTP API - that is later, separate work.
 
+pub mod capture;
 mod ffi;
 mod find;
 mod focus;
+pub mod input;
 mod place;
 
 pub use find::{FoundWindow, find_window, find_window_once, is_window_alive};
+pub(crate) use find::snapshot_parent_map;
 pub use focus::{capture_foreground, guard_focus, set_keep_focus_on_launch};
 pub use place::{DockOutcome, OriginalState, PlaceError, embed, reassert, release};
 // Only reachable from the dock registry's own test fixtures; the real

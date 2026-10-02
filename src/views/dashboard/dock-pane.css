@@ -80,6 +80,17 @@
 .dockpane-soft-note {
   color: var(--warn, #f5a623);
 }
+.dockpane-pill-headless {
+  color: var(--muted);
+  border-color: var(--border);
+}
+.dockpane-preview {
+  display: block;
+  max-width: 100%;
+  max-height: 360px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
 
 .dockpane-lost {
   display: flex;

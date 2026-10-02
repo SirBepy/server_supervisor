@@ -43,6 +43,29 @@ tauri_kit_updater = { path = "../vendor/tauri_kit/tauri/updater" }
 base64 = "0.22.1"
 # About page build/install date formatting (get_version_info).
 chrono = { version = "0.4", features = ["serde"] }
+# Core Audio (per-process session mute, process-loopback capture) and window
+# capture/input. COM vtables are too many to hand-declare the way
+# supervisor/window/ffi.rs does its dozen user32 calls. Same version Tauri
+# already resolves, so this adds features, not a second copy of the crate.
+windows = { version = "0.62", features = [
+  "Win32_Foundation",
+  "Win32_Graphics_Dwm",
+  "Win32_Graphics_Gdi",
+  "Win32_Media_Audio",
+  "Win32_Media_Audio_Endpoints",
+  "Win32_Storage_Xps",
+  "Win32_System_Com",
+  "Win32_System_Com_StructuredStorage",
+  "Win32_System_Diagnostics_ToolHelp",
+  "Win32_System_LibraryLoader",
+  "Win32_System_Threading",
+  "Win32_System_Variant",
+  "Win32_UI_HiDpi",
+  "Win32_UI_Input_KeyboardAndMouse",
+  "Win32_UI_WindowsAndMessaging",
+] }
+windows-core = "0.62"
+png = "0.18"
 
 [dev-dependencies]
 tempfile = "3"

@@ -51,7 +51,30 @@ export function cmdMenuContent(
     ui.openCmdMenuFor = null;
     ui.menuAnchor = null;
   };
+  // Both apply live to a running command, so they sit outside the
+  // running/stopped split below.
+  const liveToggles = html`
+    <button
+      @click=${() => {
+        close();
+        void act(ipc.setCommandSound(project.id, cmd.id, !cmd.play_sound));
+      }}
+    >
+      <i class="ph ${cmd.play_sound ? "ph-speaker-slash" : "ph-speaker-high"}"></i>
+      ${cmd.play_sound ? "Mute sound" : "Let sound through"}
+    </button>
+    <button
+      @click=${() => {
+        close();
+        void act(ipc.setCommandHeadless(project.id, cmd.id, !cmd.dock_headless));
+      }}
+    >
+      <i class="ph ${cmd.dock_headless ? "ph-app-window" : "ph-eye-slash"}"></i>
+      ${cmd.dock_headless ? "Show window normally" : "Run window headless"}
+    </button>
+  `;
   return html`
+    ${liveToggles}
     ${live
       ? // Restart/Stop live as inline buttons on the Project screen row too,
         // but right-clicking a row (this menu) needs them as well - a

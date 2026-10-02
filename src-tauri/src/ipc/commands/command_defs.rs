@@ -64,6 +64,26 @@ pub fn update_command(
 }
 
 #[tauri::command]
+pub fn set_command_sound(
+    sup: State<Arc<Supervisor>>,
+    project_id: String,
+    command_id: String,
+    on: bool,
+) -> Result<Command, String> {
+    sup.set_command_sound(&project_id, &command_id, on)
+}
+
+#[tauri::command]
+pub fn set_command_headless(
+    sup: State<Arc<Supervisor>>,
+    project_id: String,
+    command_id: String,
+    on: bool,
+) -> Result<Command, String> {
+    sup.set_command_headless(&project_id, &command_id, on)
+}
+
+#[tauri::command]
 pub fn remove_command(
     sup: State<Arc<Supervisor>>,
     project_id: String,

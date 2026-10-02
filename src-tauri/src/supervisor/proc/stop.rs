@@ -68,6 +68,8 @@ mod tests {
             fixed_port: None,
             env: String::new(),
             dock_window: false,
+            play_sound: false,
+            dock_headless: false,
         }
     }
 

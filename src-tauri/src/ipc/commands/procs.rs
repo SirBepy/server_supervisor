@@ -85,6 +85,17 @@ pub fn set_proc_dock_bounds(
     sup.reassert_dock(&app, &id, rect)
 }
 
+/// The proc's window as a `data:image/png;base64,...` URL, for the dock
+/// pane's headless preview. Async so the capture never runs on the main
+/// thread that also pumps the headless host's messages.
+#[tauri::command(async)]
+pub fn capture_proc_window(sup: State<Arc<Supervisor>>, id: String) -> Result<String, String> {
+    use base64::Engine;
+    let hwnd = sup.window_for(&id)?;
+    let png = crate::supervisor::window::capture::capture(hwnd)?.to_png()?;
+    Ok(format!("data:image/png;base64,{}", base64::engine::general_purpose::STANDARD.encode(png)))
+}
+
 #[tauri::command]
 pub fn get_dock_state(sup: State<Arc<Supervisor>>, id: String) -> Result<DockState, String> {
     Ok(sup.dock_state_for(&id).unwrap_or(DockState::NotDocked))

@@ -90,6 +90,16 @@ pub struct ProcSpec {
     /// on everything.
     #[serde(default)]
     pub dock_window: bool,
+    /// Whether this process tree's audio reaches the dev's speakers. Off by
+    /// default: the audio watcher mutes every supervised app unless its
+    /// command opted in (see `supervisor::audio`). Toggled live, no restart.
+    #[serde(default)]
+    pub play_sound: bool,
+    /// Keep this process's window in the invisible headless host, where only
+    /// agents (screenshot/input API) and the dashboard's preview see it.
+    /// The backend docks it on its own; no dashboard needs to be open.
+    #[serde(default)]
+    pub dock_headless: bool,
 }
 
 /// One resolved env var actually applied to a spawned child (the parsed
@@ -196,6 +206,8 @@ impl ProcSpec {
             fixed_port: command.fixed_port,
             env: command.env.clone(),
             dock_window: command.dock_window,
+            play_sound: command.play_sound,
+            dock_headless: command.dock_headless,
         }
     }
 }
@@ -232,6 +244,13 @@ pub struct Command {
     /// `projects.json` with no such key on disk still loads, defaulting off.
     #[serde(default)]
     pub dock_window: bool,
+    /// Whether this command's audio is audible (see `ProcSpec::play_sound`).
+    /// Absent on disk means muted, which is the default for every command.
+    #[serde(default)]
+    pub play_sound: bool,
+    /// Run this command's window headless (see `ProcSpec::dock_headless`).
+    #[serde(default)]
+    pub dock_headless: bool,
 }
 
 /// A named upstream target for a project's reverse-proxy hub (see
@@ -324,6 +343,8 @@ pub struct DockRect {
 pub enum DockOutcome {
     Embedded,
     SoftDocked,
+    /// Embedded into the invisible headless host instead of a dashboard pane.
+    Headless,
 }
 
 /// Dock status of one supervised process, as read by the UI/API.
@@ -386,6 +407,8 @@ mod tests {
             env: String::new(),
             role: None,
             dock_window,
+            play_sound: false,
+            dock_headless: false,
         }
     }
 
@@ -408,6 +431,7 @@ mod tests {
         }"#;
         let cmd: Command = serde_json::from_str(json).unwrap();
         assert!(!cmd.dock_window, "an absent dock_window key must default to false");
+        assert!(!cmd.play_sound, "an absent play_sound key must default to muted");
     }
 
     #[test]
@@ -424,5 +448,8 @@ mod tests {
         };
         let spec = ProcSpec::from_unit(&project, &command_with_dock(true));
         assert!(spec.dock_window, "from_unit must carry the command's dock_window, not hardcode false");
+        let mut loud = command_with_dock(false);
+        loud.play_sound = true;
+        assert!(ProcSpec::from_unit(&project, &loud).play_sound, "from_unit must carry play_sound");
     }
 }
