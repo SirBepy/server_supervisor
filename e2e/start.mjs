@@ -1,8 +1,9 @@
 // Seeds a fresh isolated app-data dir, launches the e2e build and waits until
 // its webview is reachable over CDP. Leaves it running for the specs.
-import { seed, launch, connect, E2E_DIR } from "./lib.mjs";
+import { seed, launch, connect, teardown, E2E_DIR } from "./lib.mjs";
 import { fixtureProjects } from "./fixture.mjs";
 
+await teardown();
 seed(fixtureProjects(E2E_DIR));
 const pid = launch();
 const { browser, page } = await connect();

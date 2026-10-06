@@ -11,6 +11,9 @@ const shots = screenshotDir();
 let n = 0;
 let failed = 0;
 
+// A run killed before its own teardown leaves the app alive; a second launch
+// would only hand off to it through the single-instance lock.
+await teardown();
 seed(fixtureProjects(E2E_DIR));
 launch();
 try {
