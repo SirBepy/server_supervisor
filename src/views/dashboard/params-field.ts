@@ -140,7 +140,15 @@ export function paramsField(m: CmdModal): TemplateResult {
   return html`
     <div class="field-row params-row">
       <label>Parameters</label>
-      <div class="params-section">
+      <div
+        class="params-section"
+        @input=${() => {
+          if (m.paramsError) {
+            m.paramsError = null;
+            draw();
+          }
+        }}
+      >
         ${m.params.map((p, i) => paramBlock(m, p, i))}
         <div class="params-actions">
           <button
