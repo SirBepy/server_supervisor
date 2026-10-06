@@ -4,9 +4,12 @@
   inset: 0;
   background: rgba(0, 0, 0, 0.55);
   display: flex;
-  align-items: center;
   justify-content: center;
   z-index: 20;
+  /* The overlay scrolls, not the dialog: a tall dialog (a command with
+     parameters) must keep its buttons reachable in the 580px-tall window. */
+  overflow-y: auto;
+  padding: 16px 0;
 }
 .dialog {
   background: var(--surface);
@@ -14,7 +17,9 @@
   border-radius: 10px;
   padding: 18px;
   width: min(560px, 92vw);
-  max-height: 86vh;
+  /* Auto margins centre it while it fits and pin it to the top once it
+     doesn't, where `align-items: center` would clip its top edge. */
+  margin: auto;
   /* visible (not auto) so the combobox dropdown can spill past the dialog edge
      instead of forcing an inner scrollbar. */
   overflow: visible;
