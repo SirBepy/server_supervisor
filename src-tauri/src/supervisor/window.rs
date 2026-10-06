@@ -25,10 +25,12 @@ mod find;
 mod find_windows;
 mod focus;
 pub mod headless_host;
+mod hold;
 pub mod input;
 pub mod park;
 mod place;
 
+pub(crate) use hold::{holds_target, live_rect};
 pub use find::{FoundWindow, find_window, find_window_once, is_window_alive};
 pub(crate) use find::{descendant_pids, snapshot_parent_map};
 pub use find_windows::{WindowSummary, list_windows_of};

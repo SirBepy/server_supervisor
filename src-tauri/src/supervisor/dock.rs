@@ -23,6 +23,7 @@
 //! `sup.dock_window(...)`.
 
 mod headless;
+mod pane_hold;
 mod registry;
 
 use super::window::{self, DockOutcome as WindowOutcome, PlaceError, Rect};
@@ -175,6 +176,15 @@ impl Supervisor {
 
         match embed_result {
             Ok((outcome, original)) => {
+                // Only a fresh `Embedded` lands here with a real risk of
+                // re-pinning - a soft-dock never reparented anything for an
+                // app to "snap back" out of, and the idempotent reassert
+                // path above never reaches this match arm at all.
+                if matches!(outcome, WindowOutcome::Embedded) {
+                    if let Err(e) = pane_hold::verify_holds(app, proc_id, pid, guest, target_rect, original) {
+                        return Err(e);
+                    }
+                }
                 reg.entries.lock().unwrap().insert(
                     proc_id.to_string(),
                     Entry::Active { hwnd: guest, original, outcome, target: target_rect, headless_host: None },
@@ -289,7 +299,11 @@ impl Supervisor {
             Some(Entry::Active { .. }) => None,
             Some(Entry::WindowLost) => Some(DockState::WindowLost),
             None => match self.pid_for(proc_id) {
-                Ok(pid) if headless::is_refused(proc_id, pid) => Some(DockState::Refused),
+                Ok(pid)
+                    if headless::is_refused(proc_id, pid) || pane_hold::is_pane_refused(proc_id, pid) =>
+                {
+                    Some(DockState::Refused)
+                }
                 _ => None,
             },
         }
