@@ -42,6 +42,20 @@ impl ManagedProc {
                 // bookkeeping.
                 self.proxy = None;
                 self.reload_tx = None;
+                // The child died on its own: tear down any adb reverse
+                // tunnel the stdout reader set up for it. take() under the
+                // lock is fast; the actual adb call runs detached so this
+                // self-exit path (called under the shared procs lock - see
+                // `registry::sampling::reap_tick`) never blocks on it.
+                if let Some((device, port)) = self.tunnel_state.lock().unwrap().take() {
+                    std::thread::spawn(move || {
+                        if let Err(e) = super::super::adb_reverse::remove(&device, port) {
+                            log::warn!(
+                                "adb_reverse: failed to remove tunnel tcp:{port} -> {device} after exit: {e}"
+                            );
+                        }
+                    });
+                }
             }
             return;
         }
@@ -262,8 +276,11 @@ impl ManagedProc {
         // reload_tx was decided above (Some only when the proxy actually bound).
         self.reload_tx = reload_tx.clone();
 
-        // Reset appId for the new run; stdout reader re-captures it.
+        // Reset appId and any prior run's tunnel bookkeeping; stdout reader
+        // re-captures/re-establishes them for the new run.
         *self.app_id.lock().unwrap() = None;
+        *self.tunnel_state.lock().unwrap() = None;
+        let tunnel = self.hub_tunnel_port.map(|port| (port, self.tunnel_state.clone()));
         if let Some(out) = child.stdout.take() {
             super::super::proc_log::spawn_reader(
                 out,
@@ -271,10 +288,11 @@ impl ManagedProc {
                 self.logs.clone(),
                 Some(self.app_id.clone()),
                 self.reload_tx.clone(),
+                tunnel,
             );
         }
         if let Some(err) = child.stderr.take() {
-            super::super::proc_log::spawn_reader(err, "stderr", self.logs.clone(), None, None);
+            super::super::proc_log::spawn_reader(err, "stderr", self.logs.clone(), None, None, None);
         }
         self.stdin = child.stdin.take();
         // The dashboard advertises the public port: when proxied that is the

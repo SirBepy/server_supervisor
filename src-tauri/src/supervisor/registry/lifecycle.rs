@@ -96,7 +96,7 @@ impl Supervisor {
         // error - permanently leaking 1 port (generic) or 2 (proxied flutter) per
         // redundant start. Check status under the same procs lock used for lookup,
         // and return early BEFORE any acquire so the acquired set is unchanged.
-        let (want_dynamic, wants_proxy, fixed_port) = {
+        let (want_dynamic, wants_proxy, fixed_port, kind) = {
             let mut guard = self.procs.lock().unwrap();
             let p = guard
                 .get_mut(id)
@@ -110,7 +110,15 @@ impl Supervisor {
             ) {
                 return Ok(()); // already up: zero net port acquires
             }
-            (p.spec.use_dynamic_port, p.wants_proxy(), p.spec.fixed_port)
+            (p.spec.use_dynamic_port, p.wants_proxy(), p.spec.fixed_port, p.spec.kind.clone())
+        };
+        // Flutter in a project with hub presets: resolve the hub port so the
+        // stdout reader can `adb reverse` onto whichever device Flutter
+        // selects. `None` for anything else - see `adb_reverse` module docs.
+        let project_id = id.split(':').next().unwrap_or(id);
+        let hub_tunnel_port = {
+            let projects = self.projects.lock().unwrap();
+            super::super::adb_reverse::resolve_tunnel_port(&self.ports, &projects, project_id, &kind)
         };
         // Resolve the port this command should bind (before locking procs,
         // since this does OS work; reserve-before-spawn prevents races).
@@ -148,6 +156,7 @@ impl Supervisor {
             let p = guard
                 .get_mut(id)
                 .ok_or_else(|| format!("unknown process id: {id}"))?;
+            p.set_hub_tunnel_port(hub_tunnel_port);
             let r = p.start(child_port, public_port).map_err(|e| e.to_string());
             if r.is_ok() {
                 p.set_fallback_port(fallback);

@@ -9,10 +9,15 @@ pub struct StopHandle {
     pid: Option<u32>,
     child: Option<Child>,
     proxy: Option<proxy::ProxyTask>,
+    /// `(device, port)` of this run's adb reverse tunnel, if any was set up.
+    /// Removed in `finish()`, which always runs with no registry lock held.
+    tunnel: Option<(String, u16)>,
 }
 
 impl StopHandle {
-    /// Kills the process tree, waits for exit, and joins the proxy's shutdown thread.
+    /// Kills the process tree, waits for exit, joins the proxy's shutdown
+    /// thread, and removes any adb reverse tunnel - in that order so the
+    /// (possibly slow, missing-adb) adb call never holds up the kill itself.
     pub fn finish(self) {
         if let Some(pid) = self.pid {
             super::super::reaper::kill_tree(pid);
@@ -21,6 +26,11 @@ impl StopHandle {
             let _ = child.wait();
         }
         drop(self.proxy);
+        if let Some((device, port)) = self.tunnel {
+            if let Err(e) = super::super::adb_reverse::remove(&device, port) {
+                log::warn!("adb_reverse: failed to remove tunnel tcp:{port} -> {device}: {e}");
+            }
+        }
     }
 }
 
@@ -33,6 +43,7 @@ impl ManagedProc {
             pid: self.pid.take(),
             child: self.child.take(),
             proxy: self.proxy.take(),
+            tunnel: self.tunnel_state.lock().unwrap().take(),
         };
         self.reload_tx = None;
         self.internal_port = None;

@@ -43,6 +43,16 @@ pub struct ManagedProc {
     logs: Arc<Mutex<VecDeque<LogLine>>>,
     /// Flutter daemon appId, captured from the `app.started` stdout event.
     app_id: Arc<Mutex<Option<String>>>,
+    /// Hub port to `adb reverse` onto the device Flutter selects for this
+    /// run, if any. Set by `Supervisor::start` (`adb_reverse::resolve_tunnel_port`)
+    /// before each `start()` call; `None` unless this proc is Flutter in a
+    /// project with hub presets configured.
+    hub_tunnel_port: Option<u16>,
+    /// `(device, port)` of the tunnel actually set up for the CURRENT run,
+    /// once the stdout reader sees the daemon's `app.start` event and the adb
+    /// call succeeds. `None` before that, and after teardown (stop, or a
+    /// self-detected exit). See `adb_reverse` module docs.
+    tunnel_state: Arc<Mutex<Option<(String, u16)>>>,
     /// Dynamic port handed out by the registry for the current run, if any.
     /// The Supervisor reads this on stop to release it back to the registry.
     acquired_port: Option<u16>,
@@ -99,6 +109,8 @@ impl ManagedProc {
             stdin: None,
             logs: Arc::new(Mutex::new(VecDeque::with_capacity(LOG_CAP))),
             app_id: Arc::new(Mutex::new(None)),
+            hub_tunnel_port: None,
+            tunnel_state: Arc::new(Mutex::new(None)),
             acquired_port: None,
             adopted: false,
             proxy: None,
@@ -146,6 +158,14 @@ impl ManagedProc {
     /// supervisor right after a successful spawn.
     pub fn set_fallback_port(&mut self, v: bool) {
         self.fallback_port = v;
+    }
+
+    /// Set (or clear) the hub port the next `start()` should `adb reverse`
+    /// onto the device Flutter selects. Called by `Supervisor::start`
+    /// (`adb_reverse::resolve_tunnel_port`) before spawning; a no-op field
+    /// read until the stdout reader actually sees a mobile device.
+    pub fn set_hub_tunnel_port(&mut self, port: Option<u16>) {
+        self.hub_tunnel_port = port;
     }
 
     /// Dead-on-arrival: crashed within `DOA_WINDOW_MS` of starting, i.e. the

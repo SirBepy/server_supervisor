@@ -1,3 +1,4 @@
+pub mod adb_reverse;
 pub mod audio;
 pub mod config;
 pub mod cpu;
