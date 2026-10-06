@@ -138,11 +138,27 @@ const WS_EX_LEFT: u32 = 0;
 const WS_EX_TOOLWINDOW: u32 = 0x0000_0080;
 const WS_EX_TRANSPARENT: u32 = 0x0000_0020;
 const WS_EX_NOACTIVATE: u32 = 0x0800_0000;
+// Diagnostic-only (todo 0052, hypothesis 1): the exstyle bit pomodoro-overlay
+// carries (0x00040118 includes this bit) that EMBED_SPIKE_NOTOPMOST clears
+// before SetParent to test whether it is the cause of ERROR_ACCESS_DENIED.
+const WS_EX_TOPMOST: u32 = 0x0000_0008;
 const SW_SHOW: i32 = 5;
 const SW_HIDE: i32 = 0;
 const GWL_STYLE: i32 = -16;
 const GWL_EXSTYLE: i32 = -20;
 const GW_OWNER: u32 = 4;
+// SetWindowPos flags used only by the EMBED_SPIKE_NOTOPMOST probe: move the
+// window in z-order only (to/from the topmost band), touching nothing else.
+const SWP_NOSIZE: u32 = 0x0001;
+const SWP_NOMOVE: u32 = 0x0002;
+const SWP_NOACTIVATE_FLAG: u32 = 0x0010;
+// Diagnostic-only (todo 0052, hypothesis 1 follow-up): access rights and
+// TOKEN_INFORMATION_CLASS value needed to read a process's elevation state
+// via OpenProcessToken/GetTokenInformation, used only when SetParent fails
+// with ERROR_ACCESS_DENIED to check for a UIPI/integrity mismatch.
+const TOKEN_QUERY: u32 = 0x0008;
+const PROCESS_QUERY_INFORMATION: u32 = 0x0400;
+const TOKEN_ELEVATION: u32 = 20;
 // A real application main window is never this small - but this floor is
 // deliberately lower than a first draft (200px either dimension) because
 // live testing falsified that draft: the dev's own pomodoro-overlay and
@@ -262,6 +278,20 @@ extern "system" {
         x1: i32,
         y1: i32,
         rop: u32,
+    ) -> BOOL;
+}
+
+// Diagnostic-only (todo 0052): UIPI/integrity follow-up probe, used only
+// when SetParent returns ERROR_ACCESS_DENIED.
+#[link(name = "advapi32")]
+extern "system" {
+    fn OpenProcessToken(process_handle: HANDLE, desired_access: u32, token_handle: *mut HANDLE) -> BOOL;
+    fn GetTokenInformation(
+        token_handle: HANDLE,
+        token_information_class: u32,
+        token_information: *mut c_void,
+        token_information_length: u32,
+        return_length: *mut u32,
     ) -> BOOL;
 }
 
@@ -1518,6 +1548,44 @@ fn find_pid_by_name(exe_name_lower: &str) -> Option<u32> {
     }
 }
 
+/// Diagnostic-only (todo 0052, hypothesis 1 follow-up): whether `pid`'s
+/// process token reports TokenIsElevated. `None` means the query itself
+/// failed (e.g. we lack rights to open the other process's token at all,
+/// which is itself a data point about a privilege gap between processes).
+fn process_is_elevated(pid: u32) -> Option<bool> {
+    unsafe {
+        let h = OpenProcess(
+            PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_QUERY_INFORMATION,
+            0,
+            pid,
+        );
+        if h.is_null() {
+            return None;
+        }
+        let mut token: HANDLE = ptr::null_mut();
+        let opened = OpenProcessToken(h, TOKEN_QUERY, &mut token) != 0;
+        CloseHandle(h);
+        if !opened {
+            return None;
+        }
+        let mut elevation: u32 = 0;
+        let mut ret_len: u32 = 0;
+        let ok = GetTokenInformation(
+            token,
+            TOKEN_ELEVATION,
+            &mut elevation as *mut u32 as *mut c_void,
+            std::mem::size_of::<u32>() as u32,
+            &mut ret_len,
+        ) != 0;
+        CloseHandle(token);
+        if ok {
+            Some(elevation != 0)
+        } else {
+            None
+        }
+    }
+}
+
 /// Picks the attach target: `$EMBED_SPIKE_ATTACH` if set, else the first
 /// running match from the dev's usual Tauri apps, in priority order.
 fn resolve_attach_target() -> Option<(String, u32)> {
@@ -1794,6 +1862,37 @@ fn run_attach_spike(app_name: &str, screenshot_dir: &Path, guest: HWND) -> (Verd
         return (verdict, outcome_cell.get().ok());
     }
 
+    // Hypothesis 1 probe (todo 0052): does clearing WS_EX_TOPMOST change
+    // SetParent's result? Gated on EMBED_SPIKE_NOTOPMOST=1 so the default
+    // run is unaffected. Cleared immediately before SetParent and restored
+    // immediately after, so this is the only variable that changes between
+    // a plain run and a probed one.
+    let notopmost_probe = std::env::var("EMBED_SPIKE_NOTOPMOST")
+        .map(|v| v == "1")
+        .unwrap_or(false);
+    let was_topmost = (orig_exstyle as u32) & WS_EX_TOPMOST != 0;
+    if notopmost_probe {
+        if was_topmost {
+            let hwnd_notopmost: HWND = (-2isize) as HWND;
+            unsafe {
+                SetWindowPos(
+                    guest,
+                    hwnd_notopmost,
+                    0,
+                    0,
+                    0,
+                    0,
+                    SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE_FLAG,
+                );
+            }
+            println!("[{app_name}] EMBED_SPIKE_NOTOPMOST: cleared WS_EX_TOPMOST before SetParent");
+        } else {
+            println!(
+                "[{app_name}] EMBED_SPIKE_NOTOPMOST: guest was not WS_EX_TOPMOST (ex=0x{orig_exstyle:08X}), nothing to clear"
+            );
+        }
+    }
+
     let new_style = ((orig_style as u32) & !WS_OVERLAPPEDWINDOW & !WS_POPUP) | WS_CHILD;
     unsafe {
         SetWindowLongPtrW(guest, GWL_STYLE, new_style as isize);
@@ -1802,6 +1901,22 @@ fn run_attach_spike(app_name: &str, screenshot_dir: &Path, guest: HWND) -> (Verd
     verdict.setparent_ok = !set_parent_result.is_null();
     if !verdict.setparent_ok {
         verdict.setparent_last_error = unsafe { GetLastError() };
+    }
+
+    if notopmost_probe && was_topmost {
+        let hwnd_topmost: HWND = (-1isize) as HWND;
+        unsafe {
+            SetWindowPos(
+                guest,
+                hwnd_topmost,
+                0,
+                0,
+                0,
+                0,
+                SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE_FLAG,
+            );
+        }
+        println!("[{app_name}] EMBED_SPIKE_NOTOPMOST: restored WS_EX_TOPMOST after the SetParent probe");
     }
 
     let margin = 40;
@@ -1832,10 +1947,48 @@ fn run_attach_spike(app_name: &str, screenshot_dir: &Path, guest: HWND) -> (Verd
             ShowWindow(guest, SW_SHOW);
         }
     }
-    // Short on purpose: this is someone's live app, not a process this
-    // spike owns, so it should exist as an embedded child only as long as
-    // it takes to repaint once and capture a frame.
-    pump_for(Duration::from_secs(2));
+
+    // Hypothesis 2 probe (todo 0052): EMBED_SPIKE_TRACE_MS=<ms> polls
+    // GetWindowRect/GetParent every 100ms for the given duration instead of
+    // the usual fixed 2s settle, to catch an app that re-pins its own
+    // window back toward its original position after being embedded
+    // (windows-taskbar-widgets reports parent_matches=true but a blank
+    // render, so this checks whether the rect itself drifts back).
+    match std::env::var("EMBED_SPIKE_TRACE_MS")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+    {
+        Some(trace_ms) => {
+            println!(
+                "[{app_name}] EMBED_SPIKE_TRACE_MS: tracing rect/parent every 100ms for {trace_ms}ms"
+            );
+            let trace_start = Instant::now();
+            while trace_start.elapsed() < Duration::from_millis(trace_ms) {
+                pump_messages();
+                let mut r = RECT::default();
+                unsafe {
+                    GetWindowRect(guest, &mut r);
+                }
+                let p = unsafe { GetParent(guest) };
+                println!(
+                    "[{app_name}] trace t={}ms rect=({},{},{},{}) parent_is_host={}",
+                    trace_start.elapsed().as_millis(),
+                    r.left,
+                    r.top,
+                    r.right,
+                    r.bottom,
+                    p == host
+                );
+                thread::sleep(Duration::from_millis(100));
+            }
+        }
+        None => {
+            // Short on purpose: this is someone's live app, not a process
+            // this spike owns, so it should exist as an embedded child only
+            // as long as it takes to repaint once and capture a frame.
+            pump_for(Duration::from_secs(2));
+        }
+    }
 
     if !still_alive_or_invalidate(&mut verdict, host, guest, "post-embed settle") {
         drop(guard);
@@ -1849,6 +2002,19 @@ fn run_attach_spike(app_name: &str, screenshot_dir: &Path, guest: HWND) -> (Verd
     unsafe {
         GetWindowThreadProcessId(guest, &mut guest_pid);
     }
+
+    // Hypothesis 1 follow-up (todo 0052): only worth probing when SetParent
+    // actually failed with ERROR_ACCESS_DENIED (5) - that code is the
+    // classic signature of a UIPI block between processes at different
+    // integrity levels.
+    if !verdict.setparent_ok && verdict.setparent_last_error == 5 {
+        let guest_elevated = process_is_elevated(guest_pid);
+        let ours_elevated = process_is_elevated(std::process::id());
+        println!(
+            "[{app_name}] UIPI probe: guest_elevated={guest_elevated:?} this_harness_elevated={ours_elevated:?}"
+        );
+    }
+
     verdict.guest_alive = unsafe {
         let h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, guest_pid);
         if h.is_null() {
