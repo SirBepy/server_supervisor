@@ -3,9 +3,21 @@
 
 use server_supervisor_lib::ports::PortRegistry;
 use server_supervisor_lib::supervisor::Supervisor;
-use server_supervisor_lib::types::{ProcKind, ProcStatus};
+use server_supervisor_lib::types::{CommandParam, ParamValue, ProcKind, ProcStatus};
 use std::sync::Arc;
 use std::time::Duration;
+
+fn device_param(last_value: &str) -> CommandParam {
+    CommandParam {
+        name: "device".to_string(),
+        label: "Device".to_string(),
+        values: vec![
+            ParamValue { value: "web-server".to_string(), label: "Web Server".to_string(), flag: "-d web-server".to_string() },
+            ParamValue { value: "chrome".to_string(), label: "Chrome".to_string(), flag: "-d chrome".to_string() },
+        ],
+        last_value: Some(last_value.to_string()),
+    }
+}
 
 /// Build a Supervisor with a fresh PortRegistry rooted at the same temp dir.
 fn new_sup(dir: &std::path::Path) -> Supervisor {
@@ -157,8 +169,9 @@ fn crud_add_remove_project_and_command() {
     assert_eq!(p.id, "my-app", "id should be slugged from the name");
 
     let c = sup
-        .add_command(&p.id, "Dev".into(), "ping -n 2 127.0.0.1".into(), None, false, false, None, "".into(), None, false)
-        .unwrap();
+        .add_command(&p.id, "Dev".into(), "ping -n 2 127.0.0.1".into(), None, false, false, None, "".into(), None, false, Vec::new())
+        .unwrap()
+        .command;
     let composite = format!("{}:{}", p.id, c.id);
 
     // Runtime map reflects the new command, and it persisted to config.
@@ -215,8 +228,9 @@ fn removing_last_command_deletes_project() {
 
     let p = sup.add_project("My App".into(), "C:/tmp".into()).unwrap();
     let c = sup
-        .add_command(&p.id, "Dev".into(), "ping -n 2 127.0.0.1".into(), None, false, false, None, "".into(), None, false)
-        .unwrap();
+        .add_command(&p.id, "Dev".into(), "ping -n 2 127.0.0.1".into(), None, false, false, None, "".into(), None, false, Vec::new())
+        .unwrap()
+        .command;
 
     // Removing the only command removes the now-empty project too.
     sup.remove_command(&p.id, &c.id).unwrap();
@@ -233,9 +247,10 @@ fn removing_one_of_several_keeps_project() {
 
     let p = sup.add_project("My App".into(), "C:/tmp".into()).unwrap();
     let c1 = sup
-        .add_command(&p.id, "Dev".into(), "ping -n 2 127.0.0.1".into(), None, false, false, None, "".into(), None, false)
-        .unwrap();
-    sup.add_command(&p.id, "Build".into(), "ping -n 3 127.0.0.1".into(), None, false, false, None, "".into(), None, false)
+        .add_command(&p.id, "Dev".into(), "ping -n 2 127.0.0.1".into(), None, false, false, None, "".into(), None, false, Vec::new())
+        .unwrap()
+        .command;
+    sup.add_command(&p.id, "Build".into(), "ping -n 3 127.0.0.1".into(), None, false, false, None, "".into(), None, false, Vec::new())
         .unwrap();
 
     // Removing one of two commands leaves the project with the other command.
@@ -276,19 +291,22 @@ fn add_command_infers_kind_from_cmd() {
 
     // No kind passed (None): inferred from the command string.
     let flutter = sup
-        .add_command(&p.id, "run".into(), "fvm flutter run".into(), None, false, false, None, "".into(), None, false)
-        .unwrap();
+        .add_command(&p.id, "run".into(), "fvm flutter run".into(), None, false, false, None, "".into(), None, false, Vec::new())
+        .unwrap()
+        .command;
     assert_eq!(flutter.kind, ProcKind::Flutter, "flutter command -> Flutter");
 
     let node = sup
-        .add_command(&p.id, "api".into(), "node server.js".into(), None, false, false, None, "".into(), None, false)
-        .unwrap();
+        .add_command(&p.id, "api".into(), "node server.js".into(), None, false, false, None, "".into(), None, false, Vec::new())
+        .unwrap()
+        .command;
     assert_eq!(node.kind, ProcKind::Generic, "non-flutter command -> Generic");
 
     // An explicit Some(kind) overrides inference (the /run API path).
     let forced = sup
-        .add_command(&p.id, "weird".into(), "node thing.js".into(), Some(ProcKind::Flutter), false, false, None, "".into(), None, false)
-        .unwrap();
+        .add_command(&p.id, "weird".into(), "node thing.js".into(), Some(ProcKind::Flutter), false, false, None, "".into(), None, false, Vec::new())
+        .unwrap()
+        .command;
     assert_eq!(forced.kind, ProcKind::Flutter, "explicit kind overrides inference");
 }
 
@@ -300,11 +318,13 @@ fn adding_duplicate_command_is_noop() {
     let p = sup.add_project("My App".into(), "C:/tmp".into()).unwrap();
 
     let c1 = sup
-        .add_command(&p.id, "dev".into(), "npm run dev".into(), None, false, false, None, "".into(), None, false)
-        .unwrap();
+        .add_command(&p.id, "dev".into(), "npm run dev".into(), None, false, false, None, "".into(), None, false, Vec::new())
+        .unwrap()
+        .command;
     let c2 = sup
-        .add_command(&p.id, "dev2".into(), "npm run dev".into(), None, false, false, None, "".into(), None, false)
-        .unwrap();
+        .add_command(&p.id, "dev2".into(), "npm run dev".into(), None, false, false, None, "".into(), None, false, Vec::new())
+        .unwrap()
+        .command;
 
     let projects = sup.list_projects();
     assert_eq!(projects.len(), 1);
@@ -328,8 +348,9 @@ fn update_command_edits_in_place_and_keeps_id() {
 
     let p = sup.add_project("My App".into(), "C:/tmp".into()).unwrap();
     let c = sup
-        .add_command(&p.id, "Dev".into(), "ping -n 2 127.0.0.1".into(), None, false, false, None, "".into(), None, false)
-        .unwrap();
+        .add_command(&p.id, "Dev".into(), "ping -n 2 127.0.0.1".into(), None, false, false, None, "".into(), None, false, Vec::new())
+        .unwrap()
+        .command;
 
     // Edit to a Flutter command: kind is inferred from the cmd string, so it
     // flips to Flutter without any kind argument.
@@ -345,6 +366,7 @@ fn update_command_edits_in_place_and_keeps_id() {
             "".into(),
             None,
             false,
+            None,
         )
         .unwrap();
 
@@ -375,10 +397,10 @@ fn update_command_unknown_errors() {
     let sup = new_sup(dir.path());
     let p = sup.add_project("My App".into(), "C:/tmp".into()).unwrap();
     assert!(sup
-        .update_command(&p.id, "nope", "X".into(), "ping".into(), false, false, None, "".into(), None, false)
+        .update_command(&p.id, "nope", "X".into(), "ping".into(), false, false, None, "".into(), None, false, None)
         .is_err());
     assert!(sup
-        .update_command("nope", "job", "X".into(), "ping".into(), false, false, None, "".into(), None, false)
+        .update_command("nope", "job", "X".into(), "ping".into(), false, false, None, "".into(), None, false, None)
         .is_err());
 }
 
@@ -406,6 +428,7 @@ fn update_command_rejects_edit_while_running() {
             "".into(),
             None,
             false,
+            None,
         )
         .unwrap_err();
     assert!(err.contains("stop the command"), "running edit should be rejected: {err}");
@@ -424,6 +447,7 @@ fn update_command_rejects_edit_while_running() {
             "".into(),
             None,
             false,
+            None,
         )
         .unwrap();
     assert_eq!(updated.cmd, "ping -n 31 127.0.0.1");
@@ -463,18 +487,307 @@ fn ensure_and_run_registers_starts_and_is_idempotent() {
     let root = dir.path().to_str().unwrap();
 
     let info = sup
-        .ensure_and_run(root, "node server.js", None, None, true, None, "".into())
-        .unwrap();
+        .ensure_and_run(root, "node server.js", None, None, true, None, "".into(), None)
+        .unwrap()
+        .info;
     assert_eq!(info.status, ProcStatus::Running);
     let port = info.port.expect("dynamic port should be assigned");
     assert!((42000..49000).contains(&port));
 
     // Idempotent: same root+cmd reuses the same project/command (no duplicate).
     let info2 = sup
-        .ensure_and_run(root, "node server.js", None, None, true, None, "".into())
-        .unwrap();
+        .ensure_and_run(root, "node server.js", None, None, true, None, "".into(), None)
+        .unwrap()
+        .info;
     assert_eq!(info2.id, info.id);
     assert_eq!(sup.list().len(), 1, "no duplicate registration");
 
     sup.stop(&info.id).unwrap();
+}
+
+#[test]
+fn render_and_compare_matches_existing_template_and_sets_last_value() {
+    let dir = tempfile::tempdir().unwrap();
+    let sup = new_sup(dir.path());
+    let p = sup.add_project("My App".into(), "C:/tmp".into()).unwrap();
+
+    let created = sup
+        .add_command(
+            &p.id, "run".into(), "echo {DEVICE}".into(), None, false, false, None, "".into(), None, false,
+            vec![device_param("web-server")],
+        )
+        .unwrap()
+        .command;
+
+    // Posting the CONCRETE rendered cmd (no template, no `params` object)
+    // must render-and-compare match the existing templated command, not
+    // fork a new one.
+    let outcome = sup
+        .add_command(&p.id, "whatever".into(), "echo -d chrome".into(), None, false, false, None, "".into(), None, false, Vec::new())
+        .unwrap();
+    assert_eq!(outcome.command.id, created.id, "must return the existing templated command, not a fork");
+    assert!(outcome.param_mismatch.is_none(), "a stopped match is never a mismatch");
+
+    let projects = sup.list_projects();
+    assert_eq!(projects[0].commands.len(), 1, "command count must be unchanged (no fork)");
+    assert_eq!(
+        projects[0].commands[0].params[0].last_value.as_deref(),
+        Some("chrome"),
+        "the matched combination must be written back onto last_value"
+    );
+}
+
+#[test]
+fn render_and_compare_miss_still_forks_a_new_command() {
+    let dir = tempfile::tempdir().unwrap();
+    let sup = new_sup(dir.path());
+    let p = sup.add_project("My App".into(), "C:/tmp".into()).unwrap();
+
+    let mode = CommandParam {
+        name: "mode".to_string(),
+        label: "Mode".to_string(),
+        values: vec![ParamValue { value: "dev".to_string(), label: "Dev".to_string(), flag: "dev".to_string() }],
+        last_value: Some("dev".to_string()),
+    };
+    sup.add_command(&p.id, "run".into(), "npm run {MODE}".into(), None, false, false, None, "".into(), None, false, vec![mode])
+        .unwrap();
+
+    // "npm run preview" matches NO combination of the templated command's
+    // values - must fork, exactly like today's `dev`-vs-`preview` case.
+    sup.add_command(&p.id, "preview".into(), "npm run preview".into(), None, false, false, None, "".into(), None, false, Vec::new())
+        .unwrap();
+
+    let projects = sup.list_projects();
+    assert_eq!(projects[0].commands.len(), 2, "an unrelated cmd must fork, never merge into the templated command");
+}
+
+#[test]
+fn render_and_compare_respects_the_64_combo_cap() {
+    let dir = tempfile::tempdir().unwrap();
+    let sup = new_sup(dir.path());
+    let p = sup.add_project("My App".into(), "C:/tmp".into()).unwrap();
+
+    fn axis(name: &str) -> CommandParam {
+        CommandParam {
+            name: name.to_string(),
+            label: name.to_string(),
+            values: (0..5)
+                .map(|i| {
+                    let (id, flag) = if i == 4 {
+                        (format!("{name}-marker"), format!("--{name}=MARKER"))
+                    } else {
+                        (format!("{name}-{i}"), format!("--{name}={i}"))
+                    };
+                    ParamValue { value: id, label: flag.clone(), flag }
+                })
+                .collect(),
+            last_value: None,
+        }
+    }
+    // 3 params x 5 values = 125 combinations; only the one where every axis
+    // picks its LAST value renders to the marker cmd below. That combo's
+    // index in ANY consistent enumeration order is the single highest one
+    // (124 of 0..124), always past the 64-render cap - so if the cap is
+    // enforced, it must never be found.
+    let params = vec![axis("a"), axis("b"), axis("c")];
+    sup.add_command(&p.id, "run".into(), "echo {A} {B} {C}".into(), None, false, false, None, "".into(), None, false, params)
+        .unwrap();
+
+    let marker_cmd = "echo --a=MARKER --b=MARKER --c=MARKER";
+    let outcome = sup
+        .add_command(&p.id, "marker".into(), marker_cmd.into(), None, false, false, None, "".into(), None, false, Vec::new())
+        .unwrap();
+
+    let projects = sup.list_projects();
+    assert_eq!(projects[0].commands.len(), 2, "the beyond-cap combo must fork a new Command, not match");
+    assert_eq!(outcome.command.cmd, marker_cmd, "the forked command carries the posted cmd verbatim");
+}
+
+#[test]
+fn render_and_compare_stopped_hit_refreshes_the_live_spec() {
+    let dir = tempfile::tempdir().unwrap();
+    let sup = new_sup(dir.path());
+    let p = sup.add_project("My App".into(), "C:/tmp".into()).unwrap();
+
+    let created = sup
+        .add_command(
+            &p.id, "run".into(), "echo {DEVICE}".into(), None, false, false, None, "".into(), None, false,
+            vec![device_param("web-server")],
+        )
+        .unwrap()
+        .command;
+
+    sup.add_command(&p.id, "whatever".into(), "echo -d chrome".into(), None, false, false, None, "".into(), None, false, Vec::new())
+        .unwrap();
+
+    // The test that fails if only the persisted `Command` was updated: the
+    // LIVE `ManagedProc.spec` must also carry the matched combination, since
+    // `start`/`spawn.rs` read only `self.spec`, never re-derive it from
+    // `Command`. `resolved_cmd` is computed straight off that live spec.
+    let id = format!("{}:{}", p.id, created.id);
+    let info = sup.list().into_iter().find(|x| x.id == id).unwrap();
+    assert_eq!(
+        info.resolved_cmd.as_deref(),
+        Some("echo -d chrome"),
+        "the live spec must resolve to the matched combination, not the stale previous one"
+    );
+}
+
+#[test]
+fn render_and_compare_running_mismatch_leaves_running_proc_untouched() {
+    let dir = tempfile::tempdir().unwrap();
+    let sup = new_sup(dir.path());
+    let p = sup.add_project("My App".into(), "C:/tmp".into()).unwrap();
+
+    // A cheap long-running command (mirrors `long_running_command` in
+    // `registry.rs`'s own tests), not flutter - the param text is spliced
+    // into a harmless `set` no-op so an unrecognized flag can never make
+    // `ping` itself exit early.
+    let created = sup
+        .add_command(
+            &p.id,
+            "run".into(),
+            "set CHOICE={DEVICE} & ping -n 30 127.0.0.1".into(),
+            None, false, false, None, "".into(), None, false,
+            vec![device_param("web-server")],
+        )
+        .unwrap()
+        .command;
+    let id = format!("{}:{}", p.id, created.id);
+    sup.start(&id).unwrap();
+    std::thread::sleep(Duration::from_millis(800));
+    let pid_before = sup.list().into_iter().find(|x| x.id == id).unwrap().pid;
+    assert!(pid_before.is_some(), "must be running before the mismatch post");
+
+    // Posting the CHROME combo while WEB-SERVER is running:
+    // nothing written, nothing restarted, reported as a mismatch.
+    let outcome = sup
+        .add_command(
+            &p.id,
+            "whatever".into(),
+            "set CHOICE=-d chrome & ping -n 30 127.0.0.1".into(),
+            None, false, false, None, "".into(), None, false, Vec::new(),
+        )
+        .unwrap();
+    assert_eq!(outcome.command.id, created.id);
+    let mismatch = outcome.param_mismatch.expect("must report a mismatch");
+    assert_eq!(mismatch.running.get("device").map(String::as_str), Some("web-server"));
+    assert_eq!(mismatch.requested.get("device").map(String::as_str), Some("chrome"));
+
+    let after = sup.list().into_iter().find(|x| x.id == id).unwrap();
+    assert_eq!(after.pid, pid_before, "the running process must be untouched (same pid)");
+    let projects = sup.list_projects();
+    assert_eq!(
+        projects[0].commands[0].params[0].last_value.as_deref(),
+        Some("web-server"),
+        "last_value must stay untouched on a mismatch"
+    );
+
+    sup.stop(&id).unwrap();
+}
+
+#[test]
+fn set_command_param_restarts_running_and_skips_on_unchanged_value() {
+    let dir = tempfile::tempdir().unwrap();
+    let sup = new_sup(dir.path());
+    let p = sup.add_project("My App".into(), "C:/tmp".into()).unwrap();
+
+    let created = sup
+        .add_command(
+            &p.id,
+            "run".into(),
+            "set CHOICE={DEVICE} & ping -n 30 127.0.0.1".into(),
+            None, false, false, None, "".into(), None, false,
+            vec![device_param("web-server")],
+        )
+        .unwrap()
+        .command;
+    let id = format!("{}:{}", p.id, created.id);
+    sup.start(&id).unwrap();
+    std::thread::sleep(Duration::from_millis(800));
+    let pid_before = sup.list().into_iter().find(|x| x.id == id).unwrap().pid.expect("running");
+
+    // Unchanged value: must not bounce the live process.
+    sup.set_command_param(&p.id, &created.id, "device", "web-server").unwrap();
+    std::thread::sleep(Duration::from_millis(300));
+    let pid_unchanged = sup.list().into_iter().find(|x| x.id == id).unwrap().pid;
+    assert_eq!(pid_unchanged, Some(pid_before), "a same-value re-pick must not bounce the process");
+
+    // Changed value on a RUNNING command: restarts into the new variant.
+    sup.set_command_param(&p.id, &created.id, "device", "chrome").unwrap();
+    std::thread::sleep(Duration::from_millis(800));
+    let after = sup.list().into_iter().find(|x| x.id == id).unwrap();
+    assert_ne!(after.pid, Some(pid_before), "a changed value on a running command must restart it");
+    assert_eq!(after.resolved_cmd.as_deref(), Some("set CHOICE=-d chrome & ping -n 30 127.0.0.1"));
+
+    sup.stop(&id).unwrap();
+}
+
+#[test]
+fn update_command_params_none_keeps_some_empty_clears() {
+    let dir = tempfile::tempdir().unwrap();
+    let sup = new_sup(dir.path());
+    let p = sup.add_project("My App".into(), "C:/tmp".into()).unwrap();
+
+    let created = sup
+        .add_command(
+            &p.id, "run".into(), "echo {DEVICE}".into(), None, false, false, None, "".into(), None, false,
+            vec![device_param("chrome")],
+        )
+        .unwrap()
+        .command;
+
+    // Omitted (`None`): a full-replace edit keeps the existing params.
+    let kept = sup
+        .update_command(&p.id, &created.id, "run".into(), "echo {DEVICE}".into(), false, false, None, "".into(), None, false, None)
+        .unwrap();
+    assert_eq!(kept.params.len(), 1, "None must keep the existing params");
+
+    // Explicit empty vec: clears them.
+    let cleared = sup
+        .update_command(
+            &p.id, &created.id, "run".into(), "echo {DEVICE}".into(), false, false, None, "".into(), None, false, Some(Vec::new()),
+        )
+        .unwrap();
+    assert!(cleared.params.is_empty(), "Some(vec![]) must clear params");
+}
+
+#[test]
+fn add_command_authoring_validation_rejects_bad_param_shapes_and_persists_nothing() {
+    let dir = tempfile::tempdir().unwrap();
+    let sup = new_sup(dir.path());
+    let p = sup.add_project("My App".into(), "C:/tmp".into()).unwrap();
+
+    let reserved = vec![CommandParam {
+        name: "port".to_string(),
+        label: "Port".to_string(),
+        values: vec![ParamValue { value: "a".to_string(), label: "a".to_string(), flag: "".to_string() }],
+        last_value: None,
+    }];
+    assert!(sup
+        .add_command(&p.id, "x".into(), "echo {PORT}".into(), None, false, false, None, "".into(), None, false, reserved)
+        .is_err());
+
+    let dup = vec![
+        CommandParam {
+            name: "device".to_string(),
+            label: "d".to_string(),
+            values: vec![ParamValue { value: "a".to_string(), label: "a".to_string(), flag: "".to_string() }],
+            last_value: None,
+        },
+        CommandParam {
+            name: "DEVICE".to_string(),
+            label: "d2".to_string(),
+            values: vec![ParamValue { value: "b".to_string(), label: "b".to_string(), flag: "".to_string() }],
+            last_value: None,
+        },
+    ];
+    assert!(sup
+        .add_command(&p.id, "y".into(), "echo {DEVICE}".into(), None, false, false, None, "".into(), None, false, dup)
+        .is_err());
+
+    assert!(
+        sup.list_projects()[0].commands.is_empty(),
+        "neither rejected authoring call must persist a command"
+    );
 }

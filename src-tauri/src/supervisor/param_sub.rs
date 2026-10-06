@@ -25,9 +25,8 @@ pub fn substitute_params(cmd: &str, params: &[CommandParam]) -> String {
 
 /// Like `substitute_params`, but picks an explicit `(param name, value id)`
 /// override per param instead of reading `last_value`, for render-and-compare
-/// matching. Falls back to `last_value` then `values.first()` for any param
-/// `chosen` doesn't name.
-#[allow(dead_code)]
+/// matching (`supervisor::crud::params::find_by_params_match`). Falls back to
+/// `last_value` then `values.first()` for any param `chosen` doesn't name.
 pub(crate) fn render_with(cmd: &str, params: &[CommandParam], chosen: &[(String, String)]) -> String {
     if params.is_empty() {
         return cmd.to_string();
@@ -44,8 +43,9 @@ pub(crate) fn render_with(cmd: &str, params: &[CommandParam], chosen: &[(String,
 
 /// Chosen value for one param: an explicit `override_id` wins if it names a
 /// real value, else `last_value`, else the first value, else `None` (empty
-/// `values` - the placeholder vanishes to `""`, decision 4 in the design spec).
-fn resolve_value<'a>(p: &'a CommandParam, override_id: Option<&str>) -> Option<&'a ParamValue> {
+/// `values`, so the placeholder vanishes). A stale stored value degrades to
+/// the default instead of failing the spawn.
+pub(crate) fn resolve_value<'a>(p: &'a CommandParam, override_id: Option<&str>) -> Option<&'a ParamValue> {
     override_id
         .and_then(|id| p.values.iter().find(|v| v.value == id))
         .or_else(|| p.last_value.as_deref().and_then(|lv| p.values.iter().find(|v| v.value == lv)))

@@ -187,6 +187,18 @@ pub struct ProcInfo {
     /// Always false once stopped, or once a real restart supersedes adoption.
     #[serde(default)]
     pub env_unknown: bool,
+    /// Param axes carried from `spec.params` (see `supervisor::param_sub`),
+    /// cloned for free alongside `resolved_env` - both cost only a clone, not
+    /// a syscall, unlike `WindowInfo`'s deliberate exclusion from this struct.
+    /// Includes `ParamValue.flag`: a params-without-flag view type would just
+    /// restate this one.
+    #[serde(default)]
+    pub params: Vec<CommandParam>,
+    /// `spec.cmd` with every `{NAME}` placeholder already substituted, so the
+    /// dashboard row shows the resolved line instead of a raw template.
+    /// `None` when `params` is empty (nothing to resolve).
+    #[serde(default)]
+    pub resolved_cmd: Option<String>,
 }
 
 /// Composite runtime id for a (project, command) pair. Uses `:` (never emitted

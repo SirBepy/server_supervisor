@@ -14,14 +14,30 @@
 use super::config;
 use super::registry::Supervisor;
 use crate::types::{unit_id, ProcInfo, ProcKind};
+use std::collections::HashMap;
 
 mod command;
+mod params;
 mod project;
+
+pub use command::AddCommandOutcome;
+pub use params::ParamMismatch;
+
+/// `param_mismatch` comes from `AddCommandOutcome`; an explicit `params`
+/// object is a request that restarts, so it never produces one.
+pub struct EnsureAndRunOutcome {
+    pub info: ProcInfo,
+    pub param_mismatch: Option<ParamMismatch>,
+}
 
 impl Supervisor {
     /// Register a project (by folder) + a command (by cmd string) if not already
     /// present - both are idempotent - then start it and return its ProcInfo.
     /// The composite used by the `POST /run` API for one-call server launch.
+    ///
+    /// `params` (axis name -> value id) only selects among existing values and
+    /// is validated before `add_command`, so a typo never leaves a forked
+    /// command behind. It restarts a running match into the chosen variant.
     pub fn ensure_and_run(
         &self,
         root: &str,
@@ -31,7 +47,8 @@ impl Supervisor {
         use_dynamic_port: bool,
         fixed_port: Option<u16>,
         env: String,
-    ) -> Result<ProcInfo, String> {
+        params: Option<HashMap<String, String>>,
+    ) -> Result<EnsureAndRunOutcome, String> {
         let project_name = smart_project_name(root);
         let detected = super::transient::detect(std::path::Path::new(root));
         let project = self.add_project_inner(
@@ -40,8 +57,27 @@ impl Supervisor {
             detected.transient,
             detected.label,
         )?;
+
+        let requested = params.filter(|m| !m.is_empty());
+        if let Some(ref requested) = requested {
+            let projects = self.projects.lock().unwrap();
+            let proj = projects
+                .iter()
+                .find(|p| p.id == project.id)
+                .ok_or_else(|| format!("unknown project: {}", project.id))?;
+            match self::params::find_existing(proj, cmd) {
+                Some(existing) => self::params::validate_selection(&existing.params, requested)?,
+                None => {
+                    return Err(format!(
+                        "unknown param(s) {}: this command has no params defined",
+                        requested.keys().cloned().collect::<Vec<_>>().join(", ")
+                    ));
+                }
+            }
+        }
+
         let command_name = name.unwrap_or_else(|| derive_name(cmd));
-        let command = self.add_command(
+        let add_outcome = self.add_command(
             &project.id,
             command_name,
             cmd.to_string(),
@@ -54,16 +90,28 @@ impl Supervisor {
             // `ensure_and_run` (the `/run` API's one-call launcher) has no
             // dock-toggle input; commands it registers start undocked.
             false,
+            Vec::new(),
         )?;
+        let command = add_outcome.command;
         // The incoming command is now registered, so pruning its failed siblings
         // can never empty the project. Clears the dead-on-arrival variant pile.
         self.prune_failed_siblings(&project.id, &command.cmd);
         let id = unit_id(&project.id, &command.id);
+
+        let param_mismatch = if let Some(requested) = requested {
+            self.set_command_params(&project.id, &command.id, &requested)?;
+            None
+        } else {
+            add_outcome.param_mismatch
+        };
+
         self.start(&id)?;
-        self.list()
+        let info = self
+            .list()
             .into_iter()
             .find(|p| p.id == id)
-            .ok_or_else(|| format!("started but not found in list: {id}"))
+            .ok_or_else(|| format!("started but not found in list: {id}"))?;
+        Ok(EnsureAndRunOutcome { info, param_mismatch })
     }
 
     /// After a successful `/run`, drop this project's *other* commands that are

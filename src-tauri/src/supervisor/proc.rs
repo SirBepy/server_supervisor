@@ -1,3 +1,4 @@
+use super::param_sub::substitute_params;
 use super::proxy;
 use crate::types::{EnvVar, LogLine, ProcInfo, ProcKind, ProcSpec, ProcStatus};
 use std::collections::VecDeque;
@@ -220,6 +221,15 @@ impl ManagedProc {
             fallback_port: self.fallback_port,
             resolved_env: self.resolved_env.clone(),
             env_unknown: self.adopted,
+            params: self.spec.params.clone(),
+            // Only resolve when there's something to resolve: an untemplated
+            // command's `resolved_cmd` must read as absent, not a no-op echo
+            // of `cmd` the dashboard would have no reason to show twice.
+            resolved_cmd: if self.spec.params.is_empty() {
+                None
+            } else {
+                Some(substitute_params(&self.spec.cmd, &self.spec.params))
+            },
         }
     }
 

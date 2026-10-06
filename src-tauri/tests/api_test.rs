@@ -14,6 +14,26 @@ fn write_procs(dir: &std::path::Path) {
     std::fs::write(dir.join("projects.json"), json).unwrap();
 }
 
+/// Project "test" with a templated command "job" (a `device` axis, values
+/// `web-server`/`chrome`, defaulting to `web-server`) plus a plain untemplated
+/// command "job2", for the params HTTP tests below. The param text lands
+/// inside a harmless `set` no-op rather than directly on `ping`'s own argument
+/// list, so an unrecognized flag can never make `ping` exit immediately.
+fn write_procs_with_params(dir: &std::path::Path) {
+    let root = dir.display().to_string().replace('\\', "/");
+    let json = format!(
+        r#"[{{"id":"test","name":"test","root":"{root}","commands":[
+            {{"id":"job","name":"job","cmd":"set CHOICE={{DEVICE}} & ping -n 30 127.0.0.1","kind":"generic","autostart":false,
+              "params":[{{"name":"device","label":"Device","values":[
+                {{"value":"web-server","label":"Web Server","flag":"-d web-server"}},
+                {{"value":"chrome","label":"Chrome","flag":"-d chrome"}}
+              ],"last_value":"web-server"}}]}},
+            {{"id":"job2","name":"job2","cmd":"cmd /C exit 0","kind":"generic","autostart":false}}
+        ]}}]"#
+    );
+    std::fs::write(dir.join("projects.json"), json).unwrap();
+}
+
 async fn spawn_api(token: &str, dir: &std::path::Path) -> String {
     // reqwest 0.13's Client::new() requires a rustls crypto provider be installed
     // (the connector is compiled in via feature unification). Every test builds a
@@ -553,4 +573,207 @@ async fn dock_route_without_app_handle_fails_gracefully() {
         .await
         .unwrap();
     assert_eq!(r2.status(), 503);
+}
+
+#[tokio::test]
+async fn run_rejects_unknown_param_name_and_value_and_starts_nothing() {
+    let dir = tempfile::tempdir().unwrap();
+    write_procs_with_params(dir.path());
+    let base = spawn_api("secret", dir.path()).await;
+    let client = reqwest::Client::new();
+    let root = dir.path().display().to_string();
+    let templated_cmd = "set CHOICE={DEVICE} & ping -n 30 127.0.0.1";
+
+    let bad_name = client
+        .post(format!("{base}/run"))
+        .bearer_auth("secret")
+        .json(&serde_json::json!({ "root": root, "cmd": templated_cmd, "params": { "flavor": "dev" } }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(bad_name.status(), 400);
+    let body = bad_name.text().await.unwrap();
+    assert!(body.contains("device"), "error must list the valid param name: {body}");
+
+    let bad_value = client
+        .post(format!("{base}/run"))
+        .bearer_auth("secret")
+        .json(&serde_json::json!({ "root": root, "cmd": templated_cmd, "params": { "device": "firefox" } }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(bad_value.status(), 400);
+    let body2 = bad_value.text().await.unwrap();
+    assert!(body2.contains("web-server") || body2.contains("chrome"), "error must list the valid value ids: {body2}");
+
+    // Neither rejected request started anything or touched `last_value`.
+    let procs: Vec<serde_json::Value> = client
+        .get(format!("{base}/procs"))
+        .bearer_auth("secret")
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let job = procs.iter().find(|p| p["id"] == "test:job").unwrap();
+    assert_eq!(job["status"], "stopped", "a rejected params object must start nothing");
+    assert_eq!(job["resolved_cmd"], "set CHOICE=-d web-server & ping -n 30 127.0.0.1", "last_value must stay the default");
+}
+
+#[tokio::test]
+async fn run_with_valid_params_starts_the_requested_variant() {
+    let dir = tempfile::tempdir().unwrap();
+    write_procs_with_params(dir.path());
+    let base = spawn_api("secret", dir.path()).await;
+    let client = reqwest::Client::new();
+    let root = dir.path().display().to_string();
+
+    let info: serde_json::Value = client
+        .post(format!("{base}/run"))
+        .bearer_auth("secret")
+        .json(&serde_json::json!({
+            "root": root,
+            "cmd": "set CHOICE={DEVICE} & ping -n 30 127.0.0.1",
+            "params": { "device": "chrome" }
+        }))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(info["id"], "test:job", "the templated command's own id, not a fork");
+    assert_eq!(info["status"], "running");
+    assert_eq!(info["resolved_cmd"], "set CHOICE=-d chrome & ping -n 30 127.0.0.1");
+    assert!(
+        info.get("param_mismatch").is_none(),
+        "an explicit params object on a stopped command is never a mismatch"
+    );
+
+    let _ = client.post(format!("{base}/procs/test:job/stop")).bearer_auth("secret").send().await.unwrap();
+}
+
+#[tokio::test]
+async fn run_reports_param_mismatch_against_a_running_different_combo() {
+    let dir = tempfile::tempdir().unwrap();
+    write_procs_with_params(dir.path());
+    let base = spawn_api("secret", dir.path()).await;
+    let client = reqwest::Client::new();
+    let root = dir.path().display().to_string();
+
+    client.post(format!("{base}/procs/test:job/start")).bearer_auth("secret").send().await.unwrap();
+    tokio::time::sleep(std::time::Duration::from_millis(800)).await;
+
+    // Posting the already-rendered CHROME cmd with no explicit `params`
+    // object, while the command is running on its default `web-server`
+    // combo: nothing written, nothing restarted.
+    let r = client
+        .post(format!("{base}/run"))
+        .bearer_auth("secret")
+        .json(&serde_json::json!({ "root": root, "cmd": "set CHOICE=-d chrome & ping -n 30 127.0.0.1" }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 200);
+    let body: serde_json::Value = r.json().await.unwrap();
+    assert_eq!(body["id"], "test:job");
+    let mismatch = &body["param_mismatch"];
+    assert_eq!(mismatch["running"]["device"], "web-server");
+    assert_eq!(mismatch["requested"]["device"], "chrome");
+
+    let procs: Vec<serde_json::Value> = client
+        .get(format!("{base}/procs"))
+        .bearer_auth("secret")
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let job = procs.iter().find(|p| p["id"] == "test:job").unwrap();
+    assert_eq!(job["resolved_cmd"], "set CHOICE=-d web-server & ping -n 30 127.0.0.1", "the running combo must be untouched");
+
+    let _ = client.post(format!("{base}/procs/test:job/stop")).bearer_auth("secret").send().await.unwrap();
+}
+
+#[tokio::test]
+async fn procs_payload_includes_params_and_resolved_cmd() {
+    let dir = tempfile::tempdir().unwrap();
+    write_procs_with_params(dir.path());
+    let base = spawn_api("secret", dir.path()).await;
+    let client = reqwest::Client::new();
+
+    let procs: Vec<serde_json::Value> = client
+        .get(format!("{base}/procs"))
+        .bearer_auth("secret")
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+
+    let templated = procs.iter().find(|p| p["id"] == "test:job").unwrap();
+    assert_eq!(templated["params"][0]["name"], "device");
+    assert_eq!(templated["resolved_cmd"], "set CHOICE=-d web-server & ping -n 30 127.0.0.1");
+
+    let plain = procs.iter().find(|p| p["id"] == "test:job2").unwrap();
+    assert_eq!(plain["params"], serde_json::json!([]), "an untemplated command still carries the (empty) params key");
+    assert!(plain["resolved_cmd"].is_null(), "an untemplated command's resolved_cmd must be absent/null");
+}
+
+#[tokio::test]
+async fn add_command_rejects_a_param_named_port() {
+    let dir = tempfile::tempdir().unwrap();
+    write_procs(dir.path()); // project "test" exists
+    let base = spawn_api("secret", dir.path()).await;
+    let client = reqwest::Client::new();
+
+    let r = client
+        .post(format!("{base}/projects/test/commands"))
+        .bearer_auth("secret")
+        .json(&serde_json::json!({
+            "name": "bad",
+            "cmd": "echo {PORT}",
+            "params": [{ "name": "port", "label": "Port", "values": [{ "value": "a", "label": "a", "flag": "" }] }]
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 400, "a param named \"port\" must be rejected (would shadow {{PORT}})");
+}
+
+#[tokio::test]
+async fn update_command_params_none_keeps_some_empty_clears() {
+    let dir = tempfile::tempdir().unwrap();
+    write_procs_with_params(dir.path());
+    let base = spawn_api("secret", dir.path()).await;
+    let client = reqwest::Client::new();
+
+    // Omitted `params` key: the full-replace PATCH must keep the existing ones.
+    let kept: serde_json::Value = client
+        .patch(format!("{base}/projects/test/commands/job"))
+        .bearer_auth("secret")
+        .json(&serde_json::json!({ "name": "job", "cmd": "set CHOICE={DEVICE} & ping -n 30 127.0.0.1" }))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(kept["params"].as_array().unwrap().len(), 1, "omitted params must keep the existing ones");
+
+    // Explicit empty array: clears them.
+    let cleared: serde_json::Value = client
+        .patch(format!("{base}/projects/test/commands/job"))
+        .bearer_auth("secret")
+        .json(&serde_json::json!({ "name": "job", "cmd": "set CHOICE={DEVICE} & ping -n 30 127.0.0.1", "params": [] }))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(cleared["params"], serde_json::json!([]), "an explicit empty array must clear params");
 }

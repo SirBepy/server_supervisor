@@ -1,11 +1,20 @@
 //! Command CRUD: add/edit/remove a command within a project. Project CRUD
 //! (list/add/rename/remove a project) lives in the sibling `project` module.
 
+use super::params::{self, ParamMismatch};
 use crate::supervisor::config;
 use crate::supervisor::param_sub::normalize_cmd;
 use crate::supervisor::proc::ManagedProc;
 use crate::supervisor::registry::Supervisor;
-use crate::types::{unit_id, Command, ProcKind, ProcSpec, Role};
+use crate::types::{unit_id, Command, CommandParam, ProcKind, ProcSpec, Role};
+
+/// `param_mismatch` is set when the posted line matched a RUNNING command on a
+/// different variant: `command` is then returned untouched, since an implicit
+/// match must never restart or relabel a live process.
+pub struct AddCommandOutcome {
+    pub command: Command,
+    pub param_mismatch: Option<ParamMismatch>,
+}
 
 impl Supervisor {
     /// Add a command. `kind` is normally inferred from the command string
@@ -23,11 +32,15 @@ impl Supervisor {
         env: String,
         role: Option<Role>,
         dock_window: bool,
-    ) -> Result<Command, String> {
+        command_params: Vec<CommandParam>,
+    ) -> Result<AddCommandOutcome, String> {
         let name = name.trim().to_string();
         let cmd = normalize_cmd(&cmd);
         if name.is_empty() || cmd.is_empty() {
             return Err("command name and cmd are required".to_string());
+        }
+        if !command_params.is_empty() {
+            params::validate_params(&command_params)?;
         }
         let kind = kind.unwrap_or_else(|| ProcKind::infer(&cmd));
         let mut projects = self.projects.lock().unwrap();
@@ -39,8 +52,18 @@ impl Supervisor {
         // with the same cmd already exists, return it (the runtime procs map
         // already holds its entry, so don't re-insert).
         if let Some(existing) = project.commands.iter().find(|c| c.cmd == cmd) {
-            return Ok(existing.clone());
+            return Ok(AddCommandOutcome { command: existing.clone(), param_mismatch: None });
         }
+
+        // A concrete line posted against a templated command (`sv.ps1`, or any
+        // caller that renders the variant itself) resolves to that command
+        // instead of forking a near-duplicate.
+        if let Some((matched, combo)) = params::find_by_params_match(project, &cmd) {
+            let matched = matched.clone();
+            drop(projects);
+            return self.adopt_params_match(project_id, matched, combo);
+        }
+
         let cid = super::unique_id(&name, &|cand| project.commands.iter().any(|c| c.id == cand));
         // Claim this command's stable port slot eagerly, in creation order, so
         // "base+0, base+1, ..." reflects declared order rather than start
@@ -62,7 +85,7 @@ impl Supervisor {
             dock_window,
             play_sound: false,
             dock_headless: false,
-            params: Vec::new(),
+            params: command_params,
         };
         project.commands.push(command.clone());
         let project_snapshot = project.clone();
@@ -73,7 +96,7 @@ impl Supervisor {
         let spec = ProcSpec::from_unit(&project_snapshot, &command);
         map.entry(spec.id.clone())
             .or_insert_with(|| ManagedProc::new(spec));
-        Ok(command)
+        Ok(AddCommandOutcome { command, param_mismatch: None })
     }
 
     /// Edit an existing command in place. The command `id` is a stable handle
@@ -95,11 +118,19 @@ impl Supervisor {
         env: String,
         role: Option<Role>,
         dock_window: bool,
+        // `None` keeps the existing params, so a caller that predates them
+        // cannot wipe them by omission; `Some(vec![])` clears.
+        command_params: Option<Vec<CommandParam>>,
     ) -> Result<Command, String> {
         let name = name.trim().to_string();
         let cmd = cmd.trim().to_string();
         if name.is_empty() || cmd.is_empty() {
             return Err("command name and cmd are required".to_string());
+        }
+        if let Some(ref new_params) = command_params {
+            if !new_params.is_empty() {
+                params::validate_params(new_params)?;
+            }
         }
         // Kind is always inferred from the command string (no manual picker).
         let kind = ProcKind::infer(&cmd);
@@ -144,6 +175,9 @@ impl Supervisor {
             command.env = env;
             command.role = role;
             command.dock_window = dock_window;
+            if let Some(new_params) = command_params {
+                command.params = new_params;
+            }
             let updated = command.clone();
             let snapshot = project.clone();
             config::save(&self.data_dir, &projects);
@@ -161,7 +195,8 @@ impl Supervisor {
                         || proc.spec.kind != new_spec.kind
                         || proc.spec.use_dynamic_port != new_spec.use_dynamic_port
                         || proc.spec.fixed_port != new_spec.fixed_port
-                        || proc.spec.env != new_spec.env;
+                        || proc.spec.env != new_spec.env
+                        || proc.spec.params != new_spec.params;
                     let running = proc.pid.is_some();
                     proc.spec = new_spec;
                     running && affects_running

@@ -19,7 +19,8 @@ pub fn add_command(
     // can omit it entirely rather than erroring; absent = docking off.
     dock_window: Option<bool>,
 ) -> Result<Command, String> {
-    // Kind is inferred from the command string (None = infer).
+    // Kind is inferred from the command string (None = infer). Authoring
+    // params through this IPC command is phase-3 UI work; it sends none yet.
     sup.add_command(
         &project_id,
         name,
@@ -31,7 +32,9 @@ pub fn add_command(
         env,
         role,
         dock_window.unwrap_or(false),
+        Vec::new(),
     )
+    .map(|outcome| outcome.command)
 }
 
 #[tauri::command]
@@ -60,6 +63,7 @@ pub fn update_command(
         env,
         role,
         dock_window.unwrap_or(false),
+        None,
     )
 }
 

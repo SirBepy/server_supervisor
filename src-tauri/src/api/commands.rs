@@ -2,14 +2,16 @@
 //! localhost API.
 
 use super::{ai_forbidden, unit_result, ApiState};
-use crate::types::{Command, ProcKind};
+use crate::supervisor::crud::{EnsureAndRunOutcome, ParamMismatch};
+use crate::types::{Command, CommandParam, ProcInfo, ProcKind};
 use axum::{
     extract::{Path, State},
     http::StatusCode,
     response::{IntoResponse, Response},
     Json,
 };
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 #[derive(Deserialize)]
 pub(super) struct RunBody {
@@ -28,6 +30,10 @@ pub(super) struct RunBody {
     /// Per-command env overrides, one `KEY=VALUE` per line (see `Command::env`).
     #[serde(default)]
     env: Option<String>,
+    /// Axis name -> value id. Selects among existing values only; authoring
+    /// goes through the add/update command routes.
+    #[serde(default)]
+    params: Option<HashMap<String, String>>,
 }
 
 /// Body for `POST /projects/:project_id/commands` (register a command without
@@ -54,6 +60,8 @@ pub(super) struct AddCommandBody {
     /// field's own `#[serde(default)]` on disk.
     #[serde(default)]
     dock_window: Option<bool>,
+    #[serde(default)]
+    params: Vec<CommandParam>,
 }
 
 /// Body for `PATCH /projects/:project_id/commands/:command_id`. Mirrors the IPC
@@ -79,6 +87,9 @@ pub(super) struct UpdateCommandBody {
     /// `autostart`/`use_dynamic_port`.
     #[serde(default)]
     dock_window: Option<bool>,
+    /// Omitted keeps the existing params; `[]` clears them.
+    #[serde(default)]
+    params: Option<Vec<CommandParam>>,
 }
 
 pub(super) async fn run(State(s): State<ApiState>, Json(b): Json<RunBody>) -> Response {
@@ -100,10 +111,24 @@ pub(super) async fn run(State(s): State<ApiState>, Json(b): Json<RunBody>) -> Re
         b.use_dynamic_port.unwrap_or(true),
         b.port,
         b.env.unwrap_or_default(),
+        b.params,
     ) {
-        Ok(info) => Json(info).into_response(),
+        Ok(outcome) => run_response(outcome).into_response(),
         Err(e) => (StatusCode::BAD_REQUEST, e).into_response(),
     }
+}
+
+/// `ProcInfo` flattened so callers reading `.id`/`.status`/`.port` (sv.ps1)
+/// keep working.
+fn run_response(outcome: EnsureAndRunOutcome) -> Response {
+    #[derive(Serialize)]
+    struct RunResponse {
+        #[serde(flatten)]
+        info: ProcInfo,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        param_mismatch: Option<ParamMismatch>,
+    }
+    Json(RunResponse { info: outcome.info, param_mismatch: outcome.param_mismatch }).into_response()
 }
 
 /// Map a `Result<Command, String>` to JSON-on-success / 400-on-error, matching
@@ -126,20 +151,25 @@ pub(super) async fn add_command(
             return r;
         }
     }
-    command_result(s.sup.add_command(
-        &project_id,
-        b.name,
-        b.cmd,
-        b.kind,
-        b.autostart.unwrap_or(false),
-        b.use_dynamic_port.unwrap_or(true),
-        b.port,
-        b.env.unwrap_or_default(),
-        // The localhost API has no `role` field on its request body (FE/BE
-        // badging is a dashboard-only concept); commands it creates start unset.
-        None,
-        b.dock_window.unwrap_or(false),
-    ))
+    command_result(
+        s.sup
+            .add_command(
+                &project_id,
+                b.name,
+                b.cmd,
+                b.kind,
+                b.autostart.unwrap_or(false),
+                b.use_dynamic_port.unwrap_or(true),
+                b.port,
+                b.env.unwrap_or_default(),
+                // The localhost API has no `role` field on its request body (FE/BE
+                // badging is a dashboard-only concept); commands it creates start unset.
+                None,
+                b.dock_window.unwrap_or(false),
+                b.params,
+            )
+            .map(|outcome| outcome.command),
+    )
 }
 
 pub(super) async fn update_command(
@@ -162,6 +192,7 @@ pub(super) async fn update_command(
         // prior value, when omitted), so unset is consistent, not lossy-new.
         None,
         b.dock_window.unwrap_or(false),
+        b.params,
     ))
 }
 
