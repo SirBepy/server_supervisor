@@ -188,13 +188,7 @@ impl Supervisor {
                 // app to "snap back" out of, and the idempotent reassert
                 // path above never reaches this match arm at all.
                 if matches!(outcome, WindowOutcome::Embedded) {
-                    if let Err(e) = pane_hold::verify_holds(app, proc_id, pid, guest, target_rect, original) {
-                        let mut entries = reg.entries.lock().unwrap();
-                        if matches!(entries.get(proc_id), Some(Entry::Active { hwnd, .. }) if *hwnd == guest) {
-                            entries.remove(proc_id);
-                        }
-                        return Err(e);
-                    }
+                    pane_hold::verify_holds(app, proc_id, pid, guest, original)?;
                 }
                 Ok(to_dock_outcome(outcome))
             }

@@ -11,6 +11,7 @@
 //! than grown there.
 
 use super::on_main;
+use super::registry::{registry, Entry};
 use crate::supervisor::window::{self, OriginalState, Rect};
 use std::collections::HashSet;
 use std::sync::{Mutex, OnceLock};
@@ -45,21 +46,31 @@ pub(super) fn is_pane_refused(proc_id: &str, pid: u32) -> bool {
 /// invoking this), never on the Tauri main thread the two `on_main` calls
 /// here marshal onto, so the wait never blocks the message pump.
 ///
-/// On a hold failure, releases the dock exactly as `undock_window` would
-/// (restore style/ex-style/parent/rect/show-state) and records the
-/// refusal. Returns `Ok(())` unchanged when the dock held, or when the
-/// handle already went stale (a dead window is the caller's own liveness
-/// check's problem, not a "won't hold" refusal).
+/// The caller has already registered the dock, so during the wait another
+/// dock call may reassert it into a new rect, or an undock may remove it.
+/// The target is therefore read from the registry AFTER the wait, never
+/// captured before it, and a dock that is no longer this guest's is left
+/// alone: comparing against a stale rect would refuse a window that is
+/// exactly where it was last asked to be.
+///
+/// On a hold failure, takes the registry entry (only if it is still this
+/// guest's), releases the dock exactly as `undock_window` would (restore
+/// style/ex-style/parent/rect/show-state) and records the refusal. Returns
+/// `Ok(())` when the dock held, when it was undocked or re-docked
+/// meanwhile, or when the handle already went stale (a dead window is the
+/// caller's own liveness check's problem, not a "won't hold" refusal).
 pub(super) fn verify_holds(
     app: &AppHandle,
     proc_id: &str,
     pid: u32,
     guest: isize,
-    target: Rect,
     original: OriginalState,
 ) -> Result<(), String> {
     std::thread::sleep(HOLD_CHECK_DELAY);
 
+    let Some(target) = current_target(proc_id, guest) else {
+        return Ok(());
+    };
     let still_holds = on_main(app, move || match window::live_rect(guest) {
         Some(actual) => window::holds_target(actual, target),
         None => true,
@@ -70,6 +81,13 @@ pub(super) fn verify_holds(
         return Ok(());
     }
 
+    {
+        let mut entries = registry().entries.lock().unwrap();
+        if !matches!(entries.get(proc_id), Some(Entry::Active { hwnd, headless_host: None, .. }) if *hwnd == guest) {
+            return Ok(());
+        }
+        entries.remove(proc_id);
+    }
     log::warn!(
         "supervisor::dock::pane_hold: {proc_id} (pid {pid}) did not hold its docked rect \
          (re-pinned within {HOLD_CHECK_DELAY:?}); releasing it and reporting it as refused"
@@ -85,12 +103,50 @@ pub(super) fn verify_holds(
     Err(format!("{proc_id} would not hold its docked position, so it was released"))
 }
 
+/// The registry's current target for `proc_id`, if it is still a pane dock
+/// of this exact `guest`.
+fn current_target(proc_id: &str, guest: isize) -> Option<Rect> {
+    match registry().entries.lock().unwrap().get(proc_id) {
+        Some(Entry::Active { hwnd, target, headless_host: None, .. }) if *hwnd == guest => Some(*target),
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::supervisor::proc::ManagedProc;
     use crate::supervisor::Supervisor;
     use crate::types::{ProcKind, ProcSpec};
+
+    // A reassert during the hold wait rewrites the entry's target, and an
+    // undock removes it; the recheck must see both, not the rect it was
+    // first docked into.
+    #[test]
+    fn current_target_follows_the_live_registry_entry() {
+        let id = "test-pane-hold-current-target";
+        let guest = 4242;
+        let rect = |l| Rect { left: l, top: 0, right: l + 100, bottom: 100 };
+        let active = |hwnd, target| Entry::Active {
+            hwnd,
+            original: window::OriginalState::for_test(),
+            outcome: window::DockOutcome::Embedded,
+            target,
+            headless_host: None,
+        };
+        let entries = || registry().entries.lock().unwrap();
+
+        entries().insert(id.to_string(), active(guest, rect(0)));
+        assert_eq!(current_target(id, guest), Some(rect(0)));
+
+        entries().insert(id.to_string(), active(guest, rect(500)));
+        assert_eq!(current_target(id, guest), Some(rect(500)), "a reassert's new rect wins");
+
+        assert_eq!(current_target(id, guest + 1), None, "another window's dock is not ours");
+
+        entries().remove(id);
+        assert_eq!(current_target(id, guest), None, "undocked meanwhile: nothing to verify");
+    }
 
     #[test]
     fn is_pane_refused_reflects_a_recorded_refusal() {

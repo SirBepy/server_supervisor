@@ -53,6 +53,11 @@ pub struct OriginalState {
 }
 
 impl OriginalState {
+    #[cfg(test)]
+    pub(crate) fn for_test() -> Self {
+        Self { style: 0, exstyle: 0, parent: 0, rect: Rect::default(), visible: true }
+    }
+
     /// The recorded rect, for a caller deciding whether it is still a sane
     /// place to restore to (see `safe_restore_rect`).
     pub(crate) fn rect(&self) -> Rect {
