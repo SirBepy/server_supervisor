@@ -81,6 +81,7 @@ mod tests {
             dock_window: false,
             play_sound: false,
             dock_headless: false,
+            params: Vec::new(),
         }
     }
 

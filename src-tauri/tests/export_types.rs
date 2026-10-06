@@ -13,8 +13,8 @@ use server_supervisor_lib::settings::Settings;
 use server_supervisor_lib::supervisor::proxy_hub::RequestLogEntry;
 use server_supervisor_lib::supervisor::validate::CommandCheck;
 use server_supervisor_lib::types::{
-    Command, DetectedCommand, DockOutcome, DockRect, DockState, EnvVar, LogLine, ProcInfo, ProcKind,
-    ProcSpec, ProcStatus, Project, Role, UpstreamPreset,
+    Command, CommandParam, DetectedCommand, DockOutcome, DockRect, DockState, EnvVar, LogLine,
+    ParamValue, ProcInfo, ProcKind, ProcSpec, ProcStatus, Project, Role, UpstreamPreset,
 };
 use std::fs;
 use std::path::PathBuf;
@@ -46,6 +46,8 @@ fn emit_ipc_types() {
     out.push_str(&decl::<ProcInfo>());
     out.push_str(&decl::<LogLine>());
     out.push_str(&decl::<Command>());
+    out.push_str(&decl::<CommandParam>());
+    out.push_str(&decl::<ParamValue>());
     out.push_str(&decl::<Project>());
     out.push_str(&decl::<UpstreamPreset>());
     out.push_str(&decl::<RequestLogEntry>());

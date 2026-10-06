@@ -100,6 +100,10 @@ pub struct ProcSpec {
     /// The backend docks it on its own; no dashboard needs to be open.
     #[serde(default)]
     pub dock_headless: bool,
+    /// Param axes carried from `Command.params`, resolved by `substitute_params`
+    /// at spawn time (see `supervisor::param_sub`).
+    #[serde(default)]
+    pub params: Vec<CommandParam>,
 }
 
 /// One resolved env var actually applied to a spawned child (the parsed
@@ -208,6 +212,7 @@ impl ProcSpec {
             dock_window: command.dock_window,
             play_sound: command.play_sound,
             dock_headless: command.dock_headless,
+            params: command.params.clone(),
         }
     }
 }
@@ -251,6 +256,43 @@ pub struct Command {
     /// Run this command's window headless (see `ProcSpec::dock_headless`).
     #[serde(default)]
     pub dock_headless: bool,
+    /// Named axes this command's `cmd` template varies along (see
+    /// `supervisor::param_sub`). Empty means `cmd` spawns byte-for-byte as
+    /// stored.
+    #[serde(default)]
+    pub params: Vec<CommandParam>,
+}
+
+/// One named axis a command can vary along (Flutter: flavor, device,
+/// dart-define file; Node: script, mode; or a free-form one-off). Lives on
+/// `Command`, never on `ProcSpec` directly - the resolved cmd string is what
+/// `ProcSpec::from_unit` flattens.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+pub struct CommandParam {
+    /// Axis key, e.g. "flavor". Uppercased, this is the `{FLAVOR}` token
+    /// `cmd` must contain exactly once.
+    pub name: String,
+    /// UI label, e.g. "Flavor".
+    pub label: String,
+    pub values: Vec<ParamValue>,
+    /// The `ParamValue.value` id last chosen. `None` (or an id no longer
+    /// present) falls back to `values.first()` - same "stale selection never
+    /// hard-fails" stance as `Project::active_preset`.
+    #[serde(default)]
+    pub last_value: Option<String>,
+}
+
+/// One concrete choice for a `CommandParam`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+pub struct ParamValue {
+    /// Stable id for this choice, e.g. "dev". Never re-derived from `label`,
+    /// so renaming the label doesn't orphan a stored `last_value`.
+    pub value: String,
+    /// UI label, e.g. "Dev".
+    pub label: String,
+    /// Literal text substituted at the `{NAME}` site. May be the empty
+    /// string ("no flag").
+    pub flag: String,
 }
 
 /// A named upstream target for a project's reverse-proxy hub (see
@@ -414,6 +456,7 @@ mod tests {
             dock_window,
             play_sound: false,
             dock_headless: false,
+            params: Vec::new(),
         }
     }
 
@@ -437,6 +480,24 @@ mod tests {
         let cmd: Command = serde_json::from_str(json).unwrap();
         assert!(!cmd.dock_window, "an absent dock_window key must default to false");
         assert!(!cmd.play_sound, "an absent play_sound key must default to muted");
+        assert!(cmd.params.is_empty(), "an absent params key must default to an empty vec");
+    }
+
+    #[test]
+    fn command_param_round_trips_through_json() {
+        let param = CommandParam {
+            name: "flavor".to_string(),
+            label: "Flavor".to_string(),
+            values: vec![ParamValue {
+                value: "dev".to_string(),
+                label: "Dev".to_string(),
+                flag: "--flavor dev".to_string(),
+            }],
+            last_value: Some("dev".to_string()),
+        };
+        let json = serde_json::to_string(&param).unwrap();
+        let back: CommandParam = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, param, "CommandParam must survive a serialize/deserialize round trip");
     }
 
     #[test]

@@ -10,6 +10,7 @@ pub mod dock;
 pub mod flutter;
 pub mod hub_lifecycle;
 pub mod mem;
+pub mod param_sub;
 pub mod port_inject;
 pub mod ports_detect;
 pub mod proc;

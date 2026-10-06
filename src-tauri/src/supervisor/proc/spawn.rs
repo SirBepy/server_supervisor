@@ -175,6 +175,10 @@ impl ManagedProc {
             _ => dynamic_port,
         };
 
+        // Params first, so the port and `--machine` passes below see the real
+        // command line; `{PORT}` is never a param token and survives to them.
+        let cmd_str = super::super::param_sub::substitute_params(&self.spec.cmd, &self.spec.params);
+
         // Apply the port override (no project files touched): substitute any
         // `{PORT}` placeholder, and for a recognized framework that did not
         // express its own port, append the right CLI port flag (best-effort
@@ -182,8 +186,8 @@ impl ManagedProc {
         // set below. `ports_detect` reports whatever it actually bound, so this is
         // a convenience, not load-bearing.
         let cmd_str = match child_port {
-            Some(p) => super::super::port_inject::resolve_port(&self.spec.cmd, &self.spec.kind, p),
-            None => self.spec.cmd.clone(),
+            Some(p) => super::super::port_inject::resolve_port(&cmd_str, &self.spec.kind, p),
+            None => cmd_str,
         };
 
         // Flutter: force `--machine` so the daemon speaks the JSON-RPC protocol.

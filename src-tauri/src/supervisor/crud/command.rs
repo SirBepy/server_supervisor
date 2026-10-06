@@ -2,6 +2,7 @@
 //! (list/add/rename/remove a project) lives in the sibling `project` module.
 
 use crate::supervisor::config;
+use crate::supervisor::param_sub::normalize_cmd;
 use crate::supervisor::proc::ManagedProc;
 use crate::supervisor::registry::Supervisor;
 use crate::types::{unit_id, Command, ProcKind, ProcSpec, Role};
@@ -61,6 +62,7 @@ impl Supervisor {
             dock_window,
             play_sound: false,
             dock_headless: false,
+            params: Vec::new(),
         };
         project.commands.push(command.clone());
         let project_snapshot = project.clone();
@@ -270,26 +272,5 @@ impl Supervisor {
             self.ports.release_owner(&unit_id(project_id, command_id));
         }
         Ok(())
-    }
-}
-
-/// Collapse a command string to its canonical dedup form: trim ends and reduce
-/// every run of internal whitespace to a single space. Keeps case (flags are
-/// case-sensitive). `flutter  run` and ` flutter run ` both become `flutter run`,
-/// so trivial whitespace variants reuse one command entry instead of forking.
-fn normalize_cmd(cmd: &str) -> String {
-    cmd.split_whitespace().collect::<Vec<_>>().join(" ")
-}
-
-#[cfg(test)]
-mod tests {
-    use super::normalize_cmd;
-
-    #[test]
-    fn normalize_cmd_collapses_and_trims_whitespace() {
-        assert_eq!(normalize_cmd("flutter  run"), "flutter run");
-        assert_eq!(normalize_cmd("  flutter run  "), "flutter run");
-        assert_eq!(normalize_cmd("npm\trun   dev"), "npm run dev");
-        assert_eq!(normalize_cmd("flutter run"), "flutter run");
     }
 }

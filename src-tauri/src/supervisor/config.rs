@@ -207,6 +207,7 @@ fn migrate(specs: Vec<ProcSpec>) -> Vec<Project> {
             dock_window: spec.dock_window,
             play_sound: spec.play_sound,
             dock_headless: spec.dock_headless,
+            params: spec.params,
         };
         if let Some(p) = projects.iter_mut().find(|p| p.id == pid) {
             p.commands.push(cmd);
