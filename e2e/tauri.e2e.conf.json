@@ -1,0 +1,12 @@
+{
+  "productName": "Server Supervisor E2E",
+  "identifier": "com.sirbepy.server-supervisor-e2e",
+  "bundle": {
+    "createUpdaterArtifacts": false
+  },
+  "plugins": {
+    "updater": {
+      "endpoints": ["http://127.0.0.1:9/e2e-updater-disabled.json"]
+    }
+  }
+}

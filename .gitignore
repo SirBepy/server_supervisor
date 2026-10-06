@@ -10,6 +10,7 @@
 superpowers/
 
 .for_bepy
+/e2e/.app.pid
 # brainstorming visual companion
 .superpowers/
 

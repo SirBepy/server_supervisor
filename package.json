@@ -9,11 +9,14 @@
     "prebuild": "cargo test --manifest-path src-tauri/Cargo.toml --test export_types",
     "build": "vite build",
     "preview": "vite preview",
-    "gen-types": "cargo test --manifest-path src-tauri/Cargo.toml --test export_types"
+    "gen-types": "cargo test --manifest-path src-tauri/Cargo.toml --test export_types",
+    "e2e:build": "tauri build --debug --no-bundle --config e2e/tauri.e2e.conf.json",
+    "e2e": "node e2e/run.mjs"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2",
     "@types/node": "20.19.39",
+    "playwright-core": "1.62.1",
     "typescript": "5.9.3",
     "vite": "5.4.21"
   },

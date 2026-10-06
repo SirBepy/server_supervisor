@@ -16,7 +16,9 @@ Tauri 2, Rust backend, vanilla TypeScript + Vite + lit-html, plain CSS per featu
 
 ## Testing
 
-No Playwright e2e here - the UI is a native Tauri webview, not browser-driveable. The global verification floor applies (Rust `cargo test`, `tsc --noEmit`, `vite build`); do NOT `@import` the `test-e2e` snippet. For UI/visual behavior, state explicitly that it needs Joe's eyes rather than claiming it verified.
+The global verification floor applies (Rust `cargo test`, `tsc --noEmit`, `vite build`); do NOT `@import` the `test-e2e` snippet.
+
+UI behavior is Claude's to verify, not Joe's: `npm run e2e:build` then `npm run e2e` drives the real webview of an isolated debug build over WebView2's CDP port (`e2e/`, playwright-core). The build uses its own identifier (`com.sirbepy.server-supervisor-e2e`), so it gets its own app-data dir, tray icon, single-instance lock and API port (6979), and never touches Joe's installed supervisor or its servers. Each run reseeds that dir from `e2e/fixture.mjs`, screenshots every step into `.for_bepy/screenshots/<session id>/`, and stops every child before killing the app. Add a spec step for each UI behavior change. Only pure visual judgment (does it look right) is left for Joe.
 
 ## Structure
 
