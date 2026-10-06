@@ -18,6 +18,7 @@ use std::collections::HashMap;
 
 mod combine;
 mod command;
+mod live_flags;
 mod params;
 mod project;
 
