@@ -61,6 +61,20 @@ export async function run(page, step) {
   await step("kebab shows the param row while stopped", async () => {
     await openCmdMenu("pinger");
     await menu.getByRole("button", { name: "Count: Long" }).waitFor({ timeout: 3000 });
+    // Menu text must stay readable on its panel in whichever theme is seeded.
+    const ratio = await menu.evaluate((el) => {
+      const lum = (c) => {
+        const [r, g, b] = c.match(/\d+(\.\d+)?/g).slice(0, 3).map(Number).map((v) => {
+          const s = v / 255;
+          return s <= 0.03928 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4;
+        });
+        return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+      };
+      const a = lum(getComputedStyle(el).backgroundColor);
+      const b = lum(getComputedStyle(el.querySelector("button")).color);
+      return (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
+    });
+    expect(ratio >= 4.5, `menu text contrast ${ratio.toFixed(2)}:1 is below 4.5:1`);
   });
 
   await step("param row swaps the menu to Back + values, current checked", async () => {

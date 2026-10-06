@@ -35,7 +35,12 @@ export function seed(projects) {
   fs.mkdirSync(DATA_DIR, { recursive: true });
   fs.writeFileSync(
     path.join(APP_DIR, "settings.json"),
-    JSON.stringify({ api_port: API_PORT, __kit_auto_update: "never", keep_focus_on_launch: false }),
+    JSON.stringify({
+      api_port: API_PORT,
+      __kit_auto_update: "never",
+      __kit_theme: process.env.E2E_THEME ?? "light",
+      keep_focus_on_launch: false,
+    }),
   );
   fs.writeFileSync(path.join(DATA_DIR, "projects.json"), JSON.stringify(projects, null, 2));
 }
