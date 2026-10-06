@@ -145,6 +145,9 @@ pub(super) fn validate_params(params: &[CommandParam]) -> Result<(), String> {
         if !seen_names.insert(name.to_ascii_uppercase()) {
             return Err(format!("duplicate param name \"{}\"", p.name));
         }
+        if p.values.is_empty() {
+            return Err(format!("param \"{}\" needs at least one value", p.name));
+        }
         let mut seen_values: std::collections::HashSet<String> = std::collections::HashSet::new();
         for v in &p.values {
             if v.value.is_empty() {
@@ -316,6 +319,9 @@ mod tests {
 
         let dup_value = vec![param("device", vec![("chrome", "-d chrome"), ("chrome", "-d chrome2")], None)];
         assert!(validate_params(&dup_value).unwrap_err().contains("duplicate value id"));
+
+        let no_values = vec![param("device", vec![], None)];
+        assert!(validate_params(&no_values).unwrap_err().contains("at least one value"));
 
         let empty_value = vec![param("device", vec![("", "-d chrome")], None)];
         assert!(validate_params(&empty_value).unwrap_err().contains("empty value id"));
