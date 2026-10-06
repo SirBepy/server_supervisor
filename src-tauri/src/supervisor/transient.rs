@@ -16,7 +16,8 @@ pub fn detect(root: &Path) -> Detection {
     let cheap_hit = has_component(root, ".for_bepy")
         || has_component(root, ".claude")
         || under_os_temp(root)
-        || first_component_is_tmp(root);
+        || first_component_is_tmp(root)
+        || linked_worktree_main(root).is_some();
     let mentions_worktrees = has_component(root, "worktrees");
     if !cheap_hit && !mentions_worktrees {
         return Detection { transient: false, label: None };
@@ -31,18 +32,33 @@ pub fn detect(root: &Path) -> Detection {
     Detection { transient: true, label: Some(label) }
 }
 
-fn has_component(path: &Path, name: &str) -> bool {
+/// For a root inside a git linked worktree, the matching path inside the main
+/// checkout (`C:\p\countoff-wt\web` -> `C:\p\countoff\web`). Reads the
+/// worktree's `.git` FILE rather than spawning git, so it is cheap enough to
+/// run on every `/run`; this is what catches a sibling worktree like
+/// `countoff-wt` whose path never mentions `worktrees`. A submodule's `.git`
+/// is also a file, but points into `.git/modules/`, so it never matches.
+pub(super) fn linked_worktree_main(root: &Path) -> Option<std::path::PathBuf> {
+    let wt_root = root.ancestors().find(|a| a.join(".git").exists())?;
+    let content = std::fs::read_to_string(wt_root.join(".git")).ok()?;
+    let gitdir = content.trim().strip_prefix("gitdir:")?.trim().replace('\\', "/");
+    let main = &gitdir[..gitdir.find("/.git/worktrees/")?];
+    let rel = root.strip_prefix(wt_root).ok()?;
+    Some(Path::new(main).join(rel))
+}
+
+pub(super) fn has_component(path: &Path, name: &str) -> bool {
     path.components()
         .any(|c| c.as_os_str().to_str().map(|s| s.eq_ignore_ascii_case(name)).unwrap_or(false))
 }
 
-fn under_os_temp(root: &Path) -> bool {
+pub(super) fn under_os_temp(root: &Path) -> bool {
     root.starts_with(std::env::temp_dir())
 }
 
 /// `C:\tmp\x\...` -> transient; `std::env::temp_dir()` resolves to
 /// `AppData\Local\Temp` and would miss this real-world case.
-fn first_component_is_tmp(path: &Path) -> bool {
+pub(super) fn first_component_is_tmp(path: &Path) -> bool {
     for c in path.components() {
         if let Component::Normal(s) = c {
             return s.to_str().map(|s| s.eq_ignore_ascii_case("tmp") || s.eq_ignore_ascii_case("temp")).unwrap_or(false);
@@ -98,6 +114,7 @@ fn parse_output(out: std::process::Output) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
 
     #[test]
     fn for_bepy_component_is_transient() {
@@ -126,6 +143,25 @@ mod tests {
         let d = detect(Path::new(r"C:\tmp\zz-nonexistent-scratch-dir-0000\frontend2"));
         assert!(d.transient);
         assert_eq!(d.label.as_deref(), Some("frontend2"));
+    }
+
+    #[test]
+    fn sibling_linked_worktree_is_transient_and_maps_to_main() {
+        let dir = tempfile::tempdir().unwrap();
+        let wt = dir.path().join("countoff-wt");
+        fs::create_dir_all(wt.join("web")).unwrap();
+        fs::write(wt.join(".git"), "gitdir: C:/p/countoff/.git/worktrees/countoff-wt\n").unwrap();
+        assert_eq!(linked_worktree_main(&wt.join("web")), Some(Path::new("C:/p/countoff").join("web")));
+        assert!(detect(&wt.join("web")).transient);
+    }
+
+    #[test]
+    fn submodule_git_file_is_not_a_worktree() {
+        let dir = tempfile::tempdir().unwrap();
+        let sub = dir.path().join("vendor-kit");
+        fs::create_dir_all(&sub).unwrap();
+        fs::write(sub.join(".git"), "gitdir: ../.git/modules/vendor-kit\n").unwrap();
+        assert_eq!(linked_worktree_main(&sub), None);
     }
 
     #[test]

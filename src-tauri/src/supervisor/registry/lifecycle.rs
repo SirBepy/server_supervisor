@@ -41,6 +41,7 @@ impl Supervisor {
         // Rewrite pids.json from the live (now-adopted) set.
         self.persist_pids();
         self.prune_dead_transients();
+        self.sweep_throwaway_projects();
     }
 
     /// A transient project (worktree/scratch run, see `Project::transient`)
