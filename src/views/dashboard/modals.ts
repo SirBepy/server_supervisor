@@ -24,6 +24,7 @@ import { addProjectModal, detectInto } from "./add-project";
 import { addPresetModal, editPresetModal } from "./preset-modals";
 import { envField, portField, roleField, parsePortField, type CmdModal } from "./modal-fields";
 import { paramsField, validateParamsForSave } from "./params-field";
+import { combineCommandsModal } from "./combine-modal";
 
 // ----- "Dock window in dashboard" checkbox state -----
 //
@@ -479,6 +480,8 @@ export function modalView(): TemplateResult | typeof nothing {
       return editCommandModal(m);
     case "confirmDeleteCommand":
       return confirmDeleteCommandModal(m);
+    case "combineCommands":
+      return combineCommandsModal(m);
     case "renameProject":
       return renameProjectModal(m);
     case "addPreset":

@@ -3,7 +3,7 @@
 
 use server_supervisor_lib::ports::PortRegistry;
 use server_supervisor_lib::supervisor::Supervisor;
-use server_supervisor_lib::types::{CommandParam, ParamValue, ProcKind, ProcStatus};
+use server_supervisor_lib::types::{CommandParam, ParamValue, ProcKind, ProcStatus, Role};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -790,4 +790,301 @@ fn add_command_authoring_validation_rejects_bad_param_shapes_and_persists_nothin
         sup.list_projects()[0].commands.is_empty(),
         "neither rejected authoring call must persist a command"
     );
+}
+
+/// Two-value device param matching `src1`'s/`src2`'s rendered flags, in
+/// source order (value 0 belongs to the first source).
+fn device_values_param() -> CommandParam {
+    CommandParam {
+        name: "device".to_string(),
+        label: "Device".to_string(),
+        values: vec![
+            ParamValue { value: "web-server".to_string(), label: "Web Server".to_string(), flag: "-d web-server".to_string() },
+            ParamValue { value: "chrome".to_string(), label: "Chrome".to_string(), flag: "-d chrome".to_string() },
+        ],
+        last_value: None,
+    }
+}
+
+#[test]
+fn combine_commands_merges_two_sources_into_one_param_command() {
+    let dir = tempfile::tempdir().unwrap();
+    let sup = new_sup(dir.path());
+    let p = sup.add_project("My App".into(), "C:/tmp".into()).unwrap();
+
+    let src1 = sup
+        .add_command(&p.id, "web-server".into(), "echo -d web-server".into(), None, false, false, None, "".into(), None, false, Vec::new())
+        .unwrap()
+        .command;
+    let src2 = sup
+        .add_command(&p.id, "chrome".into(), "echo -d chrome".into(), None, false, false, None, "".into(), None, false, Vec::new())
+        .unwrap()
+        .command;
+
+    let combined = sup
+        .combine_commands(&p.id, vec![src1.id.clone(), src2.id.clone()], "Run".into(), "echo {DEVICE}".into(), device_values_param())
+        .unwrap();
+
+    assert_eq!(combined.cmd, "echo {DEVICE}");
+    assert_eq!(combined.params.len(), 1, "exactly one param axis");
+    assert_eq!(combined.params[0].values.len(), 2, "one value per source");
+    assert_eq!(
+        combined.params[0].last_value.as_deref(),
+        Some("web-server"),
+        "last_value defaults to the FIRST source's value id"
+    );
+
+    let projects = sup.list_projects();
+    assert_eq!(projects[0].commands.len(), 1, "both sources must be gone, replaced by one command");
+    assert!(
+        !projects[0].commands.iter().any(|c| c.id == src1.id || c.id == src2.id),
+        "neither source id survives"
+    );
+
+    // The live spec resolves each value back to the exact source cmd it came
+    // from - the substitution round-trip the migration promises.
+    let id = format!("{}:{}", p.id, combined.id);
+    let info = sup.list().into_iter().find(|x| x.id == id).unwrap();
+    assert_eq!(info.resolved_cmd.as_deref(), Some("echo -d web-server"), "defaults to the first source's rendering");
+
+    sup.set_command_param(&p.id, &combined.id, "device", "chrome").unwrap();
+    let info2 = sup.list().into_iter().find(|x| x.id == id).unwrap();
+    assert_eq!(info2.resolved_cmd.as_deref(), Some("echo -d chrome"), "switching the value reproduces the other source's cmd");
+
+    // Persisted to disk, not just in-memory.
+    let reloaded = new_sup(dir.path());
+    let rp = reloaded.list_projects();
+    assert_eq!(rp[0].commands.len(), 1);
+    assert_eq!(rp[0].commands[0].cmd, "echo {DEVICE}");
+    assert_eq!(rp[0].commands[0].params[0].values.len(), 2);
+}
+
+#[test]
+fn combine_commands_copies_non_cmd_fields_from_the_first_source() {
+    let dir = tempfile::tempdir().unwrap();
+    let sup = new_sup(dir.path());
+    let p = sup.add_project("My App".into(), "C:/tmp".into()).unwrap();
+
+    let src1 = sup
+        .add_command(
+            &p.id, "web-server".into(), "echo -d web-server".into(), None, true, false, None, "FOO=bar".into(),
+            Some(Role::Frontend), true, Vec::new(),
+        )
+        .unwrap()
+        .command;
+    sup.set_command_sound(&p.id, &src1.id, true).unwrap();
+    sup.set_command_headless(&p.id, &src1.id, true).unwrap();
+    let src2 = sup
+        .add_command(&p.id, "chrome".into(), "echo -d chrome".into(), None, false, false, None, "".into(), None, false, Vec::new())
+        .unwrap()
+        .command;
+
+    let combined = sup
+        .combine_commands(&p.id, vec![src1.id.clone(), src2.id.clone()], "Run".into(), "echo {DEVICE}".into(), device_values_param())
+        .unwrap();
+
+    assert!(combined.autostart, "autostart copied from the first source");
+    assert_eq!(combined.env, "FOO=bar", "env copied from the first source");
+    assert_eq!(combined.role, Some(Role::Frontend), "role copied from the first source");
+    assert!(combined.dock_window, "dock_window copied from the first source");
+    assert!(combined.play_sound, "play_sound copied from the first source");
+    assert!(combined.dock_headless, "dock_headless copied from the first source");
+}
+
+#[test]
+fn combine_commands_refuses_invalid_inputs_and_changes_nothing() {
+    let dir = tempfile::tempdir().unwrap();
+    let sup = new_sup(dir.path());
+    let p = sup.add_project("My App".into(), "C:/tmp".into()).unwrap();
+    let other = sup.add_project("Other".into(), "C:/tmp2".into()).unwrap();
+
+    let src1 = sup
+        .add_command(&p.id, "web-server".into(), "echo -d web-server".into(), None, false, false, None, "".into(), None, false, Vec::new())
+        .unwrap()
+        .command;
+    let src2 = sup
+        .add_command(&p.id, "chrome".into(), "echo -d chrome".into(), None, false, false, None, "".into(), None, false, Vec::new())
+        .unwrap()
+        .command;
+    let other_cmd = sup
+        .add_command(&other.id, "job".into(), "echo job".into(), None, false, false, None, "".into(), None, false, Vec::new())
+        .unwrap()
+        .command;
+
+    // Fewer than 2 source ids.
+    assert!(sup
+        .combine_commands(&p.id, vec![src1.id.clone()], "Run".into(), "echo {DEVICE}".into(), device_values_param())
+        .is_err());
+
+    // Duplicate source id.
+    assert!(sup
+        .combine_commands(&p.id, vec![src1.id.clone(), src1.id.clone()], "Run".into(), "echo {DEVICE}".into(), device_values_param())
+        .is_err());
+
+    // Unknown id.
+    assert!(sup
+        .combine_commands(&p.id, vec![src1.id.clone(), "nope".into()], "Run".into(), "echo {DEVICE}".into(), device_values_param())
+        .is_err());
+
+    // An id from ANOTHER project is just as unknown here - never merges across projects.
+    assert!(sup
+        .combine_commands(&p.id, vec![src1.id.clone(), other_cmd.id.clone()], "Run".into(), "echo {DEVICE}".into(), device_values_param())
+        .is_err());
+
+    // Template missing the param's {NAME} token.
+    assert!(sup
+        .combine_commands(&p.id, vec![src1.id.clone(), src2.id.clone()], "Run".into(), "echo plain".into(), device_values_param())
+        .is_err());
+
+    // values.len() != source_ids.len().
+    let mut three_values = device_values_param();
+    three_values.values.push(ParamValue { value: "android".to_string(), label: "Android".to_string(), flag: "-d android".to_string() });
+    assert!(sup
+        .combine_commands(&p.id, vec![src1.id.clone(), src2.id.clone()], "Run".into(), "echo {DEVICE}".into(), three_values)
+        .is_err());
+
+    // Nothing above ever wrote anything: both projects are exactly as they started.
+    let projects = sup.list_projects();
+    let mine = projects.iter().find(|x| x.id == p.id).unwrap();
+    assert_eq!(mine.commands.len(), 2, "no refused call may remove or merge a source");
+    let theirs = projects.iter().find(|x| x.id == other.id).unwrap();
+    assert_eq!(theirs.commands.len(), 1);
+}
+
+#[test]
+fn combine_commands_refuses_a_running_source_and_changes_nothing() {
+    let dir = tempfile::tempdir().unwrap();
+    let sup = new_sup(dir.path());
+    let p = sup.add_project("My App".into(), "C:/tmp".into()).unwrap();
+
+    let src1 = sup
+        .add_command(&p.id, "web-server".into(), "ping -n 30 127.0.0.1".into(), None, false, false, None, "".into(), None, false, Vec::new())
+        .unwrap()
+        .command;
+    let src2 = sup
+        .add_command(&p.id, "chrome".into(), "echo -d chrome".into(), None, false, false, None, "".into(), None, false, Vec::new())
+        .unwrap()
+        .command;
+    let id1 = format!("{}:{}", p.id, src1.id);
+    sup.start(&id1).unwrap();
+    std::thread::sleep(Duration::from_millis(800));
+    let pid_before = sup.list().into_iter().find(|x| x.id == id1).unwrap().pid;
+    assert!(pid_before.is_some(), "must be running before the combine attempt");
+
+    let err = sup
+        .combine_commands(&p.id, vec![src1.id.clone(), src2.id.clone()], "Run".into(), "{DEVICE}".into(), device_values_param())
+        .unwrap_err();
+    assert!(err.contains("web-server"), "error must name the running source: {err}");
+
+    assert_eq!(sup.list_projects()[0].commands.len(), 2, "a refused combine must not touch either source");
+    let after = sup.list().into_iter().find(|x| x.id == id1).unwrap();
+    assert_eq!(after.pid, pid_before, "the running source must be untouched");
+
+    sup.stop(&id1).unwrap();
+}
+
+#[test]
+fn combine_commands_transfers_the_first_sources_fixed_port() {
+    let dir = tempfile::tempdir().unwrap();
+    let ports = Arc::new(PortRegistry::new(dir.path().to_path_buf()));
+    let sup = Supervisor::new(dir.path().to_path_buf(), ports.clone());
+    let p = sup.add_project("My App".into(), "C:/tmp".into()).unwrap();
+
+    let src1 = sup
+        .add_command(&p.id, "web-server".into(), "echo -d web-server".into(), None, false, true, Some(45001), "".into(), None, false, Vec::new())
+        .unwrap()
+        .command;
+    let src2 = sup
+        .add_command(&p.id, "chrome".into(), "echo -d chrome".into(), None, false, false, None, "".into(), None, false, Vec::new())
+        .unwrap()
+        .command;
+
+    let owner1 = format!("{}:{}", p.id, src1.id);
+    assert!(ports.list().iter().any(|e| e.owner == owner1 && e.port == 45001), "fixed port must be reserved before combining");
+
+    let combined = sup
+        .combine_commands(&p.id, vec![src1.id.clone(), src2.id.clone()], "Run".into(), "echo {DEVICE}".into(), device_values_param())
+        .unwrap();
+
+    assert!(combined.use_dynamic_port, "use_dynamic_port copied from the first source");
+    assert_eq!(combined.fixed_port, Some(45001), "fixed_port transferred from the first source");
+
+    let new_owner = format!("{}:{}", p.id, combined.id);
+    let entries = ports.list();
+    assert!(entries.iter().any(|e| e.owner == new_owner && e.port == 45001), "new command must hold the transferred port");
+    assert!(!entries.iter().any(|e| e.owner == owner1), "the old owner's reservation must be released");
+}
+
+#[test]
+fn combine_commands_flutter_template_keeps_flutter_kind() {
+    let dir = tempfile::tempdir().unwrap();
+    let sup = new_sup(dir.path());
+    let p = sup.add_project("My App".into(), "C:/tmp".into()).unwrap();
+
+    let src1 = sup
+        .add_command(&p.id, "chrome".into(), "fvm flutter run -d chrome".into(), None, false, false, None, "".into(), None, false, Vec::new())
+        .unwrap()
+        .command;
+    assert_eq!(src1.kind, ProcKind::Flutter);
+    let src2 = sup
+        .add_command(&p.id, "web-server".into(), "fvm flutter run -d web-server".into(), None, false, false, None, "".into(), None, false, Vec::new())
+        .unwrap()
+        .command;
+
+    let combined = sup
+        .combine_commands(
+            &p.id,
+            vec![src1.id.clone(), src2.id.clone()],
+            "Run".into(),
+            "fvm flutter run {DEVICE}".into(),
+            CommandParam {
+                name: "device".to_string(),
+                label: "Device".to_string(),
+                values: vec![
+                    ParamValue { value: "chrome".to_string(), label: "Chrome".to_string(), flag: "-d chrome".to_string() },
+                    ParamValue { value: "web-server".to_string(), label: "Web Server".to_string(), flag: "-d web-server".to_string() },
+                ],
+                last_value: None,
+            },
+        )
+        .unwrap();
+
+    assert_eq!(combined.kind, ProcKind::Flutter, "a flutter template must keep the Flutter kind");
+}
+
+#[test]
+fn combine_commands_inserts_the_new_command_at_the_first_sources_index() {
+    let dir = tempfile::tempdir().unwrap();
+    let sup = new_sup(dir.path());
+    let p = sup.add_project("My App".into(), "C:/tmp".into()).unwrap();
+
+    let a = sup.add_command(&p.id, "a".into(), "echo a".into(), None, false, false, None, "".into(), None, false, Vec::new()).unwrap().command;
+    let b = sup.add_command(&p.id, "b".into(), "echo b".into(), None, false, false, None, "".into(), None, false, Vec::new()).unwrap().command;
+    let c = sup.add_command(&p.id, "c".into(), "echo c".into(), None, false, false, None, "".into(), None, false, Vec::new()).unwrap().command;
+    let d = sup.add_command(&p.id, "d".into(), "echo d".into(), None, false, false, None, "".into(), None, false, Vec::new()).unwrap().command;
+
+    // Picked in reverse order (C then A): the FIRST selected source is C, but
+    // A sits earlier in project order, so removing it shifts everything after
+    // it left by one before the new command lands.
+    sup
+        .combine_commands(
+            &p.id,
+            vec![c.id.clone(), a.id.clone()],
+            "Run".into(),
+            "echo {X}".into(),
+            CommandParam {
+                name: "x".to_string(),
+                label: "X".to_string(),
+                values: vec![
+                    ParamValue { value: "cv".to_string(), label: "c".to_string(), flag: "c".to_string() },
+                    ParamValue { value: "av".to_string(), label: "a".to_string(), flag: "a".to_string() },
+                ],
+                last_value: None,
+            },
+        )
+        .unwrap();
+
+    let names: Vec<String> = sup.list_projects()[0].commands.iter().map(|c| c.name.clone()).collect();
+    assert_eq!(names, vec!["b".to_string(), "Run".to_string(), "d".to_string()], "combined command lands between the surviving neighbours of the first source");
+    let _ = (b.id, d.id); // surviving sources, referenced only by name above
 }

@@ -16,6 +16,7 @@ use super::registry::Supervisor;
 use crate::types::{unit_id, ProcInfo, ProcKind};
 use std::collections::HashMap;
 
+mod combine;
 mod command;
 mod params;
 mod project;

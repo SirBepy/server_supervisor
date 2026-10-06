@@ -1,12 +1,13 @@
 // Per-project kebab menu: trigger button + popover content, rendered via
 // portalMenu() in ../menus.ts.
 
-import { html, type TemplateResult } from "lit-html";
+import { html, nothing, type TemplateResult } from "lit-html";
 import type { Project } from "../../../types/ipc.generated";
 import * as ipc from "../../../shared/ipc";
 import { ui, draw } from "../state";
 import { startAddCommand } from "../modals";
 import { startAddProject } from "../add-project";
+import { startCombineCommands } from "../combine-modal";
 import { setButtonAnchor } from "../menus";
 
 // Per-project kebab button only. The popover is rendered by portalMenu().
@@ -76,6 +77,19 @@ export function projMenuContent(project: Project): TemplateResult {
     >
       <i class="ph ph-rows"></i> Move to group
     </button>
+    ${ui.screen.t === "project"
+      ? html`
+          <button
+            .disabled=${project.commands.length < 2}
+            @click=${() => {
+              close();
+              startCombineCommands(project.id);
+            }}
+          >
+            <i class="ph ph-shuffle"></i> Combine commands...
+          </button>
+        `
+      : nothing}
   `;
 }
 

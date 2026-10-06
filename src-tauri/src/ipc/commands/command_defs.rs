@@ -114,6 +114,18 @@ pub fn remove_command(
 }
 
 #[tauri::command]
+pub fn combine_commands(
+    sup: State<Arc<Supervisor>>,
+    project_id: String,
+    source_ids: Vec<String>,
+    name: String,
+    template: String,
+    param: CommandParam,
+) -> Result<Command, String> {
+    sup.combine_commands(&project_id, source_ids, name, template, param)
+}
+
+#[tauri::command]
 pub fn detect_commands(path: String) -> Vec<DetectedCommand> {
     detect::detect(std::path::Path::new(&path))
 }

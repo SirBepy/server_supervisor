@@ -132,6 +132,17 @@ export const setCommandHeadless = (projectId: string, commandId: string, on: boo
 // restarts the command if it's currently running.
 export const setCommandParam = (projectId: string, commandId: string, name: string, valueId: string) =>
   invoke<Command>("set_command_param", { projectId, commandId, name, valueId });
+// "Combine into one command" migration: merges 2+ existing commands (by id,
+// in the dev's picked order) into one new parameterized command and removes
+// the sources. `param.values` must have exactly one entry per source id, in
+// the same order.
+export const combineCommands = (
+  projectId: string,
+  sourceIds: string[],
+  name: string,
+  template: string,
+  param: CommandParam,
+) => invoke<Command>("combine_commands", { projectId, sourceIds, name, template, param });
 
 // Reverse-proxy hub: one fixed loopback listener per project, forwarding to
 // whichever upstream preset is active. See supervisor::proxy_hub.

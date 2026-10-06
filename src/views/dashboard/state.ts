@@ -109,6 +109,32 @@ export type Modal =
       name: string;
     }
   | {
+      t: "combineCommands";
+      projectId: string;
+      // Ticked source command ids. Rendered and submitted in PROJECT order
+      // (never click order), so value index i always lines up with the
+      // backend's "value i belongs to source i" contract without a separate
+      // ordering step.
+      checked: Set<string>;
+      axisName: string;
+      // True once the dev has typed into the axis-name field directly, so a
+      // later checked-set change never overwrites a deliberate rename with
+      // the diff's own guess.
+      axisNameEdited: boolean;
+      label: string;
+      template: string;
+      // True once the dev has typed into the template field directly, so an
+      // axis-name change recomputes {AXIS} only while the template is still
+      // the diff's own text (see combine-diff.ts).
+      templateEdited: boolean;
+      // Per ticked command id: its editable flag/label row, pre-filled from
+      // the diff and left alone afterward until the checked set itself
+      // changes again.
+      flags: Record<string, string>;
+      labels: Record<string, string>;
+      error: string | null;
+    }
+  | {
       t: "addPreset";
       projectId: string;
       name: string;

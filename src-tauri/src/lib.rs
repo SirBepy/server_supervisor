@@ -64,6 +64,7 @@ pub fn run() {
             ipc::commands::set_command_sound,
             ipc::commands::set_command_headless,
             ipc::commands::set_command_param,
+            ipc::commands::combine_commands,
             ipc::commands::capture_proc_window,
             ipc::commands::detect_commands,
             ipc::commands::validate_command,
