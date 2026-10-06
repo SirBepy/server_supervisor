@@ -176,19 +176,26 @@ impl Supervisor {
 
         match embed_result {
             Ok((outcome, original)) => {
+                // Registered before the hold check's 300ms wait, so a second
+                // dock call for this proc meanwhile takes the reassert path
+                // instead of embedding the same window a second time.
+                reg.entries.lock().unwrap().insert(
+                    proc_id.to_string(),
+                    Entry::Active { hwnd: guest, original, outcome, target: target_rect, headless_host: None },
+                );
                 // Only a fresh `Embedded` lands here with a real risk of
                 // re-pinning - a soft-dock never reparented anything for an
                 // app to "snap back" out of, and the idempotent reassert
                 // path above never reaches this match arm at all.
                 if matches!(outcome, WindowOutcome::Embedded) {
                     if let Err(e) = pane_hold::verify_holds(app, proc_id, pid, guest, target_rect, original) {
+                        let mut entries = reg.entries.lock().unwrap();
+                        if matches!(entries.get(proc_id), Some(Entry::Active { hwnd, .. }) if *hwnd == guest) {
+                            entries.remove(proc_id);
+                        }
                         return Err(e);
                     }
                 }
-                reg.entries.lock().unwrap().insert(
-                    proc_id.to_string(),
-                    Entry::Active { hwnd: guest, original, outcome, target: target_rect, headless_host: None },
-                );
                 Ok(to_dock_outcome(outcome))
             }
             Err(PlaceError::WindowGone) => {
