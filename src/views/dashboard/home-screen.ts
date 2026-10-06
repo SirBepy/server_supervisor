@@ -7,7 +7,7 @@
 import { html, nothing, type TemplateResult } from "lit-html";
 import type { Group, Project } from "../../types/ipc.generated";
 import { ui, draw } from "./state";
-import { formatBytes, resolveActivePreset, toggleSetMember } from "./helpers";
+import { formatBytes, resolveActivePreset, resolvedCmdText, toggleSetMember } from "./helpers";
 import { statusClass, roleBadge, openCommandInProject, goToProject, resolveProjectIcon } from "./dashboard";
 import { groupMenu, setMouseAnchor, openInBrowser } from "./menus";
 import { statsStrip } from "./stats-strip";
@@ -47,7 +47,11 @@ function matchesSearch(project: Project, query: string): boolean {
   const q = query.trim().toLowerCase();
   if (!q) return true;
   if (project.name.toLowerCase().includes(q)) return true;
-  return project.commands.some((c) => c.cmd.toLowerCase().includes(q));
+  // Match the RESOLVED line, not just the raw template, so searching
+  // "chrome" finds a templated command currently running on chrome.
+  return project.commands.some((c) =>
+    resolvedCmdText(c, ui.statusById[`${project.id}:${c.id}`]).toLowerCase().includes(q),
+  );
 }
 
 function searchBox(): TemplateResult {
@@ -97,7 +101,7 @@ function runningRow(project: Project, cmd: Project["commands"][number]): Templat
         ${projectIconTemplate(project)}
         <div class="row-namecol">
           <span class="row-title">${project.name} ${roleBadge(cmd.role)} ${transientChip(project)}</span>
-          <span class="row-cmdtext">${cmd.cmd}</span>
+          <span class="row-cmdtext">${resolvedCmdText(cmd, info)}</span>
         </div>
         ${status === "crashed" ? html`<span class="statusword">crashed</span>` : nothing}
         <div class="right">
@@ -144,6 +148,7 @@ function projectBrowseRow(project: Project): TemplateResult {
         e.preventDefault();
         e.stopPropagation();
         ui.openCmdMenuFor = null;
+        ui.openParamPickerFor = null;
         ui.openMenuFor = project.id;
         setMouseAnchor(e as MouseEvent, 140);
         draw();
@@ -188,6 +193,7 @@ function homeGroupSection(group: Group): TemplateResult {
         ui.openMenuFor = null;
         ui.openCmdMenuFor = null;
         ui.openMoveToGroupFor = null;
+        ui.openParamPickerFor = null;
         ui.openEmptyMenu = false;
         ui.openGroupMenuFor = group.id;
         setMouseAnchor(e as MouseEvent, 120);

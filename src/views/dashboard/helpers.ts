@@ -1,7 +1,7 @@
 // Pure string helpers shared by the dashboard view modules. No state, no IPC.
 
 import { html, nothing, type TemplateResult } from "lit-html";
-import type { Project, ProcInfo, UpstreamPreset } from "../../types/ipc.generated";
+import type { CommandParam, Project, ProcInfo, UpstreamPreset } from "../../types/ipc.generated";
 import { ui, draw } from "./state";
 
 // Last path segment, ignoring trailing slashes.
@@ -172,6 +172,19 @@ export function portUrl(port: number): string {
 export function resolveActivePreset(project: Project): UpstreamPreset | null {
   if (project.presets.length === 0) return null;
   return project.presets.find((p) => p.id === project.active_preset) ?? project.presets[0];
+}
+
+// Row display text once a command has params: the backend's own resolved
+// line (braces already substituted - a raw `{DEVICE}` must never reach a
+// row once params exist), falling back to the stored template when the
+// ProcInfo lookup has no entry yet (a brand-new command before the next poll
+// tick populates statusById). An untemplated command just shows `cmd.cmd`.
+export function resolvedCmdText(
+  cmd: { cmd: string; params: CommandParam[] },
+  info: ProcInfo | undefined,
+): string {
+  if (cmd.params.length === 0) return cmd.cmd;
+  return info?.resolved_cmd ?? cmd.cmd;
 }
 
 // Shared inline field-error row, used below both the command-port field and

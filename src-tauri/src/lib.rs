@@ -63,6 +63,7 @@ pub fn run() {
             ipc::commands::remove_command,
             ipc::commands::set_command_sound,
             ipc::commands::set_command_headless,
+            ipc::commands::set_command_param,
             ipc::commands::capture_proc_window,
             ipc::commands::detect_commands,
             ipc::commands::validate_command,

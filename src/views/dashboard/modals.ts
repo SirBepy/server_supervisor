@@ -23,6 +23,7 @@ import { comboBox, filterDetected } from "./combobox";
 import { addProjectModal, detectInto } from "./add-project";
 import { addPresetModal, editPresetModal } from "./preset-modals";
 import { envField, portField, roleField, parsePortField, type CmdModal } from "./modal-fields";
+import { paramsField, validateParamsForSave } from "./params-field";
 
 // ----- "Dock window in dashboard" checkbox state -----
 //
@@ -75,6 +76,8 @@ export async function startAddCommand(projectId: string, root: string) {
     portError: null,
     env: "",
     role: null,
+    params: [],
+    paramsError: null,
     query: "",
     highlight: -1,
     check: null,
@@ -107,6 +110,13 @@ async function confirmAddCommand() {
     return;
   }
   m.portError = null;
+  const paramsErr = validateParamsForSave(m.cmd, m.params);
+  if (paramsErr) {
+    m.paramsError = paramsErr;
+    draw();
+    return;
+  }
+  m.paramsError = null;
   try {
     await ipc.addCommand(
       m.projectId,
@@ -118,6 +128,7 @@ async function confirmAddCommand() {
       m.role,
       parsed.fixedPort,
       addDockWindowChecked,
+      m.params,
     );
     ui.error = null;
     ui.modal = null;
@@ -143,6 +154,13 @@ async function confirmEditCommand() {
     return;
   }
   m.portError = null;
+  const paramsErr = validateParamsForSave(cmd, m.params);
+  if (paramsErr) {
+    m.paramsError = paramsErr;
+    draw();
+    return;
+  }
+  m.paramsError = null;
   // Read BEFORE the await: a failed call leaves the modal open with `m` still
   // live, but resolving the checked value up front means this doesn't depend
   // on that.
@@ -159,6 +177,7 @@ async function confirmEditCommand() {
       m.role,
       parsed.fixedPort,
       dockWindow,
+      m.params,
     );
     ui.error = null;
     ui.modal = null;
@@ -289,6 +308,7 @@ function addCommandModal(m: Extract<Modal, { t: "addCommand" }>): TemplateResult
         </label>
         ${roleField(m)}
         ${envField(m)}
+        ${paramsField(m)}
         <div class="dialog-actions">
           <button @click=${closeModal}>Cancel</button>
           <button class="primary" @click=${() => void confirmAddCommand()}>Add</button>
@@ -363,6 +383,7 @@ function editCommandModal(m: Extract<Modal, { t: "editCommand" }>): TemplateResu
         </label>
         ${roleField(m)}
         ${envField(m)}
+        ${paramsField(m)}
         <p class="muted note">Saving relaunches the command if it's running.</p>
         <div class="dialog-actions">
           <button @click=${() => cancelEditCommand(m)}>Cancel</button>

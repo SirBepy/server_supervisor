@@ -10,6 +10,7 @@ import type {
   ProcInfo,
   Project,
   CommandCheck,
+  CommandParam,
   DetectedCommand,
   Group,
   Role,
@@ -64,6 +65,13 @@ export type Modal =
       portError: string | null;
       env: string;
       role: Role | null;
+      // Named axes authored via the Parameters section (params-field.ts).
+      // Empty = an untemplated command, same as every command saved before
+      // params existed.
+      params: CommandParam[];
+      // Save-blocking validation message for the Parameters section, shown
+      // inline the same way portError is shown under the port field.
+      paramsError: string | null;
       query: string;
       highlight: number;
       check: CommandCheck | null;
@@ -83,6 +91,9 @@ export type Modal =
       portError: string | null;
       env: string;
       role: Role | null;
+      // Deep-copied from the live Command on open, so Cancel discards edits.
+      params: CommandParam[];
+      paramsError: string | null;
       check: CommandCheck | null;
     }
   | {
@@ -204,6 +215,12 @@ export const ui = {
   openGroupMenuFor: null as string | null,
   // Project ID currently in "move to group" picker mode, or null.
   openMoveToGroupFor: null as string | null,
+  // Proc id (`project:command`) + param name currently showing that param's
+  // value list inside the open command kebab, or null. Content-swap state
+  // for cmdMenuContent, the same pattern openMoveToGroupFor uses for
+  // moveToGroupContent - portalMenu stays a single anchored popover either
+  // way, so this never opens a second, nested flyout.
+  openParamPickerFor: null as { procId: string; paramName: string } | null,
   // True when the empty-area right-click menu is open.
   openEmptyMenu: false,
   // Group ID to auto-assign the next successfully-created project to, set by

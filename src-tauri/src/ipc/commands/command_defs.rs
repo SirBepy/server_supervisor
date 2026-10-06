@@ -1,6 +1,6 @@
 use crate::supervisor::validate::CommandCheck;
 use crate::supervisor::{detect, validate, Supervisor};
-use crate::types::{Command, DetectedCommand, Role};
+use crate::types::{Command, CommandParam, DetectedCommand, Role};
 use std::sync::Arc;
 use tauri::State;
 
@@ -18,9 +18,11 @@ pub fn add_command(
     // Optional so a caller that predates this field (an old frontend build)
     // can omit it entirely rather than erroring; absent = docking off.
     dock_window: Option<bool>,
+    // Optional for the same reason; absent = no params (every command
+    // predating this field has none).
+    params: Option<Vec<CommandParam>>,
 ) -> Result<Command, String> {
-    // Kind is inferred from the command string (None = infer). Authoring
-    // params through this IPC command is phase-3 UI work; it sends none yet.
+    // Kind is inferred from the command string (None = infer).
     sup.add_command(
         &project_id,
         name,
@@ -32,7 +34,7 @@ pub fn add_command(
         env,
         role,
         dock_window.unwrap_or(false),
-        Vec::new(),
+        params.unwrap_or_default(),
     )
     .map(|outcome| outcome.command)
 }
@@ -51,6 +53,10 @@ pub fn update_command(
     role: Option<Role>,
     // Optional for the same reason as `add_command`'s.
     dock_window: Option<bool>,
+    // `None` keeps the existing params (an old frontend build omitting this
+    // key must never wipe them); `Some(vec![])` clears. See
+    // `Supervisor::update_command`.
+    params: Option<Vec<CommandParam>>,
 ) -> Result<Command, String> {
     sup.update_command(
         &project_id,
@@ -63,7 +69,7 @@ pub fn update_command(
         env,
         role,
         dock_window.unwrap_or(false),
-        None,
+        params,
     )
 }
 
@@ -75,6 +81,17 @@ pub fn set_command_sound(
     on: bool,
 ) -> Result<Command, String> {
     sup.set_command_sound(&project_id, &command_id, on)
+}
+
+#[tauri::command]
+pub fn set_command_param(
+    sup: State<Arc<Supervisor>>,
+    project_id: String,
+    command_id: String,
+    name: String,
+    value_id: String,
+) -> Result<Command, String> {
+    sup.set_command_param(&project_id, &command_id, &name, &value_id)
 }
 
 #[tauri::command]

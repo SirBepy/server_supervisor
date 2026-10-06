@@ -14,7 +14,7 @@ import { html, nothing, type TemplateResult } from "lit-html";
 import * as ipc from "../../shared/ipc";
 import type { EnvVar, ProcInfo, Project } from "../../types/ipc.generated";
 import { ui, act, draw } from "./state";
-import { formatBytes, formatUptime, displayName, toggleSetMember } from "./helpers";
+import { formatBytes, formatUptime, displayName, toggleSetMember, resolvedCmdText } from "./helpers";
 import { statusClass, roleBadge, toggleSelectCmd, resolveProjectIcon } from "./dashboard";
 import { cmdMenu, setMouseAnchor, openInBrowser } from "./menus";
 import { renderAnsi } from "../../shared/ansi";
@@ -68,6 +68,7 @@ function projectCmdRow(project: Project, cmd: Project["commands"][number]): Temp
         e.stopPropagation();
         ui.openMenuFor = null;
         ui.openCmdMenuFor = id;
+        ui.openParamPickerFor = null;
         setMouseAnchor(e as MouseEvent, 200);
         draw();
       }}
@@ -75,7 +76,7 @@ function projectCmdRow(project: Project, cmd: Project["commands"][number]): Temp
       <div class="row">
         <div class="row-namecol">
           <span class="row-title">${displayName(cmd)} ${roleBadge(cmd.role)}</span>
-          <span class="row-cmdtext">${cmd.cmd}</span>
+          <span class="row-cmdtext">${resolvedCmdText(cmd, info)}</span>
         </div>
         ${status === "crashed" ? html`<span class="statusword">crashed</span>` : nothing}
         ${status === "starting" ? html`<span class="statusword">starting</span>` : nothing}
@@ -234,7 +235,7 @@ function detailPane(project: Project): TemplateResult {
   const status = info?.status ?? "stopped";
   return html`
     <div class="detail-pane">
-      <div class="detail-cmdline"><i class="ph ph-caret-right"></i> ${cmd.cmd}</div>
+      <div class="detail-cmdline"><i class="ph ph-caret-right"></i> ${resolvedCmdText(cmd, info)}</div>
       <div class="pidline">
         ${status === "crashed" ? html`<span class="crashed-tag">crashed</span> ` : nothing}${drawerHeader(info?.pid, info?.mem_bytes, info?.port, info?.started_at, info?.fallback_port)}
       </div>

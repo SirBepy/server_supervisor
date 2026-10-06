@@ -48,12 +48,14 @@ export function mountDashboard(el: HTMLElement): () => void {
       ui.openCmdMenuFor !== null ||
       ui.openGroupMenuFor !== null ||
       ui.openMoveToGroupFor !== null ||
+      ui.openParamPickerFor !== null ||
       ui.openEmptyMenu
     ) {
       ui.openMenuFor = null;
       ui.openCmdMenuFor = null;
       ui.openGroupMenuFor = null;
       ui.openMoveToGroupFor = null;
+      ui.openParamPickerFor = null;
       ui.openEmptyMenu = false;
       ui.menuAnchor = null;
       draw();
@@ -66,12 +68,14 @@ export function mountDashboard(el: HTMLElement): () => void {
         ui.openCmdMenuFor !== null ||
         ui.openGroupMenuFor !== null ||
         ui.openMoveToGroupFor !== null ||
+        ui.openParamPickerFor !== null ||
         ui.openEmptyMenu)
     ) {
       ui.openMenuFor = null;
       ui.openCmdMenuFor = null;
       ui.openGroupMenuFor = null;
       ui.openMoveToGroupFor = null;
+      ui.openParamPickerFor = null;
       ui.openEmptyMenu = false;
       ui.menuAnchor = null;
       draw();
@@ -87,6 +91,7 @@ export function mountDashboard(el: HTMLElement): () => void {
     ui.openCmdMenuFor = null;
     ui.openGroupMenuFor = null;
     ui.openMoveToGroupFor = null;
+    ui.openParamPickerFor = null;
     ui.openEmptyMenu = true;
     setMouseAnchor(e, 80);
     draw();
@@ -334,6 +339,7 @@ function jumpBar(): TemplateResult | typeof nothing {
               e.stopPropagation();
               ui.openMenuFor = null;
               ui.openCmdMenuFor = id;
+              ui.openParamPickerFor = null;
               setButtonAnchor(e, 200);
               draw();
             }}

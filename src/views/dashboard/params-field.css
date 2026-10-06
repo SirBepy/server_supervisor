@@ -1,0 +1,89 @@
+/* ----- add/edit-command modal: Parameters section ----- */
+.dialog .params-row {
+  grid-template-columns: 64px 1fr;
+  align-items: start;
+}
+.params-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.param-block {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.param-row-top {
+  display: flex;
+  align-items: start;
+  gap: 8px;
+}
+.param-name-col {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+}
+.param-name,
+.param-label {
+  background: var(--bg);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 8px;
+  font-size: 12px;
+}
+.param-label {
+  flex: 1;
+}
+.param-hint {
+  font-size: 11px;
+  color: var(--muted);
+}
+.param-values {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding-left: 12px;
+}
+.param-value-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.param-value-label,
+.param-value-flag {
+  background: var(--bg);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 5px 7px;
+  font-size: 12px;
+  flex: 1;
+}
+.param-add-value {
+  align-self: flex-start;
+  margin-top: 2px;
+}
+.params-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.icon-btn {
+  background: transparent;
+  border: none;
+  color: var(--muted);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  padding: 4px;
+  font-size: 13px;
+  border-radius: 4px;
+}
+.icon-btn:hover {
+  color: var(--fg);
+}

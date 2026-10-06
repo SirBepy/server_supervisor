@@ -5,6 +5,7 @@ import type {
   Settings,
   Project,
   Command,
+  CommandParam,
   DetectedCommand,
   CommandCheck,
   ProjectIcon,
@@ -70,6 +71,10 @@ export const addCommand = (
   // call (like autostart/useDynamicPort above) - the backend treats an
   // omitted key as false, so a caller that forgets it silently clears docking.
   dockWindow = false,
+  // Named axes authored via the Parameters section. Optional trailing arg so
+  // every existing call site (add-project.ts's bulk picker included) keeps
+  // compiling unchanged; an omitted params list is the same as "no params".
+  params: CommandParam[] = [],
 ) =>
   invoke<Command>("add_command", {
     projectId,
@@ -81,6 +86,7 @@ export const addCommand = (
     env,
     role,
     dockWindow,
+    params,
   });
 export const updateCommand = (
   projectId: string,
@@ -96,6 +102,11 @@ export const updateCommand = (
   // See addCommand's dockWindow above: this is a full-replace endpoint, so
   // every call must send the caller's current intent, never omit it.
   dockWindow = false,
+  // Named axes authored via the Parameters section. Omitted (undefined) ->
+  // sent as `null`, which the backend reads as "keep the existing params" -
+  // distinct from an explicit `[]`, which clears them (the edit modal always
+  // passes its current full list, so either outcome is reachable).
+  params?: CommandParam[],
 ) =>
   invoke<Command>("update_command", {
     projectId,
@@ -108,6 +119,7 @@ export const updateCommand = (
     env,
     role,
     dockWindow,
+    params: params ?? null,
   });
 export const removeCommand = (projectId: string, commandId: string) =>
   invoke<void>("remove_command", { projectId, commandId });
@@ -116,6 +128,10 @@ export const setCommandSound = (projectId: string, commandId: string, on: boolea
   invoke<Command>("set_command_sound", { projectId, commandId, on });
 export const setCommandHeadless = (projectId: string, commandId: string, on: boolean) =>
   invoke<Command>("set_command_headless", { projectId, commandId, on });
+// Per-param value picker (Project-screen kebab): persists `last_value` and
+// restarts the command if it's currently running.
+export const setCommandParam = (projectId: string, commandId: string, name: string, valueId: string) =>
+  invoke<Command>("set_command_param", { projectId, commandId, name, valueId });
 
 // Reverse-proxy hub: one fixed loopback listener per project, forwarding to
 // whichever upstream preset is active. See supervisor::proxy_hub.
