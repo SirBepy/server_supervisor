@@ -4,6 +4,7 @@
 
 import { spawn, execFileSync } from "node:child_process";
 import fs from "node:fs";
+import net from "node:net";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { chromium } from "playwright-core";
@@ -13,10 +14,25 @@ export const REPO = path.dirname(E2E_DIR);
 export const IDENTIFIER = "com.sirbepy.server-supervisor-e2e";
 export const APP_DIR = path.join(process.env.APPDATA, IDENTIFIER);
 export const DATA_DIR = path.join(APP_DIR, "supervisor");
-export const CDP_PORT = 9333;
+// OS-picked, never a fixed number: other sessions' headless Chromes also sit on
+// 9333 (seen 2026-10-08), and connectOverCDP would silently drive theirs.
+export const CDP_PORT = await new Promise((resolve, reject) => {
+  const srv = net.createServer();
+  srv.once("error", reject);
+  srv.listen(0, "127.0.0.1", () => {
+    const { port } = srv.address();
+    srv.close(() => resolve(port));
+  });
+});
 export const API_PORT = 6979;
-const EXE = "D:/cargo-target/server_supervisor__src-tauri/debug/server_supervisor.exe";
+export const EXE = "D:/cargo-target/server_supervisor__src-tauri/debug/server_supervisor.exe";
 const PID_FILE = path.join(E2E_DIR, ".app.pid");
+
+// A self-restarted app is a new pid with no parent to inherit from; recording
+// it here is what keeps teardown able to kill it.
+export function adopt(pid) {
+  fs.writeFileSync(PID_FILE, String(pid));
+}
 
 export function screenshotDir() {
   const id = execFileSync(
@@ -52,7 +68,7 @@ export function launch() {
     env: { ...process.env, WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: `--remote-debugging-port=${CDP_PORT}` },
   });
   child.unref();
-  fs.writeFileSync(PID_FILE, String(child.pid));
+  adopt(child.pid);
   return child.pid;
 }
 
@@ -64,7 +80,9 @@ export async function connect() {
       const browser = await chromium.connectOverCDP(`http://localhost:${CDP_PORT}`);
       const page = browser.contexts().flatMap((c) => c.pages())[0];
       if (page) {
-        await page.waitForSelector(".topbar, .home, body", { timeout: 15000 });
+        // A page can be attached before Tauri injects its globals; every
+        // caller's first move is a __TAURI__ call.
+        await page.waitForFunction(() => window.__TAURI__?.window, null, { timeout: 15000 });
         return { browser, page };
       }
     } catch (e) {

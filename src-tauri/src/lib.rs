@@ -34,6 +34,9 @@ pub fn run() {
         // In-app auto-update. Endpoints + pubkey are configured in
         // tauri.conf.json; the kit wrapper just builds the updater plugin.
         .plugin(tauri_kit_updater::plugin())
+        // Its relaunch goes through ExitRequested below, so docks are
+        // released and children are left running to be re-adopted.
+        .plugin(tauri_kit_webview_recovery::plugin())
         .manage(AppState::default())
         .invoke_handler(tauri::generate_handler![
             ipc::commands::quit_app,

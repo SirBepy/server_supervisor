@@ -6,6 +6,7 @@
 import { seed, launch, connect, teardown, screenshotDir, E2E_DIR } from "./lib.mjs";
 import { fixtureProjects } from "./fixture.mjs";
 import { run as paramsSpec } from "./params.e2e.mjs";
+import { run as recoverySpec } from "./recovery.e2e.mjs";
 
 const shots = screenshotDir();
 let n = 0;
@@ -16,6 +17,7 @@ let failed = 0;
 await teardown();
 seed(fixtureProjects(E2E_DIR));
 launch();
+const launchedAt = Date.now();
 try {
   const { browser, page } = await connect();
   await page.evaluate(() => window.__TAURI__.window.getCurrentWindow().show());
@@ -34,6 +36,8 @@ try {
   };
   await paramsSpec(page, step);
   await browser.close();
+  // Last: it replaces the app process, so `page` is dead afterwards.
+  await recoverySpec(step, { launchedAt, shots });
 } finally {
   await teardown();
 }

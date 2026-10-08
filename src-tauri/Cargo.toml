@@ -40,6 +40,7 @@ ts-rs = "10"
 sysinfo = { version = "0.39", default-features = false, features = ["system"] }
 tauri_kit_settings = { path = "../vendor/tauri_kit/tauri/settings" }
 tauri_kit_updater = { path = "../vendor/tauri_kit/tauri/updater" }
+tauri_kit_webview_recovery = { path = "../vendor/tauri_kit/tauri/webview_recovery" }
 base64 = "0.22.1"
 # About page build/install date formatting (get_version_info).
 chrono = { version = "0.4", features = ["serde"] }
