@@ -7,6 +7,7 @@
 //! host would leave which one a capture shows up to z-order.
 
 use super::registry::{registry, Entry};
+use super::headless_hold;
 use super::on_main;
 // Re-exported (not just imported): `dock.rs` still calls `headless::destroy_host`
 // directly, exactly as it did when this function was defined in this file.
@@ -35,7 +36,7 @@ enum HeadlessError {
 
 /// (proc id, pid) pairs that refused embedding, so the tick does not retry
 /// the same process every second. A restart gets a new pid and a new try.
-fn refused() -> &'static Mutex<HashSet<(String, u32)>> {
+pub(super) fn refused() -> &'static Mutex<HashSet<(String, u32)>> {
     static REFUSED: OnceLock<Mutex<HashSet<(String, u32)>>> = OnceLock::new();
     REFUSED.get_or_init(|| Mutex::new(HashSet::new()))
 }
@@ -141,10 +142,18 @@ impl Supervisor {
             }
             Err(e) => return Err(e),
         };
+        // Registered before the hold check's wait, same reasoning as the
+        // pane path in `dock.rs`'s `dock_window`: a second headless-dock
+        // attempt for this proc meanwhile (there shouldn't be one, since
+        // `headless_tick` skips a proc already `is_headless_docked`, but a
+        // direct `dock_headless` call could race it) sees this entry rather
+        // than racing a second embed of the same window.
         registry().entries.lock().unwrap().insert(
             proc_id.to_string(),
             Entry::Active { hwnd: guest, original, outcome: WindowOutcome::Embedded, target, headless_host: Some(host) },
         );
+        headless_hold::verify_headless_holds(app, proc_id, pid, guest, host, original)
+            .map_err(|_| HeadlessError::Refused)?;
         Ok(())
     }
 

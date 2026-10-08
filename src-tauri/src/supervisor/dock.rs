@@ -23,6 +23,7 @@
 //! `sup.dock_window(...)`.
 
 mod headless;
+mod headless_hold;
 mod pane_hold;
 mod registry;
 
