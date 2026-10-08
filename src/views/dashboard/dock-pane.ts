@@ -136,7 +136,7 @@ function dockPaneOne(project: Project, cmd: Command): TemplateResult {
     const state = getDockState(id);
     if (state.state === "not_docked") inner = liveLogTail(id);
     else if (state.state === "window_lost") inner = windowLostView(id);
-    else if (state.state === "refused") inner = refusedView(project.id, cmd.id);
+    else if (state.state === "refused") inner = refusedView(project.id, cmd);
     else if (state.mode === "headless") inner = headlessView(project, cmd, id);
     else inner = dockedHole(id, state.mode);
   }

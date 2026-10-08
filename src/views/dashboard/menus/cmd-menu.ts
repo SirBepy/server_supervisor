@@ -157,7 +157,7 @@ export function cmdMenuContent(
       <i class="ph ${cmd.dock_headless ? "ph-app-window" : "ph-eye-slash"}"></i>
       ${cmd.dock_headless
         ? isDockRefused(id)
-          ? "Show window normally (refused headless)"
+          ? "Show window normally (won't stay docked)"
           : "Show window normally"
         : "Run window headless"}
     </button>
