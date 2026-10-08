@@ -205,6 +205,7 @@ impl Supervisor {
     /// went stale - both are routine outcomes, not bugs, per the stale-handle
     /// discipline every entry point here follows.
     pub fn undock_window(&self, app: &AppHandle, proc_id: &str) -> Result<(), String> {
+        pane_hold::clear_pane_refusal(proc_id);
         let entry = registry().entries.lock().unwrap().remove(proc_id);
         let Some(Entry::Active { hwnd, original, headless_host, .. }) = entry else {
             return Ok(());

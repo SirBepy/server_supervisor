@@ -82,6 +82,9 @@ pub(super) fn verify_headless_holds(
         "supervisor::dock::headless_hold: {proc_id} (pid {pid}) did not hold its headless dock \
          (re-pinned within {HOLD_CHECK_DELAY:?}); releasing it and reporting it as refused"
     );
+    // Recorded before the release so a failed release still stops
+    // headless_tick from building a second host for this pid.
+    refused().lock().unwrap().insert((proc_id.to_string(), pid));
     on_main(app, move || {
         if window::is_window_alive(guest) {
             let _ = window::release(guest, &original);
@@ -90,7 +93,6 @@ pub(super) fn verify_headless_holds(
     })
     .map_err(|e| format!("release after a failed headless hold check failed: {e}"))?;
 
-    refused().lock().unwrap().insert((proc_id.to_string(), pid));
     Err(format!("{proc_id} would not hold its headless dock, so it was released"))
 }
 

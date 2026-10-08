@@ -40,6 +40,13 @@ pub(super) fn is_pane_refused(proc_id: &str, pid: u32) -> bool {
     pane_refused().lock().unwrap().contains(&(proc_id.to_string(), pid))
 }
 
+/// Forgets every pane refusal for `proc_id`, for an explicit undock: the
+/// dev asked to stop docking it, so the pane must read not-docked rather
+/// than snapping straight back to `Refused` on the next state poll.
+pub(super) fn clear_pane_refusal(proc_id: &str) {
+    pane_refused().lock().unwrap().retain(|(id, _)| id != proc_id);
+}
+
 /// Confirms a just-embedded guest is still where `target` asked for it,
 /// `HOLD_CHECK_DELAY` after `embed` placed it - past the measured re-pin
 /// window. Sleeps on the CALLING thread (the `dock_window` worker thread
@@ -156,6 +163,20 @@ mod tests {
         pane_refused().lock().unwrap().insert((id.to_string(), pid));
         assert!(is_pane_refused(id, pid));
         pane_refused().lock().unwrap().remove(&(id.to_string(), pid));
+    }
+
+    #[test]
+    fn clear_pane_refusal_forgets_only_that_proc() {
+        let id = "test-pane-hold-clear";
+        let other = "test-pane-hold-clear-other";
+        pane_refused().lock().unwrap().insert((id.to_string(), 11));
+        pane_refused().lock().unwrap().insert((other.to_string(), 22));
+
+        clear_pane_refusal(id);
+
+        assert!(!is_pane_refused(id, 11));
+        assert!(is_pane_refused(other, 22), "another proc's refusal survives");
+        pane_refused().lock().unwrap().remove(&(other.to_string(), 22));
     }
 
     fn fast_exit_spec(id: &str) -> ProcSpec {
