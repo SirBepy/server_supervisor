@@ -1,0 +1,384 @@
+// Command modals: add-command and edit-command, plus the actions that
+// open/confirm them and the shared cmd validation. Split out of ./modals
+// once that file crossed the ~400-line bar; modals.ts imports
+// addCommandModal/editCommandModal from here and wires them into the
+// modalView switch. Shared view state and the re-render trigger come from
+// ./state; pure helpers from ./helpers; the dropdown from ./combobox.
+
+import { html, nothing, type TemplateResult } from "lit-html";
+import * as ipc from "../../shared/ipc";
+import { ui, draw, refresh, closeModal, VALIDATE_DEBOUNCE_MS, type Modal } from "./state";
+import { deriveName } from "./helpers";
+import { comboBox, filterDetected } from "./combobox";
+import { detectInto } from "./add-project";
+import { envField, portField, roleField, parsePortField, type CmdModal } from "./modal-fields";
+import { paramsField, validateParamsForSave } from "./params-field";
+
+// ----- "Dock window in dashboard" checkbox state -----
+//
+// Kept OUTSIDE the Modal union (state.ts) on purpose: this dispatch's file
+// allowlist covers modals.ts but not state.ts, and the checkbox's value can
+// be derived/tracked locally just as well. addCommand has no existing
+// command to read a starting value from, so one module-level flag suffices
+// (reset by startAddCommand on every open). editCommand DOES have a
+// backend-known value (`Command.dock_window`); `editDockWindowOverride` holds
+// only the user's in-progress edit, keyed by commandId, falling back to the
+// live Command's own value until the user actually touches the checkbox.
+let addDockWindowChecked = false;
+const editDockWindowOverride: Record<string, boolean> = {};
+
+function findCommand(projectId: string, commandId: string) {
+  return ui.projects.find((p) => p.id === projectId)?.commands.find((c) => c.id === commandId);
+}
+
+function editDockWindowChecked(m: Extract<Modal, { t: "editCommand" }>): boolean {
+  if (m.commandId in editDockWindowOverride) return editDockWindowOverride[m.commandId];
+  return findCommand(m.projectId, m.commandId)?.dock_window ?? false;
+}
+
+// Drops the edit modal's dockWindow override so a later edit of the SAME
+// command re-seeds from the live Command instead of replaying a discarded
+// toggle. Called on both cancel and successful save; deliberately NOT called
+// on a failed save, so the modal (still open) keeps showing what the user
+// picked.
+function clearEditDockWindowOverride(commandId: string) {
+  delete editDockWindowOverride[commandId];
+}
+
+function cancelEditCommand(m: Extract<Modal, { t: "editCommand" }>) {
+  clearEditDockWindowOverride(m.commandId);
+  closeModal();
+}
+
+// Open the add-command modal for a project, pre-loading detected commands.
+export async function startAddCommand(projectId: string, root: string) {
+  const detected = await detectInto(root);
+  ui.modal = {
+    t: "addCommand",
+    projectId,
+    root,
+    detected,
+    name: "",
+    cmd: "",
+    useDynamicPort: true,
+    port: "",
+    portError: null,
+    env: "",
+    role: null,
+    params: [],
+    paramsError: null,
+    query: "",
+    highlight: -1,
+    check: null,
+  };
+  addDockWindowChecked = false;
+  ui.comboOpen = false;
+  draw();
+}
+
+// Route a rejected add/edit-command call to the port field's inline error
+// when it's plausibly about the port (the backend's only other rejections are
+// the name/cmd-required checks, already guarded client-side above); anything
+// else falls back to the shared error banner.
+function reportCommandError(m: CmdModal, portRequested: boolean, e: unknown) {
+  const msg = String(e);
+  if (portRequested && /port/i.test(msg)) {
+    m.portError = msg;
+  } else {
+    ui.error = msg;
+  }
+}
+
+async function confirmAddCommand() {
+  if (ui.modal?.t !== "addCommand") return;
+  const m = ui.modal;
+  const name = m.name.trim() || deriveName(m.cmd);
+  const parsed = parsePortField(m);
+  if (!parsed.ok) {
+    draw();
+    return;
+  }
+  m.portError = null;
+  const paramsErr = validateParamsForSave(m.cmd, m.params);
+  if (paramsErr) {
+    m.paramsError = paramsErr;
+    draw();
+    return;
+  }
+  m.paramsError = null;
+  try {
+    await ipc.addCommand(
+      m.projectId,
+      name,
+      m.cmd,
+      false,
+      m.useDynamicPort,
+      m.env,
+      m.role,
+      parsed.fixedPort,
+      addDockWindowChecked,
+      m.params,
+    );
+    ui.error = null;
+    ui.modal = null;
+  } catch (e) {
+    reportCommandError(m, parsed.fixedPort != null, e);
+  }
+  await refresh();
+}
+
+async function confirmEditCommand() {
+  if (ui.modal?.t !== "editCommand") return;
+  const m = ui.modal;
+  const cmd = m.cmd.trim();
+  if (!cmd) {
+    ui.error = "command is required";
+    draw();
+    return;
+  }
+  const name = m.name.trim() || deriveName(cmd);
+  const parsed = parsePortField(m);
+  if (!parsed.ok) {
+    draw();
+    return;
+  }
+  m.portError = null;
+  const paramsErr = validateParamsForSave(cmd, m.params);
+  if (paramsErr) {
+    m.paramsError = paramsErr;
+    draw();
+    return;
+  }
+  m.paramsError = null;
+  // Read BEFORE the await: a failed call leaves the modal open with `m` still
+  // live, but resolving the checked value up front means this doesn't depend
+  // on that.
+  const dockWindow = editDockWindowChecked(m);
+  try {
+    await ipc.updateCommand(
+      m.projectId,
+      m.commandId,
+      name,
+      cmd,
+      m.autostart,
+      m.useDynamicPort,
+      m.env,
+      m.role,
+      parsed.fixedPort,
+      dockWindow,
+      m.params,
+    );
+    ui.error = null;
+    ui.modal = null;
+    clearEditDockWindowOverride(m.commandId);
+  } catch (e) {
+    reportCommandError(m, parsed.fixedPort != null, e);
+  }
+  await refresh();
+}
+
+function cmdModal(): CmdModal | null {
+  return ui.modal && (ui.modal.t === "addCommand" || ui.modal.t === "editCommand")
+    ? ui.modal
+    : null;
+}
+
+// Debounced advisory check for a cmd-bearing modal's `cmd`. Stale-guarded: only
+// applies if the same modal is still open and its cmd still matches what was
+// validated. Never blocks; failures are silently ignored.
+function scheduleValidate() {
+  if (ui.validateTimer !== undefined) window.clearTimeout(ui.validateTimer);
+  ui.validateTimer = window.setTimeout(() => {
+    ui.validateTimer = undefined;
+    const m = cmdModal();
+    if (!m) return;
+    const cmd = m.cmd.trim();
+    if (!cmd) {
+      m.check = null;
+      draw();
+      return;
+    }
+    const root = m.root;
+    void ipc
+      .validateCommand(root, cmd)
+      .then((res) => {
+        // Guard against stale results from a fast typer / reopened modal.
+        if (ui.modal !== m || m.cmd.trim() !== cmd || m.root !== root) return;
+        m.check = res;
+        draw();
+      })
+      .catch(() => {
+        /* advisory only: ignore resolver errors */
+      });
+  }, VALIDATE_DEBOUNCE_MS);
+}
+
+// ----- render -----
+
+export function addCommandModal(m: Extract<Modal, { t: "addCommand" }>): TemplateResult {
+  const q = m.query.trim();
+  const suggestions = filterDetected(m.detected, m.query);
+  const exactMatch = m.detected.some((d) => d.cmd === q);
+  const showFreeText = q.length > 0 && !exactMatch;
+
+  return html`
+    <div class="overlay">
+      <div class="dialog">
+        <h3>Add command</h3>
+        ${comboBox({
+            query: m.query,
+            highlight: m.highlight,
+            suggestions,
+            showFreeText,
+            placeholder: "npm run dev:up",
+            onQuery: (val) => {
+              m.query = val;
+              m.cmd = val; // free-text: cmd tracks the typed text
+              m.highlight = 0; // pre-highlight the top row so Enter takes it
+              m.check = null; // clear stale warning until the debounce resolves
+              scheduleValidate();
+              draw();
+            },
+            onHighlight: (i) => {
+              m.highlight = i;
+              draw();
+            },
+            onSelect: (d) => {
+              m.cmd = d.cmd;
+              m.name = d.name;
+              m.query = d.cmd;
+              m.highlight = -1;
+              m.check = null; // a detected command is inherently valid
+              if (ui.validateTimer !== undefined) {
+                window.clearTimeout(ui.validateTimer);
+                ui.validateTimer = undefined;
+              }
+              ui.comboOpen = false;
+              draw();
+            },
+            onFreeText: () => {
+              const cmd = m.query.trim();
+              m.cmd = cmd;
+              if (!m.name.trim()) m.name = deriveName(cmd);
+              m.highlight = -1;
+              ui.comboOpen = false;
+              scheduleValidate();
+              draw();
+            },
+          })}
+        ${m.check && !m.check.ok
+          ? html`<div class="cmd-warn">
+              <i class="ph ph-warning"></i>
+              <span title=${m.check.reason}>${m.check.reason}</span>
+            </div>`
+          : nothing}
+        <label class="detect-row">
+          <input
+            type="checkbox"
+            .checked=${m.useDynamicPort}
+            @change=${(e: Event) => {
+              m.useDynamicPort = (e.target as HTMLInputElement).checked;
+              draw();
+            }}
+          />
+          <span>Assign a dynamic port</span>
+        </label>
+        ${m.useDynamicPort ? portField(m) : nothing}
+        <label class="detect-row">
+          <input
+            type="checkbox"
+            .checked=${addDockWindowChecked}
+            @change=${(e: Event) => {
+              addDockWindowChecked = (e.target as HTMLInputElement).checked;
+              draw();
+            }}
+          />
+          <span>Dock window in dashboard</span>
+        </label>
+        ${roleField(m)}
+        ${envField(m)}
+        ${paramsField(m)}
+        <div class="dialog-actions">
+          <button @click=${closeModal}>Cancel</button>
+          <button class="primary" @click=${() => void confirmAddCommand()}>Add</button>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+export function editCommandModal(m: Extract<Modal, { t: "editCommand" }>): TemplateResult {
+  return html`
+    <div class="overlay">
+      <div class="dialog">
+        <h3>Edit command</h3>
+        <div class="field-row">
+          <label>Name</label>
+          <input
+            placeholder=${deriveName(m.cmd)}
+            .value=${m.name}
+            @input=${(e: Event) => (m.name = (e.target as HTMLInputElement).value)}
+          />
+        </div>
+        <div class="field-row">
+          <label>Command</label>
+          <input
+            placeholder="npm run dev:up"
+            .value=${m.cmd}
+            @input=${(e: Event) => {
+              m.cmd = (e.target as HTMLInputElement).value;
+              m.check = null; // clear stale warning until the debounce resolves
+              scheduleValidate();
+              draw();
+            }}
+          />
+        </div>
+        ${m.check && !m.check.ok
+          ? html`<div class="cmd-warn">
+              <i class="ph ph-warning"></i>
+              <span title=${m.check.reason}>${m.check.reason}</span>
+            </div>`
+          : nothing}
+        <label class="detect-row">
+          <input
+            type="checkbox"
+            .checked=${m.useDynamicPort}
+            @change=${(e: Event) => {
+              m.useDynamicPort = (e.target as HTMLInputElement).checked;
+              draw();
+            }}
+          />
+          <span>Assign a dynamic port</span>
+        </label>
+        ${m.useDynamicPort ? portField(m) : nothing}
+        <label class="detect-row">
+          <input
+            type="checkbox"
+            .checked=${m.autostart}
+            @change=${(e: Event) => (m.autostart = (e.target as HTMLInputElement).checked)}
+          />
+          <span>Start automatically when the supervisor launches</span>
+        </label>
+        <label class="detect-row">
+          <input
+            type="checkbox"
+            .checked=${editDockWindowChecked(m)}
+            @change=${(e: Event) => {
+              editDockWindowOverride[m.commandId] = (e.target as HTMLInputElement).checked;
+              draw();
+            }}
+          />
+          <span>Dock window in dashboard</span>
+        </label>
+        ${roleField(m)}
+        ${envField(m)}
+        ${paramsField(m)}
+        <p class="muted note">Saving relaunches the command if it's running.</p>
+        <div class="dialog-actions">
+          <button @click=${() => cancelEditCommand(m)}>Cancel</button>
+          <button class="primary" @click=${() => void confirmEditCommand()}>Save</button>
+        </div>
+      </div>
+    </div>
+  `;
+}

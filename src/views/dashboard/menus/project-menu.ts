@@ -5,7 +5,7 @@ import { html, nothing, type TemplateResult } from "lit-html";
 import type { Project } from "../../../types/ipc.generated";
 import * as ipc from "../../../shared/ipc";
 import { ui, draw } from "../state";
-import { startAddCommand } from "../modals";
+import { startAddCommand } from "../command-modals";
 import { startAddProject } from "../add-project";
 import { startCombineCommands } from "../combine-modal";
 import { setButtonAnchor } from "../menus";
