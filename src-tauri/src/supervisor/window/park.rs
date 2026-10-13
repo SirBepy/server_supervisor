@@ -129,11 +129,34 @@ unsafe extern "system" fn win_event_proc(
         }
         let mut pid: u32 = 0;
         GetWindowThreadProcessId(hwnd, Some(&mut pid));
-        if pid == 0 || !pids().lock().unwrap().contains(&pid) {
+        if pid == 0 || !is_tracked(pid) {
             return;
         }
         park_window(hwnd, pid);
     }
+}
+
+/// Whether `pid` belongs to a headless tree. A process born after the last
+/// `headless_tick` (up to 250ms ago) is not in the set yet, which is exactly
+/// when a deep child - an app a test driver launches, say - shows its first
+/// window, so an unknown pid gets one parent-chain check before it is
+/// written off. The snapshot only runs while some proc is headless.
+fn is_tracked(pid: u32) -> bool {
+    let roots = {
+        let set = pids().lock().unwrap();
+        if set.contains(&pid) {
+            return true;
+        }
+        if set.is_empty() {
+            return false;
+        }
+        set.clone()
+    };
+    if !super::find::has_ancestor_in(pid, &roots, &super::find::snapshot_parent_map()) {
+        return false;
+    }
+    pids().lock().unwrap().insert(pid);
+    true
 }
 
 /// Records `hwnd`'s current rect as its "original" (only the first time -
@@ -165,6 +188,27 @@ fn park_window(hwnd: HWND, pid: u32) {
     }
 }
 
+/// Moves `hwnd` back off-screen if it sits on a monitor again, keeping the
+/// first recorded original. For what the CREATE/SHOW hook cannot see: a
+/// window shown before its pid joined the set, and one its app moves back
+/// itself (a window-state plugin restoring a maximized geometry fires
+/// neither event; seen on the Conductor dashboard under wdio).
+pub fn repark(hwnd: isize, pid: u32) {
+    let h = HWND(hwnd as *mut _);
+    if !parked().lock().unwrap().contains_key(&hwnd) {
+        park_window(h, pid);
+        return;
+    }
+    let mut rect = RECT::default();
+    unsafe {
+        use windows::Win32::UI::WindowsAndMessaging::GetWindowRect;
+        if GetWindowRect(h, &mut rect).is_err() || MonitorFromRect(&rect, MONITOR_DEFAULTTONULL).is_invalid() {
+            return;
+        }
+        let _ = SetWindowPos(h, None, PARK_AT, PARK_AT, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+    }
+}
+
 /// Replaces the whole set of pids whose new top-level windows get parked.
 /// Called once per `headless_tick`, from the union of every currently
 /// headless-wanted proc's full process tree - a plain replace (not a merge)
@@ -180,6 +224,11 @@ pub fn set_parked_pids(new_pids: HashSet<u32>) {
 /// close for a brand-new process's own first window.
 pub fn add_parked_pid(pid: u32) {
     pids().lock().unwrap().insert(pid);
+}
+
+/// Whether new top-level windows of `pid` get parked right now.
+pub fn is_parked_pid(pid: u32) -> bool {
+    pids().lock().unwrap().contains(&pid)
 }
 
 /// Every currently-parked hwnd belonging to any pid in `tree`, for an agent

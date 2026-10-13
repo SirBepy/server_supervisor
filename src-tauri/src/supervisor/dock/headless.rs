@@ -177,9 +177,12 @@ impl Supervisor {
         // popups/dialogs off the dev's screen without waiting on this tick
         // to find and embed anything first.
         let mut parked_pids: HashSet<u32> = HashSet::new();
-        for (_, pid, want) in &procs {
+        let mut trees: Vec<(String, u32, HashSet<u32>)> = Vec::new();
+        for (id, pid, want) in &procs {
             if *want {
-                parked_pids.extend(window::descendant_pids(*pid));
+                let tree = window::descendant_pids(*pid);
+                parked_pids.extend(tree.iter().copied());
+                trees.push((id.clone(), *pid, tree));
             }
         }
         window::park::set_parked_pids(parked_pids);
@@ -208,6 +211,22 @@ impl Supervisor {
                     if let Err(e) = self.undock_window(app, &id) {
                         log::warn!("headless undock of {id} failed: {e}");
                     }
+                }
+            }
+        }
+
+        // Backstop behind the park hook: every other visible top-level window
+        // of a headless tree goes back off-screen, whether the hook missed it
+        // or the app moved it back. A refused proc is skipped, since a window
+        // that re-pins itself would fight this every tick.
+        for (id, pid, tree) in trees {
+            if refused().lock().unwrap().contains(&(id.clone(), pid)) {
+                continue;
+            }
+            let docked_hwnd = super::registry::active_dock_hwnd(&id);
+            for w in window::list_windows_of(&tree) {
+                if Some(w.hwnd) != docked_hwnd {
+                    window::park::repark(w.hwnd, window::hwnd_pid(w.hwnd).unwrap_or(pid));
                 }
             }
         }

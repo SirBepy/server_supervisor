@@ -50,6 +50,7 @@ impl Supervisor {
         fixed_port: Option<u16>,
         env: String,
         params: Option<HashMap<String, String>>,
+        dock_headless: Option<bool>,
     ) -> Result<EnsureAndRunOutcome, String> {
         let project_name = smart_project_name(root);
         let detected = super::transient::detect(std::path::Path::new(root));
@@ -106,6 +107,13 @@ impl Supervisor {
         } else {
             add_outcome.param_mismatch
         };
+
+        // Before `start`, so the spawn itself registers the pid with the
+        // window-park hook and the app's first window never reaches the
+        // screen. `None` leaves a flag set earlier from the dashboard alone.
+        if let Some(on) = dock_headless {
+            self.set_command_headless(&project.id, &command.id, on)?;
+        }
 
         self.start(&id)?;
         let info = self

@@ -192,6 +192,24 @@ pub(crate) fn descendant_pids(root: u32) -> HashSet<u32> {
     set
 }
 
+/// Whether `pid` sits somewhere below any of `roots` in `parent_of`, walking
+/// up one parent at a time. Bounded and cycle-safe because Windows recycles
+/// pids, so a stale parent link can point back into the chain.
+pub(crate) fn has_ancestor_in(pid: u32, roots: &HashSet<u32>, parent_of: &HashMap<u32, u32>) -> bool {
+    let mut seen = HashSet::new();
+    let mut cur = pid;
+    while let Some(&parent) = parent_of.get(&cur) {
+        if roots.contains(&parent) {
+            return true;
+        }
+        if parent == 0 || !seen.insert(parent) {
+            return false;
+        }
+        cur = parent;
+    }
+    false
+}
+
 pub(super) struct EnumResult {
     pub(super) hwnds: Vec<ffi::HWND>,
 }
@@ -366,5 +384,22 @@ mod tests {
     #[test]
     fn stale_handle_zero_is_never_alive() {
         assert!(!is_window_alive(0));
+    }
+
+    #[test]
+    fn deep_descendant_has_ancestor_in_roots() {
+        // wdio's shape: sweep 10 -> pnpm 11 -> tauri-driver 12 -> msedgedriver 13 -> app 14.
+        let parent_of = HashMap::from([(11, 10), (12, 11), (13, 12), (14, 13), (10, 1)]);
+        let roots = HashSet::from([10]);
+        assert!(has_ancestor_in(14, &roots, &parent_of));
+        assert!(!has_ancestor_in(10, &roots, &parent_of), "a root is not its own descendant");
+        assert!(!has_ancestor_in(99, &roots, &parent_of), "unknown pid");
+    }
+
+    #[test]
+    fn recycled_pid_cycle_terminates() {
+        // 20 -> 21 -> 20: a stale parent link after pid reuse.
+        let parent_of = HashMap::from([(20, 21), (21, 20)]);
+        assert!(!has_ancestor_in(20, &HashSet::from([5]), &parent_of));
     }
 }

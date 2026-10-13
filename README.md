@@ -137,7 +137,9 @@ POST /procs/:id/dock
 ```
 Moves the app's window into an invisible host of its own and keeps it there (persisted on the command, so it survives restarts). `{}` undocks and turns headless off. `{ "rect": { "left": 0, "top": 0, "right": 800, "bottom": 600 } }` docks into a dashboard-pane rectangle in screen pixels instead. Returns the dock mode (`"headless"`, `"embedded"`, `"soft_docked"`), or `400` when the app has no window yet or refuses embedding (some always-on-top widget apps do).
 
-**Popups never leak either.** A headless app's dialogs and menus are separate top-level windows the dashboard never reparents (a dialog owned by the docked window must stay owned), so a `SetWinEventHook` catches every new top-level window of a headless proc's pid tree and parks it off-screen right there - the same mechanism that also stops the main window itself from sitting on the desktop for the up-to-250ms gap before the next dock tick would otherwise embed it. `EVENT_OBJECT_CREATE`/`EVENT_OBJECT_SHOW` are delivered asynchronously, so this is not literally zero flash: a spike against one real startup dialog (`src-tauri/tests/window_popup_spike.rs`) measured it visible on a real monitor for about 5ms before the hook moved it, versus the up-to-250ms-plus-find-time window this closes.
+To start headless instead of docking afterwards, pass `"dock_headless": true` in the `POST /run` body: the flag is set before the spawn, so the app's very first window never reaches the screen either. That suits a test driver that launches the real app as a grandchild (wdio, Playwright): every process the command starts, however deep, is part of its headless tree.
+
+**Popups never leak either.** A headless app's dialogs and menus are separate top-level windows the dashboard never reparents (a dialog owned by the docked window must stay owned), so a `SetWinEventHook` catches every new top-level window of a headless proc's pid tree and parks it off-screen right there - the same mechanism that also stops the main window itself from sitting on the desktop for the up-to-250ms gap before the next dock tick would otherwise embed it. `EVENT_OBJECT_CREATE`/`EVENT_OBJECT_SHOW` are delivered asynchronously, so this is not literally zero flash: a spike against one real startup dialog (`src-tauri/tests/window_popup_spike.rs`) measured it visible on a real monitor for about 5ms before the hook moved it, versus the up-to-250ms-plus-find-time window this closes. A window from a process born since the last tick (the app a test driver launches, three processes down) is caught too: the hook checks an unknown pid's parent chain against the headless trees before ignoring it. And every tick re-parks any other visible window of a headless tree that is back on a monitor, which covers an app moving its own window back, such as a window-state plugin restoring a maximized size.
 
 ```
 GET /procs/:id/windows
@@ -231,7 +233,7 @@ Requires both `ai_can_add_projects` and `ai_can_add_commands` to be enabled in S
 }
 ```
 
-`name`, `kind`, `use_dynamic_port`, and `env` are optional. `kind` defaults to inferred from `cmd` (any command containing `"flutter"` is `"flutter"`, everything else is `"generic"`). `use_dynamic_port` defaults to `true`. `env` is one `KEY=VALUE` per line; values may reference existing env vars via `${NAME}` or `%NAME%`.
+`name`, `kind`, `use_dynamic_port`, `env`, and `dock_headless` are optional. `dock_headless: true` starts the command headless (see GUI apps: headless testing); omitted leaves the command's existing setting alone. `kind` defaults to inferred from `cmd` (any command containing `"flutter"` is `"flutter"`, everything else is `"generic"`). `use_dynamic_port` defaults to `true`. `env` is one `KEY=VALUE` per line; values may reference existing env vars via `${NAME}` or `%NAME%`.
 
 Returns the `ProcInfo` object (same shape as `GET /procs` entries) on success, `400` on error.
 

@@ -2,6 +2,7 @@
 //! processes (Windows `ping`), captures their output, and tree-kills them.
 
 use server_supervisor_lib::ports::PortRegistry;
+use server_supervisor_lib::supervisor::window::park;
 use server_supervisor_lib::supervisor::Supervisor;
 use server_supervisor_lib::types::{CommandParam, ParamValue, ProcKind, ProcStatus, Role};
 use std::sync::Arc;
@@ -487,7 +488,7 @@ fn ensure_and_run_registers_starts_and_is_idempotent() {
     let root = dir.path().to_str().unwrap();
 
     let info = sup
-        .ensure_and_run(root, "node server.js", None, None, true, None, "".into(), None)
+        .ensure_and_run(root, "node server.js", None, None, true, None, "".into(), None, None)
         .unwrap()
         .info;
     assert_eq!(info.status, ProcStatus::Running);
@@ -496,11 +497,35 @@ fn ensure_and_run_registers_starts_and_is_idempotent() {
 
     // Idempotent: same root+cmd reuses the same project/command (no duplicate).
     let info2 = sup
-        .ensure_and_run(root, "node server.js", None, None, true, None, "".into(), None)
+        .ensure_and_run(root, "node server.js", None, None, true, None, "".into(), None, None)
         .unwrap()
         .info;
     assert_eq!(info2.id, info.id);
     assert_eq!(sup.list().len(), 1, "no duplicate registration");
+
+    sup.stop(&info.id).unwrap();
+}
+
+#[test]
+fn ensure_and_run_headless_parks_the_pid_from_spawn() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("server.js"),
+        "const p=process.env.PORT;require('http').createServer((_,r)=>r.end('ok')).listen(p,()=>console.log('LISTENING '+p));",
+    )
+    .unwrap();
+    let sup = new_sup(dir.path());
+    let root = dir.path().to_str().unwrap();
+
+    let info = sup
+        .ensure_and_run(root, "node server.js", None, None, true, None, "".into(), None, Some(true))
+        .unwrap()
+        .info;
+    // No headless tick runs in this test, so only the spawn itself can have
+    // registered the pid: proof the flag landed before `start`, not after.
+    let pid = info.pid.expect("started proc has a pid");
+    assert!(park::is_parked_pid(pid), "pid {pid} not registered with the park hook at spawn");
+    assert!(sup.list_projects()[0].commands[0].dock_headless, "flag persisted on the command");
 
     sup.stop(&info.id).unwrap();
 }

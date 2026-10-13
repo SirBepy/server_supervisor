@@ -34,6 +34,10 @@ pub(super) struct RunBody {
     /// goes through the add/update command routes.
     #[serde(default)]
     params: Option<HashMap<String, String>>,
+    /// Run headless from spawn: the window never reaches the dev's screen,
+    /// popups and child-process windows included. Persisted on the command.
+    #[serde(default)]
+    dock_headless: Option<bool>,
 }
 
 /// Body for `POST /projects/:project_id/commands` (register a command without
@@ -112,6 +116,7 @@ pub(super) async fn run(State(s): State<ApiState>, Json(b): Json<RunBody>) -> Re
         b.port,
         b.env.unwrap_or_default(),
         b.params,
+        b.dock_headless,
     ) {
         Ok(outcome) => run_response(outcome).into_response(),
         Err(e) => (StatusCode::BAD_REQUEST, e).into_response(),
